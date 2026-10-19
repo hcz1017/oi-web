@@ -5,6 +5,9 @@ oi-cpp-wasm/dist/
 oi-cpp-wasm/node_modules/
 *.vsix
 
+# 开发脚手架（上游包解包、临时探针）
+oi-cpp-wasm/.dev/
+
 # 运行时/调试临时文件
 .tmp-*
 out.wasm

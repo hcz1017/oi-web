@@ -12,6 +12,8 @@
 import * as vscode from "vscode";
 import { startClangd, stopClangd } from "./lsp.js";
 import { registerHeaderFs } from "./headerfs.js";
+import { DwarfEngine } from "./dwarf.js";
+import { WasmDebugAdapter } from "./debugAdapter.js";
 
 const TERM_NAME = "OI C++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -380,6 +382,169 @@ function workerUrl(name) {
   return vscode.Uri.joinPath(ctx.extensionUri, "dist", "web", name).toString();
 }
 
+/**
+ * 编译一份源码并拿到 wasm 字节（给调试/符号功能用，不走终端）。
+ * 用独立的 id 走同一套编译 worker；opt/debugInfo 可覆盖。
+ */
+function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true }) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      await getCompiler();
+    } catch (e) {
+      reject(e); return;
+    }
+    const id = shared.nextId++;
+    const timer = setTimeout(() => {
+      if (shared.byId.has(id)) { shared.byId.delete(id); reject(new Error("编译超时（60s）")); }
+    }, 60000);
+    shared.byId.set(id, {
+      _msg(m) {
+        clearTimeout(timer);
+        if (m.ok) resolve(m);
+        else reject(new Error("编译失败: " + String(m.log || "").split("\n").slice(0, 8).join(" | ")));
+      },
+      _fail(msg) { clearTimeout(timer); reject(new Error(msg)); },
+    });
+    shared.worker.postMessage({ type: "compile", id, source, fileName, flags, opt, debugInfo });
+  });
+}
+
+/** 符号引擎单例：只做 DWARF 查询（行映射/变量），不负责运行程序 */
+const symbols = { engine: null, ready: null, memory: null };
+
+function getSymbolsEngine() {
+  if (symbols.engine) return symbols.ready;
+  symbols.ready = (async () => {
+    // 宿主 4 个同步 getter：读"暂停快照"（由调试会话在 paused 时塞进来）
+    const host = {
+      getWasmLinearMemory(offset, length) {
+        const mem = symbols.memory;
+        if (!mem) throw new Error("当前没有暂停快照");
+        return mem.buffer.slice(mem.byteOffset + offset, mem.byteOffset + offset + length);
+      },
+      getWasmLocal() { throw new Error("locals 快照尚未实现"); },
+      getWasmGlobal() { throw new Error("globals 快照尚未实现"); },
+      getWasmOp() { throw new Error("operand stack 不可用"); },
+    };
+    const engine = new DwarfEngine(workerUrl("dwarfWorker.js"), assetsBase(), host);
+    engine.verbose = vscode.workspace.getConfiguration("oiCpp").get("verbose", false);
+    await engine.start();
+    symbols.engine = engine;
+    return engine;
+  })();
+  symbols.ready.catch(() => { symbols.engine = null; symbols.ready = null; });
+  return symbols.ready;
+}
+
+/** 探针命令：验证「源码行 ↔ wasm offset」映射（调试功能的地基） */
+async function symbolsProbe() {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) { vscode.window.showWarningMessage("先打开一个 C/C++ 文件"); return; }
+  const doc = ed.document;
+  const fileName = doc.uri.path.split("/").pop() || "main.cpp";
+  const cfg = vscode.workspace.getConfiguration("oiCpp");
+  const out = vscode.window.createOutputChannel("OI C++ 符号");
+  out.show(true);
+  const log = (s) => { out.appendLine(s); console.log("[oi symbols]", s); };
+
+  try {
+    log("== 编译（-O0 -g）==");
+    const t0 = Date.now();
+    const r = await compileForDebug({
+      source: doc.getText(), fileName,
+      flags: String(cfg.get("flags", "-std=c++20")),
+      opt: 0, debugInfo: true,
+    });
+    log(`编译 OK，wasm ${(r.wasm.byteLength / 1024).toFixed(0)}KB，${Date.now() - t0}ms`);
+
+    log("== 启动 DWARF 引擎（首次约加载 12.7MB）==");
+    const t1 = Date.now();
+    const engine = await getSymbolsEngine();
+    log(`引擎就绪，${Date.now() - t1}ms`);
+
+    const modId = "doc:" + fileName;
+    const wasmUrl = "file:///workspace/" + fileName;
+    const sources = await engine.addRawModule(modId, wasmUrl, r.wasm);
+    log(`源文件数 ${Array.isArray(sources) ? sources.length : "?"}，其中本项目文件:`);
+    for (const u of (sources || []).filter((u) => /workspace/.test(u)).slice(0, 5)) log("  " + u);
+
+    const srcUrl = "file:///workspace/" + fileName;
+    const lines = await engine.getMappedLines(modId, srcUrl);
+    log(`可下断点的行(${lines ? lines.length : 0}): ${JSON.stringify((lines || []).slice(0, 40))}`);
+
+    log("== 抽查：行 → raw offset → 回映射 ==");
+    for (const line of (lines || []).slice(0, 6)) {
+      let hit = null;
+      for (let col = 0; col <= 40 && !hit; col++) {
+        const rs = await engine.sourceLocationToRawLocation({ rawModuleId: modId, sourceFileURL: srcUrl, lineNumber: line, columnNumber: col });
+        if (rs && rs.length) hit = { col, r: rs[0] };
+      }
+      if (!hit) { log(`  line ${line}: (无)`); continue; }
+      const back = await engine.rawLocationToSourceLocation({ rawModuleId: modId, codeOffset: hit.r.startOffset, inlineFrameIndex: 0 });
+      const b = (back || [])[0];
+      log(`  line ${line} (col ${hit.col}) → [${hit.r.startOffset},${hit.r.endOffset}) → ${b ? b.sourceFileURL.split("/").pop() + ":" + b.lineNumber : "?"}`);
+    }
+    log("== 完成 ==");
+    vscode.window.showInformationMessage("OI C++ 符号探针完成，见「OI C++ 符号」输出面板");
+  } catch (e) {
+    log("失败: " + ((e && (e.stack || e.message)) || e));
+    vscode.window.showErrorMessage("符号探针失败: " + ((e && e.message) || e));
+  }
+}
+
+// ---------------------------------------------------------------- 调试（DAP）
+let pendingDebugTarget = null;
+
+async function startDebugging() {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) { vscode.window.showWarningMessage("先打开一个 C/C++ 文件"); return; }
+  const doc = ed.document;
+  const fileName = doc.uri.path.split("/").pop() || "main.cpp";
+  if (!/\.(cpp|cc|cxx|c)$/i.test(fileName)) { vscode.window.showWarningMessage("当前文件不是 C/C++ 源文件"); return; }
+  const cfg = vscode.workspace.getConfiguration("oiCpp");
+  pendingDebugTarget = {
+    source: doc.getText(),
+    fileName,
+    flags: String(cfg.get("flags", "-std=c++20")),
+  };
+  symbols.memory = null;
+  try {
+    await vscode.debug.startDebugging(undefined, {
+      type: "oi-cpp-wasm",
+      request: "launch",
+      name: "OI C++ 调试（WASM）",
+    });
+  } catch (e) {
+    vscode.window.showErrorMessage("启动调试失败: " + ((e && e.message) || e));
+  }
+}
+
+function registerDebugAdapter(c) {
+  c.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory("oi-cpp-wasm", {
+    createDebugAdapterDescriptor() {
+      const target = pendingDebugTarget || {
+        source: "",
+        fileName: "main.cpp",
+        flags: String(vscode.workspace.getConfiguration("oiCpp").get("flags", "-std=c++20")),
+      };
+      const adapter = new WasmDebugAdapter({
+        target,
+        getEngine: () => getSymbolsEngine(),
+        compile: (args) => compileForDebug(args),
+        workerUrl: workerUrl("debugWorker.js"),
+        log: (s) => console.log("[oi debug]", s),
+        onSnapshot: (mem) => { symbols.memory = mem; },
+      });
+      return new vscode.DebugAdapterInlineImplementation(adapter);
+    },
+  }));
+  c.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("oi-cpp-wasm", {
+    provideDebugConfigurations: () => [{ type: "oi-cpp-wasm", request: "launch", name: "OI C++ 调试（WASM）" }],
+    resolveDebugConfiguration: (_folder, config) =>
+      config && config.type ? config : { type: "oi-cpp-wasm", request: "launch", name: "OI C++ 调试（WASM）" },
+  }));
+}
+
 function resetCompiler() {
   if (shared.worker) { try { shared.worker.terminate(); } catch {} }
   shared.worker = null;
@@ -477,6 +642,9 @@ export async function activate(c) {
 
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runInTerminal", runActive));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runTerminal", () => ensureTerminal("main.cpp")));
+    c.subscriptions.push(vscode.commands.registerCommand("oiCpp.symbolsProbe", symbolsProbe));
+    c.subscriptions.push(vscode.commands.registerCommand("oiCpp.debug", startDebugging));
+    registerDebugAdapter(c);
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.restartLsp", async () => {
       stopClangd();
       lspPromise = null;

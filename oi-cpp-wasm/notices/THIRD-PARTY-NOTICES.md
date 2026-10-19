@@ -33,3 +33,17 @@ LLVM 许可原文见 `notices/LLVM-LICENSE.txt`；WASI 相关许可见 `notices/
 - 本扩展不包含 GCC/libstdc++ 代码；`bits/stdc++.h` 是我们自写的 libc++ 聚合头。
 - 编译产物（用户程序）链接的 `libc.a`/`libc++.a`/`libc++abi.a` 来自 wasi-sdk sysroot，其许可见上表；
   用户程序的分发不受本项目许可约束。
+
+## @vscode/dwarf-debugging（DWARF 符号引擎）
+
+- 用途：把源码行映射到 wasm 指令偏移、解析变量与表达式（调试功能的符号层）
+- 来源：Microsoft，`@vscode/dwarf-debugging@0.0.2`
+  - <https://github.com/microsoft/vscode-dwarf-debugging>
+  - 其上游是 Chrome DevTools 的 C/C++ DWARF 调试扩展：
+    <https://github.com/ChromeDevTools/devtools-frontend/tree/main/extensions/cxx_debugging>
+- 许可证：MIT（Copyright (c) Microsoft Corporation）
+- 本仓库里的产物：
+  - `assets/dwarf/SymbolsBackend.wasm.gz`：原样取得的 DWARF 引擎（重新 gzip 压缩）
+  - `assets/dwarf/worker.js`：上游 worker 的浏览器适配版（`scripts/build-dwarf-worker.mjs` 生成：
+    仅在文件头注入 require/`parentPort`/`fs` shim，其余逻辑未改）
+  - `assets/dwarf/LICENSE`：原许可证全文

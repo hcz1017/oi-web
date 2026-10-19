@@ -1,4 +1,5 @@
 // 复用 C++ Studio Web 的 WASM 工具链（Clang 22.1.8 / wasm-ld / wasi-sdk sysroot），
+import { DBG_STUB_SOURCE } from "./dbg-stub.mjs";
 // 驱动完全自己写：WASI 不能 fork，所以直接以 -cc1 模式调用 clang，再调 wasm-ld 链接。
 // 产物是 wasm32-wasip1 模块。
 import {
@@ -39,7 +40,7 @@ export class Toolchain {
   _put(name, bytes) { this._workspace().contents.set(name, new File(bytes.slice())); }
   _del(name) { this._workspace().contents.delete(name); }
 
-  async _run(mod, argv, root, { stdin, onOut, onErr } = {}) {
+  async _run(mod, argv, root, { stdin, onOut, onErr, extraImports } = {}) {
     const fds = [
       stdin ?? new OpenFile(new File(new Uint8Array(0))),
       new ConsoleStdout((b) => onOut && onOut(b)),
@@ -47,7 +48,10 @@ export class Toolchain {
       new PreopenDirectory("/", root.contents),
     ];
     const wasi = new WASI([argv[0], ...argv.slice(1)], [], fds);
-    const inst = await WebAssembly.instantiate(mod, { wasi_snapshot_preview1: wasi.wasiImport });
+    const inst = await WebAssembly.instantiate(mod, {
+      wasi_snapshot_preview1: wasi.wasiImport,
+      ...(extraImports || {}),
+    });
     try { return wasi.start(inst) ?? 0; }
     catch (e) { if (e instanceof WASIProcExit) return e.code; throw e; }
   }
@@ -56,7 +60,7 @@ export class Toolchain {
    * 编译一个源文件 → wasm 字节
    * @returns {{wasm: Uint8Array|null, log: string, exit: number}}
    */
-  async compile({ source, fileName = "main.cpp", flags = [], opt = 2, debug = true } = {}) {
+  async compile({ source, fileName = "main.cpp", flags = [], opt = 2, debug = true, debugStub = false } = {}) {
     const lang = /\.c$/i.test(fileName) ? "c" : "c++";
     const dec = new TextDecoder("utf-8", { fatal: false });
     let log = "";
@@ -94,9 +98,30 @@ export class Toolchain {
       return { wasm: null, log, exit: ec };
     }
 
+    let stubObj = null;
+    if (debugStub) {
+      // 调试构建：先把桩编译成独立对象（同一个 cc1 路径，保证 ABI/编址一致）
+      this._put("dbgstub.c", new TextEncoder().encode(DBG_STUB_SOURCE));
+      const stubArgs = [
+        "-cc1", "-triple", TRIPLE, "-emit-obj", "-disable-free",
+        "-isysroot", "/", "-resource-dir", RESOURCE_DIR,
+        ...ISYS.flatMap((d) => ["-internal-isystem", d]),
+        "-ferror-limit", "19", "-fcolor-diagnostics",
+        "-o", "/workspace/dbgstub.o", "/workspace/dbgstub.c", "-x", "c",
+        ...kept,
+      ];
+      const ec2 = await this._run(c, ["clang", ...stubArgs], root, { onErr: collect, onOut: collect });
+      stubObj = readFsFile(root, "/workspace/dbgstub.o");
+      if (ec2 !== 0 || !stubObj || !stubObj.length) {
+        log += dec.decode();
+        return { wasm: null, log, exit: ec2 };
+      }
+    }
+
     const link = [
       "--export-dynamic", "-z", "stack-size=1048576",
       `-L${LIBDIR}/noeh`, `-L${LIBDIR}`, `${LIBDIR}/crt1.o`,
+      ...(stubObj ? ["/workspace/dbgstub.o"] : []),
       "/workspace/out.o",
       // wasi-sdk 顺序：libc++ → libc++abi → libc → libm（静态库单趟扫描，顺序反了会缺符号）
       ...(lang === "c" ? [] : ["-lc++", "-lc++abi"]),
@@ -113,9 +138,9 @@ export class Toolchain {
   }
 
   /** 仅 Node 侧冒烟用；浏览器里运行走 runWorker.js */
-  async run(wasmBytes, { args = [], stdin, onOut, onErr } = {}) {
+  async run(wasmBytes, { args = [], stdin, onOut, onErr, extraImports } = {}) {
     const root = this._fs();
     const mod = await WebAssembly.compile(wasmBytes);
-    return this._run(mod, ["program", ...args], root, { onOut, onErr, stdin });
+    return this._run(mod, ["program", ...args], root, { onOut, onErr, stdin, extraImports });
   }
 }

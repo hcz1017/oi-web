@@ -17,7 +17,9 @@
   "browser": "./dist/web/extension.js",
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:oiCpp.runInTerminal"
+    "onCommand:oiCpp.runInTerminal",
+    "onCommand:oiCpp.debug",
+    "onDebugResolve:oi-cpp-wasm"
   ],
   "capabilities": {
     "virtualWorkspaces": true,
@@ -39,6 +41,11 @@
       {
         "command": "oiCpp.restartLsp",
         "title": "OI C++: 重启 clangd(WASM)"
+      },
+      {
+        "command": "oiCpp.debug",
+        "title": "OI C++: 开始调试（WASM）",
+        "icon": "$(debug-alt)"
       }
     ],
     "menus": {
@@ -47,11 +54,20 @@
           "command": "oiCpp.runInTerminal",
           "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/",
           "group": "navigation@1"
+        },
+        {
+          "command": "oiCpp.debug",
+          "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/",
+          "group": "navigation@2"
         }
       ],
       "commandPalette": [
         {
           "command": "oiCpp.runInTerminal",
+          "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/"
+        },
+        {
+          "command": "oiCpp.debug",
           "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/"
         }
       ]
@@ -102,12 +118,48 @@
           "description": "工具链资产（clang/lld/sysroot/clangd）的静态托管根 URL。留空则用扩展自带的 assets/。VSIX 体积超限时可把 assets 外置到这里。"
         }
       }
-    }
+    },
+    "debuggers": [
+      {
+        "type": "oi-cpp-wasm",
+        "label": "OI C++ (WASM)",
+        "languages": [
+          "cpp",
+          "c"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {}
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "oi-cpp-wasm",
+            "request": "launch",
+            "name": "OI C++ 调试（WASM）"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "OI C++ 调试（WASM）",
+            "description": "调试当前打开的 C++ 文件（WASM）",
+            "body": {
+              "type": "oi-cpp-wasm",
+              "request": "launch",
+              "name": "OI C++ 调试（WASM）"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "bundle": "node esbuild.mjs",
     "package": "node esbuild.mjs && npx --no-install @vscode/vsce package --no-dependencies --allow-missing-repository",
-    "test": "node test/smoke.mjs"
+    "test": "node test/smoke.mjs",
+    "test:debug": "node test/debug-instr.mjs",
+    "dwarf": "node scripts/build-dwarf-worker.mjs"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",

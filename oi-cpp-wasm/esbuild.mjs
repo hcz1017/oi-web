@@ -63,4 +63,24 @@ await esbuild.build({
   minify: false,
 });
 
-console.log("bundled: extension.js / compileWorker.js / runWorker.js / clangdWorker.js");
+// 5) DWARF 符号引擎宿主 worker：经典 worker（IIFE）。
+//    它运行时 importScripts(assets/dwarf/worker.js)（上游引擎 + 浏览器 shim），
+//    所以这里只打包我们自己的引导逻辑。
+await esbuild.build({
+  ...common,
+  entryPoints: [path.join(SRC, "dwarf.worker.js")],
+  outfile: path.join(OUT, "dwarfWorker.js"),
+  format: "iife",
+  minify: false,
+});
+
+// 6) 调试运行 worker：运行插桩后的 wasm（经典 worker）
+await esbuild.build({
+  ...common,
+  entryPoints: [path.join(SRC, "debug.worker.js")],
+  outfile: path.join(OUT, "debugWorker.js"),
+  format: "iife",
+  minify: false,
+});
+
+console.log("bundled: extension.js / compileWorker.js / runWorker.js / clangdWorker.js / dwarfWorker.js / debugWorker.js");
