@@ -386,7 +386,7 @@ function workerUrl(name) {
  * 编译一份源码并拿到 wasm 字节（给调试/符号功能用，不走终端）。
  * 用独立的 id 走同一套编译 worker；opt/debugInfo 可覆盖。
  */
-function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true }) {
+function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, debugStub = false }) {
   return new Promise(async (resolve, reject) => {
     try {
       await getCompiler();
@@ -405,7 +405,9 @@ function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true })
       },
       _fail(msg) { clearTimeout(timer); reject(new Error(msg)); },
     });
-    shared.worker.postMessage({ type: "compile", id, source, fileName, flags, opt, debugInfo });
+    // ⚠️ 必须把 debugStub 一起传下去：调试构建靠它链入 src/core/dbg-stub.c，
+    //    否则产物里没有 import "oi"."probe"，插桩阶段会直接报"桩没链上"
+    shared.worker.postMessage({ type: "compile", id, source, fileName, flags, opt, debugInfo, debugStub });
   });
 }
 
