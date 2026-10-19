@@ -39,9 +39,33 @@ const origMeta = `var import_url = require("url");\nvar import_meta_url = (0, im
 if (!src.includes(origMeta)) throw new Error("未找到 import_meta_url 原始代码（上游版本变了？）");
 src = src.replace(
   origMeta,
-  `var import_meta_url = (typeof self !== "undefined" && self.location && self.location.href)
-  ? new URL(self.location.href)
-  : require("url").pathToFileURL(__filename);`,
+  `var import_meta_url = (() => {
+  // 引擎只在 emscripten 的 locateFile 分支里用它（我们的 wasm 加载走 fetch 覆盖，不依赖这个文件路径），
+  // 但那一行会在 addRawModule 时才执行，任何非法值都会让整个引擎初始化失败。
+  // 所以这里逐级兜底，并且保证返回值一定是合法 URL。
+  try {
+    if (typeof self !== "undefined" && self.location && self.location.href) return new URL(self.location.href);
+  } catch (e) { /* 继续兜底 */ }
+  try {
+    const base = (typeof self !== "undefined" && self.__oiDwarfBase) || "https://oi.invalid";
+    return new URL(String(base) + "/dwarf/worker.js");
+  } catch (e) { /* 继续兜底 */ }
+  return new URL("https://oi.invalid/dwarf/worker.js");
+})();`,
+);
+
+// ---- 改动 1b：emscripten 计算 wasmBinaryFile 那一行加诊断 ----
+// 正常情况下我们用 instantiateWasm + fetch 覆盖加载，不会用到这个路径；但它会在模块初始化时
+// 无条件执行一次 new URL，任何环境差异都会在这里炸掉（浏览器里曾表现为 "TypeError: Invalid URL"）。
+src = src.replace(
+  `wasmBinaryFile = new URL("SymbolsBackend.wasm", import_meta_url).toString();`,
+  `try {
+      wasmBinaryFile = new URL("SymbolsBackend.wasm", import_meta_url).toString();
+    } catch (e) {
+      console.warn("[oi dwarf] import_meta_url 非法:", typeof import_meta_url, String(import_meta_url),
+        "| location:", (typeof self !== "undefined" && self.location) ? self.location.href : "(无 self.location)");
+      wasmBinaryFile = "SymbolsBackend.wasm";
+    }`,
 );
 
 // ---- 改动 2：浏览器环境 shim（在 Node 下整体跳过，因此同一份文件两边都能跑）----

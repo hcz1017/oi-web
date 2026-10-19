@@ -107,9 +107,19 @@ if (typeof require === "undefined") {
 "use strict";
 
 // src/inject.ts
-var import_meta_url = (typeof self !== "undefined" && self.location && self.location.href)
-  ? new URL(self.location.href)
-  : require("url").pathToFileURL(__filename);
+var import_meta_url = (() => {
+  // 引擎只在 emscripten 的 locateFile 分支里用它（我们的 wasm 加载走 fetch 覆盖，不依赖这个文件路径），
+  // 但那一行会在 addRawModule 时才执行，任何非法值都会让整个引擎初始化失败。
+  // 所以这里逐级兜底，并且保证返回值一定是合法 URL。
+  try {
+    if (typeof self !== "undefined" && self.location && self.location.href) return new URL(self.location.href);
+  } catch (e) { /* 继续兜底 */ }
+  try {
+    const base = (typeof self !== "undefined" && self.__oiDwarfBase) || "https://oi.invalid";
+    return new URL(String(base) + "/dwarf/worker.js");
+  } catch (e) { /* 继续兜底 */ }
+  return new URL("https://oi.invalid/dwarf/worker.js");
+})();
 
 // src/worker.ts
 var import_fs = require("fs");
@@ -1924,7 +1934,13 @@ var createSymbolsBackend = (() => {
         wasmBinaryFile = locateFile(wasmBinaryFile);
       }
     } else {
+      try {
       wasmBinaryFile = new URL("SymbolsBackend.wasm", import_meta_url).toString();
+    } catch (e) {
+      console.warn("[oi dwarf] import_meta_url 非法:", typeof import_meta_url, String(import_meta_url),
+        "| location:", (typeof self !== "undefined" && self.location) ? self.location.href : "(无 self.location)");
+      wasmBinaryFile = "SymbolsBackend.wasm";
+    }
     }
     function getBinary(file) {
       try {

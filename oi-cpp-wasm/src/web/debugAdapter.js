@@ -242,8 +242,14 @@ export class WasmDebugAdapter {
 
     // 只给"用户工作区文件"生成语句站点（避免把 165 个头文件全插桩：体积/速度都吃不消）
     const wasmUrl = "file:///workspace/" + this.target.fileName;
-    this.log("③ addRawModule…");
-    const sources = await engine.addRawModule(MOD_ID, wasmUrl, r.wasm);
+    this.log(`③ addRawModule…（url=${wasmUrl}，code=${r.wasm ? (r.wasm.byteLength / 1024).toFixed(0) + "KB" : "无"}）`);
+    let sources;
+    try {
+      sources = await engine.addRawModule(MOD_ID, wasmUrl, r.wasm);
+    } catch (e) {
+      // 引擎内部错误的可见性：把上下文拼进错误消息（URL 相关的异常尤其需要）
+      throw new Error(`addRawModule 失败（url=${wasmUrl}）: ${(e && e.message) || e}`);
+    }
     this.log("③ 源文件 " + ((sources && sources.length) || 0) + " 个");
     const userFiles = (sources || []).filter((u) => /^file:\/\/\/workspace\//.test(u));
     const sites = [];
