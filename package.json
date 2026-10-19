@@ -1,0 +1,16 @@
+{
+  "name": "oi-web",
+  "version": "0.2.0",
+  "private": true,
+  "description": "浏览器里的 C++：WASM Clang + 真 VS Code 终端 + clangd（纯静态，零后端）",
+  "license": "MIT",
+  "scripts": {
+    "web": "bash ./run-wasm-web.sh",
+    "dev": "bash ./run-wasm-web.sh",
+    "bundle": "node oi-cpp-wasm/esbuild.mjs",
+    "test": "node oi-cpp-wasm/test/smoke.mjs"
+  },
+  "devDependencies": {
+    "@vscode/test-web": "^0.0.81"
+  }
+}

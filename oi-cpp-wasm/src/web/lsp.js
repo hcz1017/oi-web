@@ -1,0 +1,296 @@
+// 官方 vscode-languageclient(browser) 接 clangd.wasm。
+// 我们只做两件事：
+//   ① 给客户端一对"会改写 URI 的" reader/writer（clangd 只认 /workspace/<file> 路径）
+//   ② 双向映射 URI（文档 URI ↔ file:///workspace/<name>），含诊断与 WorkspaceEdit
+import * as vscode from "vscode";
+import { LanguageClient } from "vscode-languageclient/browser";
+import { sanitizeName } from "../core/names.mjs";
+import { clangdArgs } from "../core/flags.mjs";
+
+const WS = "file:///workspace/";
+// clangd 虚拟 FS 里的系统头文件（/compat、/include、/lib/clang）在 VS Code 里不存在，
+// 直接给 file:/// 会让"跳转到 bits/stdc++.h"报 "No file system handle registered"。
+// 统一映射到我们注册的只读虚拟文件系统（内容来自 headers.json.gz）。
+export const HEADER_SCHEME = "clangd-hdr";
+const HEADER_PREFIX = HEADER_SCHEME + ":";
+const T0 = performance.now();   // 日志基准（毫秒）
+
+class UriMap {
+  constructor() {
+    this.fwd = new Map();     // docUriString -> clangd uri
+    this.rev = new Map();     // clangd uri     -> docUriString
+  }
+  toClangd(docUri) {
+    const key = String(docUri);
+    if (this.fwd.has(key)) return this.fwd.get(key);
+    const base = sanitizeName(String(docUri).split("/").pop() || "main.cpp");
+    let name = base, i = 1;
+    while (this.rev.has(WS + name) && this.rev.get(WS + name) !== key) {
+      name = base.replace(/(\.[^.]*)?$/, `_${i++}$1`);   // 同名文件加下标，避免互相覆盖
+    }
+    const mapped = WS + name;
+    this.fwd.set(key, mapped);
+    this.rev.set(mapped, key);
+    return mapped;
+  }
+  fromClangd(uriStr) {
+    if (typeof uriStr !== "string") return uriStr;
+    if (this.rev.has(uriStr)) return this.rev.get(uriStr);
+    const base = uriStr.startsWith(WS) ? uriStr.slice(WS.length) : null;
+    if (base) {
+      // 兜底：clangd 可能对未 didOpen 的头文件发诊断，按文件名找已打开的同名文档
+      for (const [mapped, doc] of this.rev) {
+        if (sanitizeName(String(doc).split("/").pop() || "") === base) return doc;
+      }
+      return uriStr;                       // 实在没有：保留原样，别丢（否则旧波浪线清不掉）
+    }
+    // 系统头文件等 clangd 虚拟路径 → 只读虚拟 FS（否则点击/引用面板会报
+    // "No file system handle registered (/compat)"）
+    if (uriStr.startsWith("file:///")) return HEADER_PREFIX + uriStr.slice("file://".length);
+    return uriStr;
+  }
+  /** 递归改写返回值/参数里所有 URI 字段（含 WorkspaceEdit 的 changes 键） */
+  rewriteDeep(x, fn) {
+    if (x === null || x === undefined) return x;
+    if (Array.isArray(x)) { for (let i = 0; i < x.length; i++) x[i] = this.rewriteDeep(x[i], fn); return x; }
+    if (typeof x !== "object") return x;
+    for (const k of Object.keys(x)) {
+      if (k === "uri" || k === "targetUri" || k === "target") {
+        if (typeof x[k] === "string") x[k] = fn(x[k]);
+      } else if (k === "changes" && x[k] && typeof x[k] === "object") {
+        const out = {};
+        for (const [u, v] of Object.entries(x[k])) out[fn(u)] = this.rewriteDeep(v, fn);
+        x[k] = out;
+      } else {
+        x[k] = this.rewriteDeep(x[k], fn);
+      }
+    }
+    return x;
+  }
+}
+
+/** 包住真实 worker：所有进出 LSP 消息里的 URI 都做映射 */
+class LspWorkerProxy {
+  constructor(worker, map) {
+    this._sentAt = new Map();     // id -> 发出时刻，用来算往返耗时 / 判断在途请求
+    this._pumpTimer = null;       // flush pump 定时器
+    this._pumpDelay = 40;         // 首次 40ms，之后退避
+    this.worker = worker;
+    this.map = map;
+    this._listeners = new Set();
+    this.verbose = false;
+    this._onMessage = (ev) => {
+      let msg = ev.data;
+      // ⚠️ 改写失败绝不能丢消息：以前 try{cb()}catch{} 把整条响应吞掉，
+      //    表现就是"悬停一直 loading"（请求有去无回）。现在失败就用原始消息继续投递。
+      if (msg && typeof msg === "object") {
+        try { msg = this.map.rewriteDeep(msg, (u) => this.map.fromClangd(u)); }
+        catch (e) { console.warn("[oi clangd] 入站 URI 改写失败，按原样投递:", e && e.message); }
+      }
+      if (this.verbose && msg && typeof msg === "object") {
+        if (msg.method) console.log("[lsp←]", msg.method, msg.id != null ? "#" + msg.id : "");
+        else if (msg.id != null) {
+          const t = Math.round(performance.now() - T0);
+          const st = this._sentAt.get(msg.id);
+          this._sentAt.delete(msg.id);
+          if (this._sentAt.size === 0 && this._pumpTimer) { clearTimeout(this._pumpTimer); this._pumpTimer = null; }
+          const dt = st == null ? "?" : Math.round(performance.now() - st) + "ms";
+          console.log(`[lsp←] resp #${msg.id} @${t}ms (+${dt})`, msg.error ? "ERROR " + (msg.error.message || "") : "ok");
+        }
+      }
+      for (const cb of this._listeners) {
+        try { cb(msg); } catch (e) { console.error("[oi clangd] 消息分发异常:", e && (e.stack || e.message)); }
+      }
+    };
+    worker.addEventListener("message", this._onMessage);
+  }
+  addEventListener(type, cb) { if (type === "message") this._listeners.add(cb); }
+  removeEventListener(type, cb) { if (type === "message") this._listeners.delete(cb); }
+  postMessage(msg) {
+    if (msg && typeof msg === "object") {
+      try { msg = this.map.rewriteDeep(msg, (u) => this.map.toClangd(u)); }
+      catch (e) { console.warn("[oi clangd] 出站 URI 改写失败，按原样投递:", e && e.message); }
+    }
+    if (this.verbose && msg && typeof msg === "object") {
+      const t = Math.round(performance.now() - T0);
+      if (msg.method) {
+        if (msg.id != null) this._sentAt.set(msg.id, performance.now());
+        console.log(`[lsp→] ${msg.method}${msg.id != null ? " #" + msg.id : ""} @${t}ms`);
+      } else if (msg.id != null) {
+        console.log(`[lsp→] resp-to-server #${msg.id} @${t}ms`);
+      }
+    }
+    this.worker.postMessage(msg);
+
+    // 发出去的是「请求」→ 启动 flush pump（详见 pumpFlush 注释）
+    if (msg && typeof msg === "object" && msg.method && msg.id != null) {
+      this._sentAt.set(msg.id, performance.now());
+      this._pumpDelay = 40;
+      this.pumpFlush();
+    }
+  }
+
+  /**
+   * clangd(WASI) 的 stdout 是行缓冲：它【读到下一次 stdin 输入】时才会把上一批输出 flush 出来。
+   * 实测（@20583ms 那条）：hover 的响应要等 definition（用户按 Ctrl）到达后才出现。
+   * 因此只要还有请求在途，就周期性喂一条协议允许、无副作用的通知，把 clangd 的读循环推一下。
+   * 用 $/setTrace：LSP 规范定义为纯 no-op，clangd 不产生响应、不改状态；空闲时（无在途请求）不发。
+   */
+  pumpFlush() {
+    if (this._pumpTimer) return;
+    const tick = () => {
+      this._pumpTimer = null;
+      if (this._sentAt.size === 0) return;                  // 没有在途请求 → 停止
+      const now = performance.now();
+      let oldest = Infinity;
+      for (const t of this._sentAt.values()) oldest = Math.min(oldest, t);
+      if (now - oldest >= this._pumpDelay) {
+        try { this.worker.postMessage({ jsonrpc: "2.0", method: "$/setTrace", params: { value: "off" } }); } catch {}
+        this._pumpDelay = Math.min(this._pumpDelay * 2, 150);   // 退避，别把 stdin 塞满
+      }
+      this._pumpTimer = setTimeout(tick, this._pumpDelay);
+    };
+    this._pumpTimer = setTimeout(tick, this._pumpDelay);
+  }
+  dispose() {
+    try { this.worker.removeEventListener("message", this._onMessage); } catch {}
+    if (this._pumpTimer) { clearTimeout(this._pumpTimer); this._pumpTimer = null; }
+    this._sentAt.clear();
+    this._listeners.clear();
+  }
+}
+
+/** vscode-jsonrpc 的 Event 语义：可注册监听，返回 Disposable */
+function makeEvent() {
+  const listeners = new Set();
+  const event = (l) => { listeners.add(l); return { dispose: () => listeners.delete(l) }; };
+  event.fire = (e) => { for (const l of [...listeners]) { try { l(e); } catch {} } };
+  return event;
+}
+
+class Reader {
+  constructor(proxy) {
+    this.proxy = proxy; this.cbs = [];
+    this.onError = makeEvent();
+    this.onClose = makeEvent();
+    this.onPartialMessage = makeEvent();
+    this._h = (m) => { for (const cb of this.cbs) cb(m); };
+    proxy.addEventListener("message", this._h);
+  }
+  listen(cb) {
+    this.cbs.push(cb);
+    return { dispose: () => { const i = this.cbs.indexOf(cb); if (i >= 0) this.cbs.splice(i, 1); } };
+  }
+  dispose() { this.cbs = []; this.proxy.removeEventListener("message", this._h); }
+}
+class Writer {
+  constructor(proxy, opts) {
+    this.proxy = proxy;
+    this.opts = opts || {};            // { flags, opt, debug }：didOpen 时同步给 clangd
+    this.onError = makeEvent();
+    this.onClose = makeEvent();
+  }
+  // ⚠️ vscode-jsonrpc 的 MessageWriter 契约：write() 必须返回 Promise（内部会 write(...).catch(...)）
+  write(msg) {
+    try { this.proxy.postMessage(msg); }
+    catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
+
+    return Promise.resolve();
+  }
+  end() {}
+  dispose() {}
+}
+
+let client = null;
+let current = null;   // { worker, proxy, reader, writer }
+
+export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++20", opt = 2, debug = true, base: baseOverride = "", verbose = false } = {}) {
+  if (client) return client;
+  // 资产 base 支持外置（oiCpp.assetsBaseUrl）：传进来就用，否则用扩展自带 assets/
+  const base = (baseOverride || vscode.Uri.joinPath(ctx.extensionUri, "assets").toString()).replace(/\/+$/, "");
+  const workerUrl = vscode.Uri.joinPath(ctx.extensionUri, "dist", "web", "clangdWorker.js").toString();
+
+  // 这个 worker 是【经典 worker】（IIFE）：扩展宿主 iframe 里 module worker 加载不可靠
+  let worker;
+  try {
+    worker = new Worker(workerUrl);
+  } catch (e) {
+    // 跨源部署时的兜底：fetch 源码再 blob 化
+    const resp = await fetch(workerUrl);
+    if (!resp.ok) throw new Error(`取不到 clangdWorker.js: HTTP ${resp.status}`);
+    const code = await resp.text();
+    worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+  }
+  // 调试通道：worker 的阶段日志/错误直接进控制台，避免被 LSP 握手前的丢弃规则吞掉
+  worker.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== "object") return;
+    if (d.__oiLog) console.warn("[oi clangd]", d.__oiLog);
+    if (d.__oiError) {
+      console.error("[oi clangd] 失败:", d.__oiError);
+      vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
+    }
+  });
+  worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose } });
+
+  const map = new UriMap();
+  const proxy = new LspWorkerProxy(worker, map);
+  proxy.verbose = !!verbose;   // oiCpp.verbose：打印 LSP 流量，排查"悬停不返回/进度不结束"
+  let liveReader = null;
+  // worker 挂了要让客户端知道（以前 onError/onClose 是空函数，在途请求永久挂起）
+  worker.addEventListener("error", (e) => { try { liveReader?.onError.fire([e, undefined, 1]); } catch {} });
+  worker.addEventListener("messageerror", () => { try { liveReader?.onError.fire([new Error("messageerror"), undefined, 1]); } catch {} });
+  // provider 每次新建 reader/writer：lc.stop() 会 dispose reader，复用同一对会让重启后静默丢弃消息
+  let clientRef = null;   // middleware 里要发请求，构造完回指
+  const lc = new LanguageClient(
+    "oi-cpp-clangd",
+    "clangd (WASM)",
+    async () => {
+      const r = new Reader(proxy);
+      liveReader = r;
+      return { reader: r, writer: new Writer(proxy, { flags, opt, debug }) };
+    },
+    {
+      documentSelector: [{ language: "cpp" }],
+      // 仅用于观测悬停是否走到客户端（真正的 flush 在传输层 pump 里做，见 LspWorkerProxy）
+      middleware: verbose ? {
+        provideHover: async (document, position, token, next) => {
+          const t0 = performance.now();
+          const r = await next(document, position, token);
+          if (r) console.log("[hover] resolved", Math.round(performance.now() - t0), "ms;",
+            "contents=" + (Array.isArray(r.contents) ? r.contents.length + " items" : "markup"));
+          return r;
+        },
+      } : undefined,
+    },
+  );
+  clientRef = lc;
+  // 启动失败要让上层能感知（以前 worker 静默挂掉 → start() 永远不 resolve）
+  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("clangd initialize 超时（90s）")), 90000));
+  const started = lc.start();
+  started.catch(() => {});          // race 输掉的一方也要有人接，避免 unhandledrejection
+  try {
+    await Promise.race([started, timeout]);
+  } catch (e) {
+    // lc 可能已处于 startFailed/starting，stop() 会同步抛，必须吞掉
+    try { await Promise.resolve(lc.stop()).catch(() => {}); } catch {}
+    try { worker.terminate(); } catch {}
+    try { proxy.dispose(); } catch {}
+    throw e;
+  }
+  client = lc;
+  current = { worker, proxy, lc };
+  return client;
+}
+
+export async function stopClangd() {
+  const c = current;
+  current = null;
+  client = null;
+  if (!c) return;
+  // lc 还在 starting/startFailed 时 stop() 会抛 "Client is not running and can't be stopped"
+  try { await Promise.resolve(c.lc.stop()).catch(() => {}); } catch {}
+  // terminate 必须在 stop 失败时也能执行，否则旧 worker（及其 pthread 子 worker）泄漏
+  try { c.worker.terminate(); } catch {}
+  try { c.proxy.dispose(); } catch {}
+}

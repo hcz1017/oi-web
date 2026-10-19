@@ -1,0 +1,8 @@
+# VSIX 只放运行所需：dist + assets + notices + manifest/许可
+src/**
+sample/**
+test/**
+esbuild.mjs
+package-lock.json
+**/*.map
+**/.gitignore

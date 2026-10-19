@@ -1,0 +1,118 @@
+{
+  "name": "oi-cpp-wasm",
+  "displayName": "OI C++ (WASM, terminal run)",
+  "description": "在 VS Code Web 里用 WASM Clang 编译单文件 C++，并在真实终端里交互运行。",
+  "version": "0.1.0",
+  "publisher": "oi-web",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "browser": "./dist/web/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:oiCpp.runInTerminal"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "oiCpp.runInTerminal",
+        "title": "OI C++: 编译并在终端运行",
+        "icon": "$(play)"
+      },
+      {
+        "command": "oiCpp.runTerminal",
+        "title": "OI C++: 打开运行终端"
+      },
+      {
+        "command": "oiCpp.restartLsp",
+        "title": "OI C++: 重启 clangd(WASM)"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "oiCpp.runInTerminal",
+          "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "oiCpp.runInTerminal",
+          "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "oiCpp.runInTerminal",
+        "key": "ctrl+shift+b",
+        "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/"
+      }
+    ],
+    "configuration": {
+      "title": "OI C++ (WASM)",
+      "properties": {
+        "oiCpp.flags": {
+          "type": "string",
+          "default": "-std=c++20 -DLOCAL",
+          "description": "传给编译器的参数"
+        },
+        "oiCpp.opt": {
+          "type": "number",
+          "default": 2,
+          "enum": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "oiCpp.debugInfo": {
+          "type": "boolean",
+          "default": true,
+          "description": "生成 DWARF 调试信息（-g），便于 DevTools 调试；会让编译慢一些"
+        },
+        "oiCpp.verbose": {
+          "type": "boolean",
+          "default": false,
+          "description": "在终端里显示工具链加载等详细日志"
+        },
+        "oiCpp.lsp": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用 clangd(WASM) 语言服务：补全、悬浮、跳转、诊断、格式化（首次约下载 24MB）"
+        },
+        "oiCpp.assetsBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "工具链资产（clang/lld/sysroot/clangd）的静态托管根 URL。留空则用扩展自带的 assets/。VSIX 体积超限时可把 assets 外置到这里。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "bundle": "node esbuild.mjs",
+    "package": "node esbuild.mjs && npx --no-install @vscode/vsce package --no-dependencies --allow-missing-repository",
+    "test": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "@bjorn3/browser_wasi_shim": "^0.4.2",
+    "esbuild": "^0.28.2",
+    "vscode-languageclient": "^10.1.2",
+    "@vscode/vsce": "^3.2.0"
+  }
+}
