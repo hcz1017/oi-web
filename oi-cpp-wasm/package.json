@@ -162,7 +162,8 @@
     "dwarf": "node scripts/build-dwarf-worker.mjs",
     "test:session": "node test/debug-session.mjs",
     "test:dap": "node test/dap-flow.mjs",
-    "test:client": "node test/dwarf-client.mjs"
+    "test:client": "node test/dwarf-client.mjs",
+    "test:dwarf": "node test/dwarf-browser-env.mjs"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",

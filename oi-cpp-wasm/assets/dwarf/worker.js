@@ -1,7 +1,10 @@
 "use strict";
 /* ===== oi-cpp-wasm: browser shim（Node 下自动跳过）=====
-   经典 Worker 里没有 require/__filename；emscripten 的 Node 分支不会执行，
-   这里只把上游真正会调用的几个 Node API 映射到浏览器能力。 */
+   上游 worker.js 是用 emscripten -sENVIRONMENT=node 编的：它硬性要求
+   `typeof process == "object" && typeof require == "function"`，否则直接抛
+   "not compiled for this environment"。所以这里除了 require/__filename 之外，
+   还要伪造一个最小的 process —— 它实际只用到 process.stdin.fd（我们不走的 TTY 分支），
+   真正的 wasm 文件加载已经被 ResourceLoader.createSymbolsBackendModulePromise 覆盖成 fetch。 */
 if (typeof require === "undefined") {
   var __dirname = "/";
   var __filename = "/worker.js";
@@ -9,6 +12,58 @@ if (typeof require === "undefined") {
     postMessage: (m) => self.postMessage(m),
     on: (ev, cb) => { self.onmessage = (e) => cb(e.data); },
   };
+  if (typeof process === "undefined") {
+    var process = {
+      argv: ["node", "worker.js"],
+      env: {},
+      platform: "linux",
+      version: "v20.0.0",
+      versions: { node: "20.0.0" },
+      pid: 1,
+      stdin: { fd: 0 },
+      stdout: { write: (s) => console.log(String(s)) },
+      stderr: { write: (s) => console.warn(String(s)) },
+      cwd: () => "/",
+      uptime: () => performance.now() / 1000,
+      memoryUsage: () => ({ rss: 0, heapTotal: 0, heapUsed: 0, external: 0 }),
+      exit: (code) => { throw new Error("oi: engine called process.exit(" + code + ")"); },
+      on: () => {},
+      nextTick: (fn) => queueMicrotask(fn),
+      // emscripten 的 emscripten_get_now 在 node 构建里用 process.hrtime
+      hrtime: Object.assign(
+        (prev) => {
+          const us = Math.round(performance.now() * 1000);
+          const s = Math.floor(us / 1e6), ns = (us % 1e6) * 1000;
+          return prev ? [s - prev[0], ns - prev[1]] : [s, ns];
+        },
+        { bigint: () => BigInt(Math.round(performance.now() * 1e6)) },
+      ),
+    };
+  }
+  if (typeof Buffer === "undefined") {
+    // 上游在 getModuleFileName 里用 Buffer.from(id).toString("base64") 生成伪文件名，
+    // 这是 node-only 构建里唯一在浏览器路径上会用到的 Buffer API。
+    var Buffer = {
+      from(v) {
+        if (typeof v !== "string") return new Uint8Array(v);
+        const bytes = new TextEncoder().encode(v);
+        return {
+          length: bytes.length,
+          bytes,
+          toString(enc) {
+            if (enc === "base64") {
+              let s = "";
+              for (const b of bytes) s += String.fromCharCode(b);
+              try { return btoa(s); } catch { return String(v); }
+            }
+            return String(v);
+          },
+        };
+      },
+      alloc(n) { return new Uint8Array(n); },
+      isBuffer(v) { return v instanceof Uint8Array; },
+    };
+  }
   var require = (name) => {
     if (name === "url") return {
       pathToFileURL: (p) => new URL(p, self.location.href),
@@ -18,6 +73,7 @@ if (typeof require === "undefined") {
       join: (...a) => a.join("/").replace(/\/{2,}/g, "/"),
       dirname: (p) => p.replace(/\/[^/]*$/, "") || "/",
       basename: (p) => p.replace(/^.*\//, ""),
+      normalize: (p) => String(p).replace(/\/{2,}/g, "/"),
     };
     if (name === "worker_threads") return { parentPort: parentPortShim };
     if (name === "fs") return {
@@ -31,12 +87,18 @@ if (typeof require === "undefined") {
         },
       },
       readSync() { throw new Error("fs.readSync 在浏览器 worker 里不支持"); },
+      readFileSync() { throw new Error("fs.readFileSync 在浏览器 worker 里不支持（wasm 走 fetch 覆盖路径）"); },
+      readFile(id, opts, cb) {
+        const done = typeof opts === "function" ? opts : cb;
+        done(new Error("fs.readFile 在浏览器 worker 里不支持（wasm 走 fetch 覆盖路径）"));
+      },
     };
     if (name === "crypto") return {
       randomUUID: () => (self.crypto && self.crypto.randomUUID
         ? self.crypto.randomUUID()
         : String(Math.random()).slice(2) + Date.now().toString(16)),
     };
+    if (name === "module") return { builtinModules: [] };
     if (name === "ws") return {};
     throw new Error("browser worker 不支持 require(\"" + name + "\")");
   };
