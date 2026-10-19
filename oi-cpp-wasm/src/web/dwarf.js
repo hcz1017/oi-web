@@ -72,7 +72,7 @@ export class DwarfEngine {
     const requestId = this.nextId++;
     const p = new Promise((resolve, reject) => this.requests.set(requestId, { resolve, reject }));
     this.worker.postMessage({ requestId, request: { method, params } });
-    if (this.verbose) console.log("[dwarf→]", method, JSON.stringify(params).slice(0, 160));
+    if (this.verbose) console.log("[dwarf→]", method, brief(params));
     return p;
   }
 
@@ -119,7 +119,9 @@ export class DwarfEngine {
     this.requests.delete(msg.requestId);
     if ("error" in msg) cb.reject(new Error(String(msg.error)));
     else {
-      if (this.verbose) console.log("[dwarf←]", JSON.stringify(msg.response).slice(0, 160));
+      // ⚠️ 不要直接 JSON.stringify(...).slice()：hello/addRawModule 等响应可能是 undefined，
+      //    JSON.stringify(undefined) 返回 undefined → .slice 抛异常 → 连 resolve 都被打断（表现为永久卡住）
+      if (this.verbose) console.log("[dwarf←]", brief(msg.response));
       cb.resolve(msg.response);
     }
   }
@@ -136,6 +138,17 @@ function toArrayBuffer(bytes) {
   if (bytes instanceof ArrayBuffer) return bytes;
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+}
+
+/** 日志用的安全摘要：undefined/函数/循环引用都不能让日志本身抛异常 */
+function brief(value, max = 160) {
+  try {
+    const s = typeof value === "string" ? JSON.stringify(value) : JSON.stringify(value);
+    if (s === undefined) return String(value);
+    return s.length > max ? s.slice(0, max) + "…" : s;
+  } catch {
+    return String(value);
+  }
 }
 
 /** 与上游 WorkerRPC 的 SynchronousIOMessage.serialize 保持一致 */
