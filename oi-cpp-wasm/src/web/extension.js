@@ -494,6 +494,18 @@ async function symbolsProbe() {
 
 // ---------------------------------------------------------------- 调试（DAP）
 let pendingDebugTarget = null;
+/** 调试日志统一出口：Output 面板 + DevTools（否则浏览器里只能靠 DevTools，很难自查） */
+let debugChannel = null;
+function debugLog(s) {
+  if (!debugChannel) debugChannel = vscode.window.createOutputChannel("OI C++ 调试");
+  const line = String(s);
+  console.log("[oi debug]", line);
+  try { debugChannel.appendLine(line); } catch {}
+}
+function showDebugLog() {
+  if (!debugChannel) debugChannel = vscode.window.createOutputChannel("OI C++ 调试");
+  try { debugChannel.show(true); } catch {}
+}
 
 async function startDebugging() {
   const ed = vscode.window.activeTextEditor;
@@ -509,6 +521,8 @@ async function startDebugging() {
     flags: String(cfg.get("flags", "-std=c++20")),
   };
   symbols.memory = null;
+  showDebugLog();
+  debugLog(`== 开始调试 ${fileName} ==`);
   try {
     await vscode.debug.startDebugging(undefined, {
       type: "oi-cpp-wasm",
@@ -516,6 +530,7 @@ async function startDebugging() {
       name: "OI C++ 调试（WASM）",
     });
   } catch (e) {
+    debugLog("启动调试失败: " + ((e && (e.stack || e.message)) || e));
     vscode.window.showErrorMessage("启动调试失败: " + ((e && e.message) || e));
   }
 }
@@ -528,12 +543,13 @@ function registerDebugAdapter(c) {
         fileName: "main.cpp",
         flags: String(vscode.workspace.getConfiguration("oiCpp").get("flags", "-std=c++20")),
       };
+      debugLog(`创建调试适配器（${target.fileName}，${target.source.length} 字节源码）`);
       const adapter = new WasmDebugAdapter({
         target,
         getEngine: () => getSymbolsEngine(),
         compile: (args) => compileForDebug(args),
         workerUrl: workerUrl("debugWorker.js"),
-        log: (s) => console.log("[oi debug]", s),
+        log: debugLog,
         onSnapshot: (mem) => { symbols.memory = mem; },
       });
       return new vscode.DebugAdapterInlineImplementation(adapter);

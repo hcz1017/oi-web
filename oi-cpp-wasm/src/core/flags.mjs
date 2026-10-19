@@ -32,12 +32,15 @@ const FORBIDDEN_BARE = [/^-c$/, /^-S$/, /^-E$/, /^-fsyntax-only$/, /^-emit-llvm$
 const FORBIDDEN_WITH_VALUE = [/^-o$/, /^-x$/];
 const FORBIDDEN_INLINE = [/^-o./, /^--output=/, /^-x./, /^-emit-/];
 export function filterUserFlags(flags) {
+  // 用户配置里是字符串（"-std=c++20 -DLOCAL"），也可能有人传数组：
+  // 这里统一成数组，否则字符串会被按字符遍历（曾导致调试构建拿不到 -std=）
+  const list = Array.isArray(flags) ? flags : splitFlags(flags);
   const kept = [], dropped = [];
-  for (let i = 0; i < flags.length; i++) {
-    const f = flags[i];
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i];
     if (FORBIDDEN_WITH_VALUE.some((r) => r.test(f))) {
       dropped.push(f);
-      if (i + 1 < flags.length) dropped.push(flags[++i]);   // 连值一起丢，避免留成"游离输入文件"
+      if (i + 1 < list.length) dropped.push(list[++i]);   // 连值一起丢，避免留成"游离输入文件"
       continue;
     }
     if (FORBIDDEN_BARE.some((r) => r.test(f)) || FORBIDDEN_INLINE.some((r) => r.test(f))) { dropped.push(f); continue; }

@@ -44,13 +44,21 @@ export class WasmDebugAdapter {
   dispose() { this._kill(); try { this._emitter.dispose(); } catch {} }
 
   // ---------------------------------------------------------------- DAP 入口
+  // ⚠️ DAP 请求的形状是 { type:"request", command:"launch", ... }：
+  //    分发表必须用 command（之前用 msg.type 去找 on_request，导致每个请求都被当成
+  //    未知命令回了个空成功 → VS Code 以为 launch 完成、永远等不到 initialized → 卡死）
   handleMessage(msg) {
-    const fn = this[`on_${msg.type}`];
-    if (!fn) { if (msg.type === "request") this._respond(msg, undefined); return; }
+    if (!msg || msg.type !== "request") return;
+    const command = msg.command;
+    this.log(`DAP ← ${command}${msg.arguments ? " " + JSON.stringify(msg.arguments).slice(0, 120) : ""}`);
+    const fn = this[`on_${command}`];
+    if (!fn) { this._respond(msg, undefined); return; }
     Promise.resolve()
       .then(() => fn.call(this, msg))
       .catch((e) => {
-        this._error(msg, String((e && e.message) || e));
+        const text = String((e && (e.stack || e.message)) || e);
+        this.log(`✗ ${command} 失败: ${text}`);
+        this._error(msg, text);
       });
   }
 
@@ -219,10 +227,14 @@ export class WasmDebugAdapter {
   async _prepare() {
     const t0 = Date.now();
     MOD_ID = "oi-debug-" + Date.now();
+    this.log("① 开始编译调试版本…");
     const r = await this.compile({ source: this.target.source, fileName: this.target.fileName, flags: this.target.flags, opt: 0, debugInfo: true, debugStub: true });
+    this.log("① 编译完成 " + ((r && r.wasm) ? (r.wasm.byteLength / 1024).toFixed(0) + "KB" : "失败"));
     if (!r || !r.wasm) throw new Error("调试构建失败: " + String((r && r.log) || "").split("\n").slice(0, 6).join(" | "));
     const orig = new Uint8Array(r.wasm);
+    this.log("② 取 DWARF 引擎…");
     const engine = await this.getEngine();
+    this.log("② 引擎就绪");
     const info = parseWasm(orig);
     if (info.probeImportIndex < 0) throw new Error("调试构建缺少 oi.probe import（桩没链上）");
     const codeBase = info.code.contentStart;
@@ -230,7 +242,9 @@ export class WasmDebugAdapter {
 
     // 只给"用户工作区文件"生成语句站点（避免把 165 个头文件全插桩：体积/速度都吃不消）
     const wasmUrl = "file:///workspace/" + this.target.fileName;
+    this.log("③ addRawModule…");
     const sources = await engine.addRawModule(MOD_ID, wasmUrl, r.wasm);
+    this.log("③ 源文件 " + ((sources && sources.length) || 0) + " 个");
     const userFiles = (sources || []).filter((u) => /^file:\/\/\/workspace\//.test(u));
     const sites = [];
     const siteByLine = new Map();   // `${file}:${line0}` -> [siteId]
@@ -257,6 +271,7 @@ export class WasmDebugAdapter {
         siteByLine.get(key).push(id);
       }
     }
+    this.log(`④ 语句站点 ${sites.length} 个`);
     if (!sites.length) throw new Error("没有生成任何语句站点（DWARF 行表为空？）");
 
     const instr = instrumentWasm(orig, sites.map((s) => ({ id: s.id, offset: s.origOffset })));
@@ -315,6 +330,7 @@ export class WasmDebugAdapter {
     this.bpSab = new SharedArrayBuffer(words * 4);
     this.bp = new Int32Array(this.bpSab);
     this._syncBreakpointsToWorker();
+    this.log(`启动调试运行 worker（${s.sites.length} 个站点，断点 ${this.enabledSites.size} 个）`);
     this.worker = new Worker(this.workerUrl);
     this.worker.onmessage = (ev) => this._onWorkerMessage(ev.data);
     this.worker.onerror = (e) => { this._error2("debug worker 崩溃: " + ((e && e.message) || e)); };
@@ -349,6 +365,7 @@ export class WasmDebugAdapter {
       this.memory = m.memory || null;
       this.onSnapshot(this.memory);
       const site = m.site;
+      this.log(`⏸ 暂停 site=${m.siteId} ${site ? site.file.split("/").pop() + ":" + site.line : "?"}（栈 ${this.paused.frames.length} 帧，内存快照 ${this.memory ? (this.memory.byteLength / 1024).toFixed(0) + "KB" : "无"}）`);
       const line = site ? site.line : 1;
       this._event("stopped", {
         reason: (this._lastMode && this._lastMode !== 1) ? "step" : "breakpoint",
@@ -362,6 +379,7 @@ export class WasmDebugAdapter {
   }
 
   _error2(message) {
+    this.log("✗ " + String(message));
     this._event("output", { category: "stderr", output: String(message) + "\n" });
     this._event("terminated", {});
     this._kill();

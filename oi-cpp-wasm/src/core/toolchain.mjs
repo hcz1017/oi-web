@@ -108,7 +108,8 @@ export class Toolchain {
         ...ISYS.flatMap((d) => ["-internal-isystem", d]),
         "-ferror-limit", "19", "-fcolor-diagnostics",
         "-o", "/workspace/dbgstub.o", "/workspace/dbgstub.c", "-x", "c",
-        ...kept,
+        // ⚠️ 不要带用户 flags：桩是 C 文件，-std=c++20 之类会直接报
+        //    "invalid argument '-std=c++20' not allowed with 'C'"
       ];
       const ec2 = await this._run(c, ["clang", ...stubArgs], root, { onErr: collect, onOut: collect });
       stubObj = readFsFile(root, "/workspace/dbgstub.o");
