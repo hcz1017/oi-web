@@ -8,7 +8,18 @@
 import * as vscode from "vscode";
 import { instrumentWasm, firstInstrOffset, parseWasm } from "../core/wasm-bin.mjs";
 
-let MOD_ID = "oi-debug";   // 每次会话重新赋值，避免重复 launch 冲突
+let MOD_ID = "oi-debug";
+
+/** 引擎 evaluate 的返回格式 → 给人看的字符串 */
+function formatValue(vi) {
+  if (vi == null) return "<no value>";
+  if (typeof vi === "string") return vi;
+  if (vi.description != null) return String(vi.description);   // 引擎给的展示串（BigInt 友好）
+  if (vi.displayValue != null) return String(vi.displayValue);
+  if (vi.value != null) return typeof vi.value === "bigint" ? vi.value.toString() : String(vi.value);
+  if (vi.data != null) return typeof vi.data === "string" ? vi.data : JSON.stringify(vi.data);
+  return JSON.stringify(vi);
+}   // 每次会话重新赋值，避免重复 launch 冲突
 
 export class WasmDebugAdapter {
   /**
@@ -19,13 +30,15 @@ export class WasmDebugAdapter {
    * @param {string} o.workerUrl   dist/web/debugWorker.js
    * @param {(s:string)=>void} [o.log]
    */
-  constructor({ target, getEngine, compile, workerUrl, log, onSnapshot }) {
+  constructor({ target, getEngine, compile, workerUrl, log, onSnapshot, onFrame, terminal }) {
     this.target = target;
     this.getEngine = getEngine;
     this.compile = compile;
     this.workerUrl = workerUrl;
     this.log = log || (() => {});
     this.onSnapshot = onSnapshot || (() => {});   // 把暂停时的内存快照交给符号引擎宿主
+    this.onFrame = onFrame || (() => {});         // locals 快照位置 + 类型表（引擎读局部变量用）
+    this.terminal = terminal || null;             // { write(text), onInput(cb), dispose() }
     this._seq = 1;
     this._emitter = new vscode.EventEmitter();
     this.onDidSendMessage = this._emitter.event;
@@ -34,11 +47,30 @@ export class WasmDebugAdapter {
     this.worker = null;
     this.sab = null;
     this.ctrl = null;
+    this.stdinSab = null;
+    this.stdinCtrl = null;
+    this.stdinBuf = null;
+    this._inputQueue = [];      // 终端输入缓冲（宿主只能在工作线程空闲时写单槽）
     this.paused = null;         // { siteId, frames, memory, site }
     this.enabledSites = new Set();
     this.terminated = false;
     this.memory = null;         // 暂停时的内存快照
     this._configured = false;
+    this._status = null;
+    this.stats = { t0: 0, pauses: 0, sites: 0, files: 0, exit: null };
+  }
+
+  /** 写终端（把 \n 统一成终端需要的 \r\n）；同时不影响 Debug Console 的 output 事件 */
+  _term(text) {
+    if (!this.terminal) return;
+    const s = String(text).replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
+    try { this.terminal.write(s); } catch {}
+  }
+  _statusMsg(text) {
+    try {
+      this._status?.dispose();
+      this._status = vscode.window.setStatusBarMessage(text, 600000);
+    } catch {}
   }
 
   dispose() { this._kill(); try { this._emitter.dispose(); } catch {} }
@@ -79,8 +111,13 @@ export class WasmDebugAdapter {
   }
 
   async on_launch(req) {
+    this.stats.t0 = Date.now();
+    this._statusMsg("$(sync~spin) OI C++ 调试：准备中…");
+    this._term("\x1b[36m== OI C++ 调试（WASM）==\x1b[0m\r\n");
+    this._term(`源文件: ${this.target.fileName}\r\n`);
     this._event("output", { category: "console", output: "正在构建调试版本（-O0 -g，带插桩桩）…\n" });
     await this._prepare();
+    this._term("\x1b[36m[4/4] 启动程序…\x1b[0m\r\n");
     this._event("output", { category: "console", output: "调试准备完成，等待断点配置…\n" });
     this._respond(req, {});
     // 告诉 VS Code：可以发断点了
@@ -141,13 +178,19 @@ export class WasmDebugAdapter {
             if (fname) name = fname;
           } catch {}
         }
-        const isUserFile = file && file.endsWith("/" + this.target.fileName);
+        // 栈顶帧用「暂停点」的精确行号，而不是函数入口行（否则调用栈里显示的行号会偏）
+        const site = p.site;
+        if (i === 0 && site) { file = site.file; line = site.line; }
+        // 只给"用户源文件"挂 source：sysroot 里的 crt1-command.c 之类是 wasisdk: 虚拟路径，
+        // 挂上去会让 VS Code 尝试打开它并弹 "Unable to resolve resource wasisdk:..." 错误。
+        const isUserFile = !!file && file.endsWith("/" + this.target.fileName);
         frames.push({
           id: i + 1, name,
-          source: file
-            ? { name: file.split("/").pop(), path: isUserFile && this.target.sourceUri ? this.target.sourceUri : file }
+          source: isUserFile
+            ? { name: file.split("/").pop(), path: this.target.sourceUri || file }
             : undefined,
-          line, column: 1,
+          line: isUserFile ? line : 0,
+          column: 1,
         });
       }
     }
@@ -170,8 +213,9 @@ export class WasmDebugAdapter {
         const info = vars[i];
         let value = "";
         try {
-          const vi = await s.engine.getValueInfo(info.name, loc, p.stopId);
-          value = (vi && (vi.displayValue ?? vi.data)) != null ? String(vi.displayValue ?? JSON.stringify(vi.data)) : "";
+          // ⚠️ 宿主→引擎的 RPC 只暴露 evaluate，没有 getValueInfo（后者只是插件内部方法）
+          const vi = await s.engine.evaluate(info.name, loc, p.stopId);
+          value = formatValue(vi);
         } catch (e) { value = "<unavailable>"; }
         out.push({
           name: info.name,
@@ -191,9 +235,8 @@ export class WasmDebugAdapter {
       const s = this.session, p = this.paused;
       if (!s || !p) return this._respond(req, { result: "<no active stop>", variablesReference: 0 });
       const loc = this._currentRawLocation();
-      const vi = await s.engine.getValueInfo(String(req.arguments && req.arguments.expression), loc, p.stopId);
-      const text = vi ? String(vi.displayValue ?? (vi.data != null ? JSON.stringify(vi.data) : "(no value)")) : "(not found)";
-      this._respond(req, { result: text, variablesReference: 0 });
+      const vi = await s.engine.evaluate(String(req.arguments && req.arguments.expression), loc, p.stopId);
+      this._respond(req, { result: formatValue(vi), variablesReference: 0 });
     } catch (e) {
       this._respond(req, { result: "<unavailable: " + ((e && e.message) || e) + ">", variablesReference: 0 });
     }
@@ -217,6 +260,7 @@ export class WasmDebugAdapter {
     this._lastMode = mode;
     this.paused = null;
     this._event("continued", { threadId: 1, allThreadsContinued: true });
+    this._statusMsg("$(debug-alt) OI C++ 调试：运行中");
     // ⚠️ 必须由宿主直接写 SAB：worker 正在 Atomics.wait，收不到 postMessage
     Atomics.store(this.ctrl, 1, mode);
     Atomics.store(this.ctrl, 0, 1);
@@ -228,13 +272,22 @@ export class WasmDebugAdapter {
     const t0 = Date.now();
     MOD_ID = "oi-debug-" + Date.now();
     this.log("① 开始编译调试版本…");
+    this._term("[1/4] 编译调试版本（-O0 -g + 插桩桩）…\r\n");
+    const tCompile = Date.now();
     const r = await this.compile({ source: this.target.source, fileName: this.target.fileName, flags: this.target.flags, opt: 0, debugInfo: true, debugStub: true });
     this.log("① 编译完成 " + ((r && r.wasm) ? (r.wasm.byteLength / 1024).toFixed(0) + "KB" : "失败"));
-    if (!r || !r.wasm) throw new Error("调试构建失败: " + String((r && r.log) || "").split("\n").slice(0, 6).join(" | "));
+    if (!r || !r.wasm) {
+      this._term("\x1b[31m      编译失败\x1b[0m\r\n");
+      throw new Error("调试构建失败: " + String((r && r.log) || "").split("\n").slice(0, 6).join(" | "));
+    }
+    this._term(`      \x1b[32m✓\x1b[0m ${(r.wasm.byteLength / 1024).toFixed(0)}KB，${Date.now() - tCompile}ms\r\n`);
     const orig = new Uint8Array(r.wasm);
     this.log("② 取 DWARF 引擎…");
+    this._term("[2/4] 启动 DWARF 符号引擎（首次约 12.7MB）…\r\n");
+    const tEngine = Date.now();
     const engine = await this.getEngine();
     this.log("② 引擎就绪");
+    this._term(`      \x1b[32m✓\x1b[0m 就绪，${Date.now() - tEngine}ms\r\n`);
     const info = parseWasm(orig);
     if (info.probeImportIndex < 0) throw new Error("调试构建缺少 oi.probe import（桩没链上）");
     const codeBase = info.code.contentStart;
@@ -243,6 +296,7 @@ export class WasmDebugAdapter {
     // 只给"用户工作区文件"生成语句站点（避免把 165 个头文件全插桩：体积/速度都吃不消）
     const wasmUrl = "file:///workspace/" + this.target.fileName;
     this.log(`③ addRawModule…（url=${wasmUrl}，code=${r.wasm ? (r.wasm.byteLength / 1024).toFixed(0) + "KB" : "无"}）`);
+    this._term("[3/4] 解析 DWARF 符号…\r\n");
     let sources;
     try {
       sources = await engine.addRawModule(MOD_ID, wasmUrl, r.wasm);
@@ -251,6 +305,7 @@ export class WasmDebugAdapter {
       throw new Error(`addRawModule 失败（url=${wasmUrl}）: ${(e && e.message) || e}`);
     }
     this.log("③ 源文件 " + ((sources && sources.length) || 0) + " 个");
+    this._term(`      \x1b[32m✓\x1b[0m 源文件 ${(sources || []).length} 个\r\n`);
     const userFiles = (sources || []).filter((u) => /^file:\/\/\/workspace\//.test(u));
     const sites = [];
     const siteByLine = new Map();   // `${file}:${line0}` -> [siteId]
@@ -279,8 +334,10 @@ export class WasmDebugAdapter {
     }
     this.log(`④ 语句站点 ${sites.length} 个`);
     if (!sites.length) throw new Error("没有生成任何语句站点（DWARF 行表为空？）");
+    this._term(`      \x1b[32m✓\x1b[0m 可断点语句 ${sites.length} 个（用户文件 ${userFiles.length} 个）\r\n`);
 
     const instr = instrumentWasm(orig, sites.map((s) => ({ id: s.id, offset: s.origOffset })));
+    if (instr.dropped && instr.dropped.length) this.log(`插桩丢弃 ${instr.dropped.length} 个点`);
     this.session = {
       engine, orig, instr, sites, siteByLine, codeBase, importCount,
       bodies: info.code.bodies,
@@ -288,7 +345,10 @@ export class WasmDebugAdapter {
       fileName: this.target.fileName,
       siteById: new Map(sites.map((s) => [s.id, s])),
       siteIdToBody: new Map(sites.map((s) => [s.id, s.body])),
+      bodyLocals: instr.bodyLocals || [],
     };
+    this.stats.sites = sites.length;
+    this.stats.files = userFiles.length;
     this.log(`调试准备完成：${sites.length} 个语句站点 / ${userFiles.length} 个用户文件 / ${Date.now() - t0}ms`);
   }
 
@@ -336,7 +396,20 @@ export class WasmDebugAdapter {
     this.bpSab = new SharedArrayBuffer(words * 4);
     this.bp = new Int32Array(this.bpSab);
     this._syncBreakpointsToWorker();
+
+    // stdin：真终端输入（协议与 runWorker 完全一致）
+    this.stdinSab = new SharedArrayBuffer(8 + 65536);
+    this.stdinCtrl = new Int32Array(this.stdinSab, 0, 2);
+    this.stdinBuf = new Uint8Array(this.stdinSab, 8);
+    this._inputQueue = [];
+    if (this.terminal && typeof this.terminal.onInput === "function") {
+      this.terminal.onInput((bytes) => this._queueInput(bytes));
+    }
+
     this.log(`启动调试运行 worker（${s.sites.length} 个站点，断点 ${this.enabledSites.size} 个）`);
+    this._term("程序即将运行。\r\n\x1b[90m· 输入直接在本终端键入（和平时运行一样）\r\n· 命中断点会在左侧停住，可看调用栈/单步\r\n· 停止会话请按调试工具条的 ⏹ 或 Ctrl+Shift+F5\x1b[0m\r\n\r\n");
+    // 把焦点切到这个终端：否则用户会在"调试控制台"里输入（那里是 REPL，不喂 stdin）
+    try { this.terminal?.show?.(); } catch {}
     this.worker = new Worker(this.workerUrl);
     this.worker.onmessage = (ev) => this._onWorkerMessage(ev.data);
     this.worker.onerror = (e) => { this._error2("debug worker 崩溃: " + ((e && e.message) || e)); };
@@ -346,46 +419,91 @@ export class WasmDebugAdapter {
       sites: s.sites,
       breakpointSab: this.bpSab,
       sab: this.sab,
+      stdinSAB: this.stdinSab,
+      bodyLocals: s.bodyLocals || [],
       fileName: s.fileName,
     }, [s.instr.wasm.buffer]);
     // 注意：instr.wasm 的 buffer 被转移走了，后面不要再读它
     s.instr = null;
   }
 
-  _onWorkerMessage(m) {
-    if (!m || typeof m !== "object") return;
-    if (m.type === "stdout" || m.type === "stderr") {
-      this._event("output", { category: m.type === "stderr" ? "stderr" : "stdout", output: m.text });
+  /** 终端输入：宿主只能在 state===0（worker 空闲）时写单槽，其余排队等 consumed */
+  _queueInput(bytes) {
+    if (!bytes || !bytes.length) return;
+    this._inputQueue.push(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+    this._flushInput();
+  }
+  _flushInput() {
+    const ctrl = this.stdinCtrl, buf = this.stdinBuf;
+    if (!ctrl || !buf) return;
+    while (this._inputQueue.length) {
+      if (Atomics.load(ctrl, 0) !== 0) return;      // worker 侧还没取走上一批
+      const chunk = this._inputQueue.shift();
+      const n = Math.min(chunk.length, buf.length);
+      buf.set(chunk.subarray(0, n), 0);
+      if (n < chunk.length) this._inputQueue.unshift(chunk.subarray(n));
+      Atomics.store(ctrl, 1, n);
+      Atomics.store(ctrl, 0, 1);
+      Atomics.notify(ctrl, 0);
       return;
     }
-    if (m.type === "started") { this._event("process", { name: "wasm program", isLocalProcess: true, systemProcessId: 0, startMethod: "launch" }); return; }
+  }
+
+  _onWorkerMessage(m) {
+    if (!m || typeof m !== "object") return;
+    if (m.type === "consumed") { this._flushInput(); return; }
+    if (m.type === "stdout" || m.type === "stderr") {
+      this._event("output", { category: m.type === "stderr" ? "stderr" : "stdout", output: m.text });
+      this._term(m.text);                                   // 程序输出进真终端
+      return;
+    }
+    if (m.type === "started") {
+      this._statusMsg("$(debug-alt) OI C++ 调试：运行中");
+      this._event("process", { name: "wasm program", isLocalProcess: true, systemProcessId: 0, startMethod: "launch" });
+      return;
+    }
     if (m.type === "error") { this._error2(m.message); return; }
     if (m.type === "exit") {
-      this._event("exited", { exitCode: m.code || 0 });
+      const code = m.code || 0;
+      const ms = this.stats.t0 ? Date.now() - this.stats.t0 : 0;
+      const sec = (ms / 1000).toFixed(1);
+      const color = code === 0 ? "32" : "31";
+      this._term(`\r\n\x1b[${color}m[程序${code === 0 ? "正常退出" : "异常退出"} code=${code}]\x1b[0m 总用时 ${sec}s，暂停 ${this.stats.pauses} 次，可断点语句 ${this.stats.sites} 个\r\n`);
+      this._term("\x1b[90m[调试会话结束] 关掉这个终端不会影响代码；再点 🐞 会重新编译。\x1b[0m\r\n");
+      this._status?.dispose(); this._status = null;
+      this._event("exited", { exitCode: code });
       this._event("terminated", {});
       this._kill();
       return;
     }
     if (m.type === "paused") {
-      this.paused = { siteId: m.siteId, frames: m.frames || [], memory: m.memory, stopId: { siteId: m.siteId } };
+      this.paused = {
+        siteId: m.siteId, frames: m.frames || [], memory: m.memory, stopId: { siteId: m.siteId },
+        localsBase: m.localsBase || 0, bodyLocals: m.bodyLocals || [],
+      };
       this.memory = m.memory || null;
-      this.onSnapshot(this.memory);
+      this.onSnapshot(this.memory);   // 内存快照给引擎读变量
+      this.onFrame?.({ base: this.paused.localsBase, types: this.paused.bodyLocals });
+      this.stats.pauses++;
       const site = m.site;
-      this.log(`⏸ 暂停 site=${m.siteId} ${site ? site.file.split("/").pop() + ":" + site.line : "?"}（栈 ${this.paused.frames.length} 帧，内存快照 ${this.memory ? (this.memory.byteLength / 1024).toFixed(0) + "KB" : "无"}）`);
-      const line = site ? site.line : 1;
+      const where = site ? `${site.file.split("/").pop()}:${site.line}` : "?";
+      this.log(`⏸ 暂停 site=${m.siteId} ${where}（栈 ${this.paused.frames.length} 帧，内存快照 ${this.memory ? (this.memory.byteLength / 1024).toFixed(0) + "KB" : "无"}）`);
+      this._term(`\r\n\x1b[33m[暂停] ${where}（第 ${this.stats.pauses} 次）\x1b[0m\r\n`);
+      this._statusMsg(`$(debug-pause) OI C++ 调试：已暂停 ${where}`);
       this._event("stopped", {
         reason: (this._lastMode && this._lastMode !== 1) ? "step" : "breakpoint",
         threadId: 1,
         allThreadsStopped: true,
-        text: site ? `${site.file.split("/").pop()}:${site.line}` : "",
+        text: where,
         description: `暂停在 ${site ? site.file + ":" + site.line : "?"}`,
       });
-      void line;
     }
   }
 
   _error2(message) {
     this.log("✗ " + String(message));
+    this._term(`\r\n\x1b[31m[调试失败] ${String(message)}\x1b[0m\r\n`);
+    this._status?.dispose(); this._status = null;
     this._event("output", { category: "stderr", output: String(message) + "\n" });
     this._event("terminated", {});
     this._kill();
@@ -400,6 +518,8 @@ export class WasmDebugAdapter {
     if (this.worker) { try { this.worker.postMessage({ type: "shutdown" }); } catch {} try { this.worker.terminate(); } catch {} this.worker = null; }
     this.paused = null;
     this.memory = null;
+    try { this._status?.dispose(); } catch {}
+    this._status = null;
   }
 
   // ---- 供宿主（extension.js）注入：DWARF 引擎的宿主 getter 需要读暂停快照 ----

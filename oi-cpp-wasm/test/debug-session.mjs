@@ -47,9 +47,74 @@ if (!must(!!r.wasm, "调试构建编译成功")) process.exit(1);
 const orig = new Uint8Array(r.wasm);
 const info = parseWasm(orig);
 const baseOut = [];
-const baseCode = await tc.run(orig, { onOut: (b) => baseOut.push(Buffer.from(b)), extraImports: { oi: { probe() {} } } });
+const baseCode = await tc.run(orig, { onOut: (b) => baseOut.push(Buffer.from(b)), extraImports: { oi: { probe() { return 0; }, pause() {} } } });
 const baseText = Buffer.concat(baseOut).toString().trim();
 must(baseCode === 0 && baseText === "3", `基线运行输出 ${JSON.stringify(baseText)}`);
+
+// ---------- 第三个会话：stdin 走终端通道（b.cpp 就是 cin 循环，这条必须通） ----------
+const SRC2 = `#include <cstdio>
+int main() {
+  int a, b;
+  while (scanf("%d %d", &a, &b) == 2) printf("%d\\n", a + b);
+  return 0;
+}
+`;
+const r2 = await tc.compile({ source: SRC2, fileName: "echo.cpp", opt: 0, debug: true, debugStub: true });
+must(!!r2.wasm, "stdin 用例编译成功");
+if (!r2.wasm) console.log("   compile log:", String(r2.log || "").split("\n").slice(-8).join("\n"));
+if (r2.wasm) {
+  const orig2 = new Uint8Array(r2.wasm);
+  const instr2 = instrumentWasm(orig2, []);            // 不需要站点，只验证 stdin
+  const stdinSab = new SharedArrayBuffer(8 + 65536);
+  const stdinCtrl = new Int32Array(stdinSab, 0, 2);
+  const stdinBuf = new Uint8Array(stdinSab, 8);
+  const events3 = [];
+  const w3 = new Worker(path.join(HERE, "node-worker-self.cjs"), {
+    workerData: { bundlePath: path.join(EXT, "dist/web/debugWorker.js") },
+  });
+  w3.on("message", (m) => events3.push(m));
+  w3.postMessage({
+    type: "init",
+    wasm: instr2.wasm.buffer,
+    sites: [],
+    breakpointSab: new SharedArrayBuffer(4),
+    sab: new SharedArrayBuffer(8),
+    stdinSAB: stdinSab,
+    fileName: "echo.cpp",
+  });
+  const wait3 = async (pred, ms = 15000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const e = events3.find(pred);
+      if (e) return e;
+      await sleep(10);
+    }
+    return null;
+  };
+  // 宿主侧输入：单槽协议（state 0 才写），收到 consumed 再继续；写空后置 EOF(3)
+  const pending = [...Buffer.from("10 20\n3 4\n")];
+  const pump = () => {
+    while (pending.length) {
+      if (Atomics.load(stdinCtrl, 0) !== 0) return;
+      const n = Math.min(pending.length, stdinBuf.length);
+      stdinBuf.set(pending.splice(0, n), 0);
+      Atomics.store(stdinCtrl, 1, n);
+      Atomics.store(stdinCtrl, 0, 1);
+      Atomics.notify(stdinCtrl, 0);
+      return;
+    }
+    Atomics.store(stdinCtrl, 0, 3);
+    Atomics.notify(stdinCtrl, 0);
+  };
+  const pumpTimer = setInterval(() => { pump(); console.log("    pump state=", Atomics.load(stdinCtrl,0), "pending=", pending.length); }, 20);
+  const ex3 = await wait3((e) => e.type === "exit");
+  clearInterval(pumpTimer);
+  const out3 = events3.filter((e) => e.type === "stdout").map((e) => e.text).join("").trim();
+  must(!!ex3 && ex3.code === 0, `stdin 用例正常退出（code ${ex3 && ex3.code}）`);
+  console.log("   事件:", JSON.stringify(events3.map((e) => e.type + (e.text ? ":" + JSON.stringify(e.text) : "")).slice(0, 12)));
+  must(out3 === "30\n7", `调试终端输入生效（输出 ${JSON.stringify(out3)}）`);
+  try { w3.terminate(); } catch {}
+}
 
 // ---------- 引擎建站点 ----------
 const host = {

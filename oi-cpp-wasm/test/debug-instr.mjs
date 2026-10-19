@@ -60,7 +60,7 @@ const runWith = async (wasm, onProbe) => {
   const out = [];
   const code = await tc.run(wasm, {
     onOut: (b) => out.push(Buffer.from(b)),
-    extraImports: { oi: { probe: (id) => onProbe(id) } },
+    extraImports: { oi: { probe: (id) => { onProbe(id); return 0; }, pause: () => {} } },
   });
   return { code, text: Buffer.concat(out).toString().trim() };
 };

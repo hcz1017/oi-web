@@ -412,7 +412,7 @@ function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, d
 }
 
 /** 符号引擎单例：只做 DWARF 查询（行映射/变量），不负责运行程序 */
-const symbols = { engine: null, ready: null, memory: null };
+const symbols = { engine: null, ready: null, memory: null, frame: null };
 
 function getSymbolsEngine() {
   if (symbols.engine) return symbols.ready;
@@ -424,7 +424,21 @@ function getSymbolsEngine() {
         if (!mem) throw new Error("当前没有暂停快照");
         return mem.buffer.slice(mem.byteOffset + offset, mem.byteOffset + offset + length);
       },
-      getWasmLocal() { throw new Error("locals 快照尚未实现"); },
+      // 暂停时插桩会把所有 wasm local 写进线性内存的一页里（frame.base + i*8），
+      // 这里按类型读出对应值交给 DWARF 引擎（clang -O0 下局部变量通常就在 wasm local 里）
+      getWasmLocal(local) {
+        const mem = symbols.memory, f = symbols.frame;
+        if (!mem || !f) throw new Error("当前没有暂停快照");
+        const type = (f.types || [])[local];
+        const dv = new DataView(mem.buffer, mem.byteOffset + f.base + local * 8, 8);
+        switch (type) {
+          case 0x7f: return { type: "i32", value: dv.getInt32(0, true) };
+          case 0x7e: return { type: "i64", value: dv.getBigInt64(0, true) };
+          case 0x7d: return { type: "f32", value: dv.getFloat32(0, true) };
+          case 0x7c: return { type: "f64", value: dv.getFloat64(0, true) };
+          default: throw new Error("不支持的 local 类型: " + type);
+        }
+      },
       getWasmGlobal() { throw new Error("globals 快照尚未实现"); },
       getWasmOp() { throw new Error("operand stack 不可用"); },
     };
@@ -509,6 +523,44 @@ function showDebugLog() {
   try { debugChannel.show(true); } catch {}
 }
 
+/**
+ * 确保"任意文件都能下断点"。
+ * VS Code 默认只在"有调试器的语言"里提供行号左侧断点凹槽；Web 版里 cpp 语言 id/调试器
+ * 注册时序稍有差异就会出现点不动。debug.allowBreakpointsEverywhere 是官方开关。
+ */
+async function ensureBreakpointsEnabled() {
+  try {
+    const cfg = vscode.workspace.getConfiguration("debug");
+    if (cfg.get("allowBreakpointsEverywhere") === true) return;
+    await cfg.update("allowBreakpointsEverywhere", true, vscode.ConfigurationTarget.Global);
+    debugLog("已开启 debug.allowBreakpointsEverywhere（否则 Web 版里行号左侧点不出断点）");
+  } catch (e) {
+    debugLog("开启 allowBreakpointsEverywhere 失败: " + ((e && e.message) || e));
+  }
+}
+
+/** 在当前行切换断点（F9 / 右键菜单）：不依赖行号左侧凹槽，永远可用 */
+async function toggleBreakpoint() {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) { vscode.window.showWarningMessage("先打开一个 C/C++ 文件"); return; }
+  const doc = ed.document;
+  const line0 = ed.selection.active.line;
+  const uri = doc.uri.toString();
+  const existing = vscode.debug.breakpoints.filter((b) => {
+    if (!b.enabled || !b.location) return false;
+    const loc = b.location;
+    return loc.uri.toString() === uri && loc.range.start.line === line0;
+  });
+  if (existing.length) {
+    vscode.debug.removeBreakpoints(existing);
+    debugLog(`已删除断点 line ${line0 + 1}`);
+    return;
+  }
+  const bp = new vscode.SourceBreakpoint(new vscode.Location(doc.uri, new vscode.Position(line0, 0)));
+  vscode.debug.addBreakpoints([bp]);
+  debugLog(`已添加断点 line ${line0 + 1}`);
+}
+
 async function startDebugging() {
   const ed = vscode.window.activeTextEditor;
   if (!ed) { vscode.window.showWarningMessage("先打开一个 C/C++ 文件"); return; }
@@ -523,6 +575,7 @@ async function startDebugging() {
     flags: String(cfg.get("flags", "-std=c++20")),
   };
   symbols.memory = null;
+  symbols.frame = null;
   showDebugLog();
   debugLog(`== 开始调试 ${fileName} ==`);
   try {
@@ -537,6 +590,43 @@ async function startDebugging() {
   }
 }
 
+/** 调试专用终端：程序输出写这里，键盘输入直接喂给调试 worker 的 stdin */
+let debugTerminal = null;
+function getDebugTerminal(fileName) {
+  // 上一次的调试终端（已结束的会话）先收掉，避免终端越积越多
+  if (debugTerminal) { try { debugTerminal.term.dispose(); } catch {} debugTerminal = null; }
+  const writeEmitter = new vscode.EventEmitter();
+  const closeEmitter = new vscode.EventEmitter();
+  let inputCb = null;
+  const pty = {
+    onDidWrite: writeEmitter.event,
+    onDidClose: closeEmitter.event,
+    open() {},
+    close() { try { closeEmitter.fire(); } catch {} },
+    handleInput(data) {
+      // Pseudoterminal 不会自动回显：自己回显，否则用户以为"输入没反应"
+      let echo = "";
+      for (const ch of String(data)) {
+        if (ch === "\r") echo += "\r\n";
+        else if (ch === "\x7f") echo += "\b \b";     // 退格
+        else echo += ch;
+      }
+      try { writeEmitter.fire(echo); } catch {}
+      // 终端回车是 \r，程序里的 scanf/cin 期待 \n
+      if (inputCb) inputCb(new TextEncoder().encode(String(data).replace(/\r/g, "\n")));
+    },
+  };
+  const term = vscode.window.createTerminal({ name: `OI 调试 · ${fileName}`, pty });
+  term.show();
+  debugTerminal = {
+    term,
+    write: (s) => { try { writeEmitter.fire(String(s)); } catch {} },
+    onInput: (cb) => { inputCb = cb; },
+    show: () => { try { term.show(); } catch {} },
+  };
+  return debugTerminal;
+}
+
 function registerDebugAdapter(c) {
   c.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory("oi-cpp-wasm", {
     createDebugAdapterDescriptor() {
@@ -546,6 +636,7 @@ function registerDebugAdapter(c) {
         flags: String(vscode.workspace.getConfiguration("oiCpp").get("flags", "-std=c++20")),
       };
       debugLog(`创建调试适配器（${target.fileName}，${target.source.length} 字节源码）`);
+      const terminal = getDebugTerminal(target.fileName);
       const adapter = new WasmDebugAdapter({
         target,
         getEngine: () => getSymbolsEngine(),
@@ -553,6 +644,8 @@ function registerDebugAdapter(c) {
         workerUrl: workerUrl("debugWorker.js"),
         log: debugLog,
         onSnapshot: (mem) => { symbols.memory = mem; },
+        onFrame: (f) => { symbols.frame = f; },
+        terminal,
       });
       return new vscode.DebugAdapterInlineImplementation(adapter);
     },
@@ -663,6 +756,7 @@ export async function activate(c) {
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runTerminal", () => ensureTerminal("main.cpp")));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.symbolsProbe", symbolsProbe));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.debug", startDebugging));
+    c.subscriptions.push(vscode.commands.registerCommand("oiCpp.toggleBreakpoint", toggleBreakpoint));
     registerDebugAdapter(c);
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.restartLsp", async () => {
       stopClangd();

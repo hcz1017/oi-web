@@ -46,6 +46,11 @@
         "command": "oiCpp.debug",
         "title": "OI C++: 开始调试（WASM）",
         "icon": "$(debug-alt)"
+      },
+      {
+        "command": "oiCpp.toggleBreakpoint",
+        "title": "OI C++: 切换断点（当前行）",
+        "icon": "$(circle-filled)"
       }
     ],
     "menus": {
@@ -69,6 +74,24 @@
         {
           "command": "oiCpp.debug",
           "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/"
+        },
+        {
+          "command": "oiCpp.toggleBreakpoint",
+          "when": "editorTextFocus"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "oiCpp.toggleBreakpoint",
+          "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/",
+          "group": "navigation@9"
+        }
+      ],
+      "editor/lineNumber/context": [
+        {
+          "command": "oiCpp.toggleBreakpoint",
+          "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/",
+          "group": "navigation@1"
         }
       ]
     },
@@ -77,6 +100,11 @@
         "command": "oiCpp.runInTerminal",
         "key": "ctrl+shift+b",
         "when": "resourceExtname =~ /^\\.(cpp|cc|cxx|c)$/"
+      },
+      {
+        "command": "oiCpp.toggleBreakpoint",
+        "key": "f9",
+        "when": "editorTextFocus && !inDebugRepl"
       }
     ],
     "configuration": {
@@ -163,7 +191,9 @@
     "test:session": "node test/debug-session.mjs",
     "test:dap": "node test/dap-flow.mjs",
     "test:client": "node test/dwarf-client.mjs",
-    "test:dwarf": "node test/dwarf-browser-env.mjs"
+    "test:dwarf": "node test/dwarf-browser-env.mjs",
+    "test:eval": "node test/debug-eval.mjs",
+    "test:all": "node test/smoke.mjs && node test/debug-instr.mjs && node test/debug-session.mjs && node test/debug-eval.mjs && node test/dap-flow.mjs && node test/dwarf-client.mjs && node test/dwarf-browser-env.mjs"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",

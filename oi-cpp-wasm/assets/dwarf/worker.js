@@ -111,12 +111,18 @@ var import_meta_url = (() => {
   // 引擎只在 emscripten 的 locateFile 分支里用它（我们的 wasm 加载走 fetch 覆盖，不依赖这个文件路径），
   // 但那一行会在 addRawModule 时才执行，任何非法值都会让整个引擎初始化失败。
   // 所以这里逐级兜底，并且保证返回值一定是合法 URL。
+  // 注意顺序：必须先用 __oiDwarfBase。Web 扩展宿主会把 Worker 包成 blob: URL，
+  // blob: 虽然是合法 URL，但 new URL(relative, blobURL) 会抛 Invalid URL。
   try {
-    if (typeof self !== "undefined" && self.location && self.location.href) return new URL(self.location.href);
+    const base = (typeof self !== "undefined" && self.__oiDwarfBase) || "";
+    if (base) {
+      let b = String(base);
+      while (b.endsWith("/")) b = b.slice(0, -1);
+      return new URL(b + "/dwarf/worker.js");
+    }
   } catch (e) { /* 继续兜底 */ }
   try {
-    const base = (typeof self !== "undefined" && self.__oiDwarfBase) || "https://oi.invalid";
-    return new URL(String(base) + "/dwarf/worker.js");
+    if (typeof self !== "undefined" && self.location && self.location.href) return new URL(self.location.href);
   } catch (e) { /* 继续兜底 */ }
   return new URL("https://oi.invalid/dwarf/worker.js");
 })();

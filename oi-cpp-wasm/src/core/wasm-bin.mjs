@@ -107,7 +107,22 @@ export function parseWasm(bytes) {
         let size;
         [size, p] = readU32(bytes, p);
         const bodyStart = p;
-        bodies.push({ index: i, sizeStart, bodyStart, end: bodyStart + size, size });
+        // 解析 locals 声明（插桩要在函数末尾追加一个临时 i32 local）
+        let lp = bodyStart, groups;
+        [groups, lp] = readU32(bytes, lp);
+        const localTypes = [];
+        const groupList = [];
+        for (let g = 0; g < groups; g++) {
+          let n;
+          [n, lp] = readU32(bytes, lp);
+          const type = bytes[lp++];
+          groupList.push({ n, type });
+          for (let k = 0; k < n; k++) localTypes.push(type);
+        }
+        bodies.push({
+          index: i, sizeStart, bodyStart, end: bodyStart + size, size,
+          localsEnd: lp, groups: groupList, locals: localTypes,
+        });
         p = bodyStart + size;
       }
       code = { contentStart, count, bodies };
@@ -117,7 +132,12 @@ export function parseWasm(bytes) {
   if (!code) throw new Error("没有 code 段");
 
   const probe = allImports.find((x) => x.kind === 0 && x.module === "oi" && x.name === "probe");
-  return { entries, code, funcImports: allImports.filter((x) => x.kind === 0), probeImportIndex: probe ? probe.index : -1 };
+  const pause = allImports.find((x) => x.kind === 0 && x.module === "oi" && x.name === "pause");
+  return {
+    entries, code, funcImports: allImports.filter((x) => x.kind === 0),
+    probeImportIndex: probe ? probe.index : -1,
+    pauseImportIndex: pause ? pause.index : -1,
+  };
 }
 
 /** 函数体第一个指令的模块内偏移（跳过 locals 声明） */
@@ -134,69 +154,99 @@ export function firstInstrOffset(bytes, body) {
 }
 
 // ---------------------------------------------------------------- 插桩
+// 每个语句起点的插桩序列（含 locals 快照，供 DWARF 引擎读变量）：
+//   block
+//     i32.const siteId ; call probe            → ptr（0 表示这次不暂停）
+//     local.set $tmp ; local.get $tmp ; i32.eqz ; br_if 0
+//     for each local i:  local.get $tmp ; i32.const i*8 ; i32.add ; local.get i ; <store>
+//     call pause                               ← 这里阻塞，引擎可以读 locals
+//   end
+const STORE_OPS = { 0x7f: [0x36, 2], 0x7e: [0x37, 3], 0x7d: [0x38, 2], 0x7c: [0x39, 3] };
+
 /**
- * 在给定模块偏移处插入探针调用。
+ * 在给定模块偏移处插入探针（带 locals 快照）。
  * @param {Uint8Array} bytes 原始（未插桩）wasm
  * @param {Array<{id:number, offset:number}>} sites  offset 为**模块内绝对偏移**，且必须是语句起点
- * @returns {{wasm: Uint8Array, sites: Array<{id:number, origOffset:number, newOffset:number}>}}
+ * @returns {{wasm:Uint8Array, sites:Array<{id:number,origOffset:number,newOffset:number,body:number}>,
+ *            dropped:Array, probeImportIndex:number, pauseImportIndex:number,
+ *            bodyLocals:Array<Array<number>>, codeContentStartOrig:number}}
  */
 export function instrumentWasm(bytes, sites) {
   const info = parseWasm(bytes);
-  if (info.probeImportIndex < 0) {
-    throw new Error('产物里没有 import "oi"."probe"（调试构建需要先链接 src/core/dbg-stub.c）');
+  if (info.probeImportIndex < 0 || info.pauseImportIndex < 0) {
+    throw new Error('产物里缺少 import "oi"."probe"/"oi"."pause"（调试构建需要先链接 dbg-stub）');
   }
   const probeIdx = info.probeImportIndex;
+  const pauseIdx = info.pauseImportIndex;
   const { code } = info;
 
-  // 1) 把 site 归到函数体，算 body 内相对位置；非法位置直接丢弃（宁可少插，不要插坏）
-  const perBody = new Map();     // body.index -> [{rel, id}]
+  // 1) 把 site 归到函数体（用 orig 相对位置）；非法位置丢弃（宁可少插，不要插坏）
+  const perBody = new Map();
   const dropped = [];
   const sortedSites = [...sites].sort((a, b) => a.offset - b.offset);
   for (const s of sortedSites) {
     const body = code.bodies.find((b) => s.offset >= b.bodyStart && s.offset < b.end);
     if (!body) { dropped.push({ ...s, why: "不在任何函数体内" }); continue; }
-    const firstInstr = firstInstrOffset(bytes, body);
-    if (s.offset < firstInstr) { dropped.push({ ...s, why: "落在 locals 声明区" }); continue; }
+    if (s.offset < body.localsEnd) { dropped.push({ ...s, why: "落在 locals 声明区" }); continue; }
     if (!perBody.has(body.index)) perBody.set(body.index, []);
     perBody.get(body.index).push({ rel: s.offset - body.bodyStart, id: s.id });
   }
   for (const list of perBody.values()) list.sort((a, b) => a.rel - b.rel);
 
-  // 2) 重建 code 段
-  const probeSeq = (id) => [0x41, ...writeS32(id | 0), 0x10, ...writeU32(probeIdx)];
-  const newBodies = [];
-  const outSites = [];
-  let newBodyStartCursor = 0; // 相对新 code 段内容起点（函数数量字节之后）——先占位，实际偏移下面算
-
-  // 先算每个函数体的新字节，再拼（需要两遍才能给出 newOffset）
+  // 2) 每个函数体：追加一个临时 i32 local + 在站点处插入快照序列
   const bodyBlobs = code.bodies.map((body) => {
-    const list = perBody.get(body.index) || [];
-    const parts = [];
-    let cursor = body.bodyStart;
-    for (const ins of list) {
-      const at = body.bodyStart + ins.rel;
+    const tempIdx = body.locals.length;                 // 追加在最后，不影响已有 local 索引
+    const localsBytes = [
+      ...writeU32(body.groups.length + 1),
+      ...body.groups.flatMap((g) => [...writeU32(g.n), g.type]),
+      ...writeU32(1), 0x7f,
+    ];
+    const seqFor = (id) => {
+      const out = [
+        0x02, 0x40,                                     // block void
+        0x41, ...writeS32(id | 0),                      // i32.const siteId
+        0x10, ...writeU32(probeIdx),                    // call probe
+        0x21, ...writeU32(tempIdx),                     // local.set $tmp
+        0x20, ...writeU32(tempIdx), 0x45,               // local.get $tmp ; i32.eqz
+        0x0d, 0x00,                                     // br_if 0（ptr==0 时跳过）
+      ];
+      for (let i = 0; i < body.locals.length; i++) {
+        const op = STORE_OPS[body.locals[i]];
+        if (!op) continue;                              // v128/其他类型暂不保存
+        out.push(
+          0x20, ...writeU32(tempIdx),                   // local.get $tmp（快照基址）
+          0x41, ...writeS32(i * 8), 0x6a,               // i32.const off ; i32.add
+          0x20, ...writeU32(i),                         // local.get i
+          op[0], op[1], 0x00,                           // <store> align, offset=0
+        );
+      }
+      out.push(0x10, ...writeU32(pauseIdx), 0x0b);      // call pause ; end
+      return out;
+    };
+    const seqs = (perBody.get(body.index) || []).map((s) => ({ ...s, seq: seqFor(s.id) }));
+    const parts = [Uint8Array.from(localsBytes)];
+    let cursor = body.localsEnd;
+    for (const s of seqs) {
+      const at = body.bodyStart + s.rel;
       parts.push(bytes.subarray(cursor, at));
-      parts.push(Uint8Array.from(probeSeq(ins.id)));
+      parts.push(Uint8Array.from(s.seq));
       cursor = at;
     }
     parts.push(bytes.subarray(cursor, body.end));
     let total = 0;
     for (const p of parts) total += p.length;
-    return { body, parts, payloadLen: total, list, inserted: (list.length * 4) };
+    return { body, parts, payloadLen: total, seqs, localsLen: localsBytes.length };
   });
 
-  // 计算新 code 段内容：count + 每个 body 的 size + payload
-  const pieces = [];
-  pieces.push(Uint8Array.from(writeU32(code.count)));
+  // 3) 重建 code 段
+  const pieces = [Uint8Array.from(writeU32(code.count))];
   for (const blob of bodyBlobs) {
     pieces.push(Uint8Array.from(writeU32(blob.payloadLen)));
     for (const p of blob.parts) pieces.push(p);
   }
   const newCodeContent = concat(pieces);
 
-  // 3) 拼整个模块：magic + 逐段（code 段替换内容，其余原样拷贝 id+size+content）
-  const out = [];
-  out.push(bytes.subarray(0, 8));
+  const out = [bytes.subarray(0, 8)];
   for (const e of info.entries) {
     if (e.id === 10) {
       out.push(Uint8Array.from([10]));
@@ -208,28 +258,33 @@ export function instrumentWasm(bytes, sites) {
   }
   const wasm = concat(out);
 
-  // 4) 计算 newOffset：重新解析新模块，把每个 site 的 body 内相对位置映射到新偏移
+  // 4) 计算每站点在新模块里的偏移（用于调试；运行时用 origOffset + 站点表即可）
   const after = parseWasm(wasm);
-  const byRel = new Map();  // bodyIndex -> Map(relOfOrigBodyStart? ) —— 用"插入序号"法更稳
-  // 插入序号法：对每个 body，按 orig rel 排序，新 rel = orig rel + 前面插入的探针长度之和
-  const newOffsets = new Map(); // `${bodyIndex}:${origRel}` -> newOffset
+  const outSites = [];
   for (const blob of bodyBlobs) {
     const bodyNew = after.code.bodies[blob.body.index];
-    let added = 0;
-    for (const ins of blob.list) {
-      added += probeSeq(ins.id).length;
-      newOffsets.set(`${blob.body.index}:${ins.rel}`, bodyNew.bodyStart + ins.rel + added);
+    let added = blob.localsLen - (blob.body.localsEnd - blob.body.bodyStart);
+    for (const s of blob.seqs) {
+      const newRel = (s.rel - (blob.body.localsEnd - blob.body.bodyStart)) + blob.localsLen + (added - (blob.localsLen - (blob.body.localsEnd - blob.body.bodyStart)));
+      outSites.push({
+        id: s.id,
+        origOffset: blob.body.bodyStart + s.rel,
+        newOffset: bodyNew.bodyStart + newRel,
+        body: blob.body.index,
+      });
+      added += s.seq.length;
     }
   }
-  for (const s of sortedSites) {
-    const body = code.bodies.find((b) => s.offset >= b.bodyStart && s.offset < b.end);
-    if (!body) continue;
-    const rel = s.offset - body.bodyStart;
-    const n = newOffsets.get(`${body.index}:${rel}`);
-    if (n != null) outSites.push({ id: s.id, origOffset: s.offset, newOffset: n });
-  }
 
-  return { wasm, sites: outSites, dropped, probeImportIndex: probeIdx, codeContentStartOrig: code.contentStart };
+  return {
+    wasm,
+    sites: outSites,
+    dropped,
+    probeImportIndex: probeIdx,
+    pauseImportIndex: pauseIdx,
+    bodyLocals: code.bodies.map((b) => b.locals),
+    codeContentStartOrig: code.contentStart,
+  };
 }
 
 function concat(list) {

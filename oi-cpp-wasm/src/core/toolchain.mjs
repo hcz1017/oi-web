@@ -73,6 +73,10 @@ export class Toolchain {
     const root = this._fs();
     this._del("out.o");
     this._del("out.wasm");
+    // ⚠️ 桩对象必须每次删掉重建：WASI FS 里上一次编译写出的文件是只读的，
+    //    第二次调试时 clang 再写会报 "unable to open output file '/workspace/dbgstub.o': Operation not permitted"
+    this._del("dbgstub.o");
+    this._del("dbgstub.c");
     this._put(fileName, new TextEncoder().encode(source));
 
     const cc1 = [
