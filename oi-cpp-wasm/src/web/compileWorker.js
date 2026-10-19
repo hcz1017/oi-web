@@ -44,6 +44,8 @@ self.onmessage = async (ev) => {
       const r = await tc.compile({
         source: m.source, fileName: m.fileName, flags: m.flags || [],
         opt: m.opt ?? 2, debug: m.debugInfo !== false,
+        // 调试构建：先链接 dbg-stub，预置 import "oi"."probe"（插桩需要）
+        debugStub: !!m.debugStub,
       });
       const ms = Math.round(performance.now() - t0);
       if (!r.wasm) { post({ type: "compiled", id: m.id, ok: false, log: r.log, ms, exit: r.exit }); return; }
