@@ -10085,7 +10085,7 @@ var WorkerRPC = class {
         const response = await this.localHandler[request.method](...request.params);
         this.channel.postMessage({ requestId, response });
       } catch (error) {
-        this.channel.postMessage({ requestId, error: `${error}` });
+        this.channel.postMessage({ requestId, error: String((error && (error.stack || error)) || error) });
       }
     } else if ("sync_request" in event.data) {
       const { sync_request: { request, io_buffer } } = event.data;

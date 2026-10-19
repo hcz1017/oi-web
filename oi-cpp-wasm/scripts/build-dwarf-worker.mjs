@@ -154,6 +154,14 @@ if (typeof require === "undefined") {
 `;
 src = shim + src;
 
+// ---- 改动 3：RPC 错误带上栈 ----
+// 上游只把 `${error}` 发回宿主，浏览器里排查"引擎内部抛错"时看不到调用栈。
+// 这个替换只影响错误信息文本，不改变控制流。
+src = src.replace(
+  "this.channel.postMessage({ requestId, error: `${error}` });",
+  "this.channel.postMessage({ requestId, error: String((error && (error.stack || error)) || error) });",
+);
+
 writeFileSync(path.join(OUT, "worker.js"), src);
 
 // ---- 资产：SymbolsBackend.wasm 压缩（56MB → 约十几 MB）----

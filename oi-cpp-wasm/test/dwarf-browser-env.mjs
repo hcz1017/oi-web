@@ -28,7 +28,7 @@ const tc = new Toolchain({
   compatBits: readFileSync(A("compat/bits/stdc++.h")),
 });
 const r = await tc.compile({
-  source: `#include <cstdio>\nint add(int a,int b){int s=a+b;return s;}\nint main(){printf("%d\\n",add(1,2));return 0;}\n`,
+  source: `#include <bits/stdc++.h>\nint add(int a,int b){int s=a+b;return s;}\nint main(){std::vector<int> v{1,2,3};printf("%d\\n",add(v[0],v[1]));return 0;}\n`,
   fileName: "main.cpp", opt: 0, debug: true, debugStub: true,
 });
 if (!must(!!r.wasm, "编译测试程序")) process.exit(1);
