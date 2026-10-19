@@ -160,7 +160,8 @@
     "test": "node test/smoke.mjs",
     "test:debug": "node test/debug-instr.mjs",
     "dwarf": "node scripts/build-dwarf-worker.mjs",
-    "test:session": "node test/debug-session.mjs"
+    "test:session": "node test/debug-session.mjs",
+    "test:dap": "node test/dap-flow.mjs"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",
