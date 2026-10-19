@@ -42,14 +42,32 @@ oi-cpp-wasm/               扩展本体（VS Code Web 扩展，entry: dist/web/e
    `callMain` 会返回（Asyncify），必须在它之前 `drainPending()`。
 5. 需要 **COOP/COEP**（`--coi`）：pthreads 与 SharedArrayBuffer 都要求跨源隔离。
 
+## 调试（源码级，WASM）
+
+编辑器标题栏的 **🐞 按钮**（或命令面板 `OI C++: 开始调试（WASM）`）：
+
+1. 打开要调试的 `.cpp`，点按钮
+2. 首次会先编译调试版本（`-O0 -g` + 插桩），再启动会话
+3. 在行号左侧下断点 → 命中断点/单步/看调用栈与输出
+
+实现：DWARF 符号层用微软 `@vscode/dwarf-debugging` 的 `SymbolsBackend.wasm`（Chrome cxx_debugging，MIT），
+执行控制用"编译期预置 import + 语句级插桩 + SharedArrayBuffer 暂停"，外壳是 VS Code 原生 DAP。
+
+当前限制（MVP）：
+- 只支持调试**当前打开的那个源文件**的断点；头文件/其它文件的断点显示为未绑定
+- `stepOver` 用"同一函数体内的下一条语句"近似；步入库函数会直接落到下一条用户语句
+- 变量面板：内存里的变量可读；`locals`/`globals` 依赖的暂停快照尚未实现，会显示不可用
+- 调试会话的 stdin 暂为空（运行态的交互 stdin 不受影响）
+
 ## 状态
 
 - ✅ WASM 编译（cc1 + wasm-ld，`bits/stdc++.h` 可用）、真实终端交互 stdin、多文件独立终端
 - ✅ clangd：补全 / 诊断 / 符号 / 语义高亮 / 跳转（跳标准头文件走只读虚拟 FS `clangd-hdr:`）
 - ⚠️ 已知问题：clangd(WASI) 的 **stdout 行缓冲**——响应要等下一次 stdin 输入才被 flush，
   表现为「悬浮/跳转偶尔要等下一条请求才出结果」。当前用传输层 flush pump 缓解，长期方案见下条。
-- ⏭ 下一步：**调试能力**（断点 / 单步 / 变量 / 栈）——规划见
-  [`oi-cpp-wasm/docs/WASM-GDB-PLAN.md`](oi-cpp-wasm/docs/WASM-GDB-PLAN.md)。
+- ✅ **调试 MVP**：行断点 / 继续 / stepIn / stepOut / 调用栈 / 输出 / 崩溃栈；变量为部分支持
+- ⏭ 后续：`locals` 快照（完整变量面板）、条件断点、头文件断点、`stepOver` 精确化
+- 规划与调研：[`oi-cpp-wasm/docs/WASM-GDB-PLAN.md`](oi-cpp-wasm/docs/WASM-GDB-PLAN.md)
 
 ## 许可
 

@@ -159,7 +159,8 @@
     "package": "node esbuild.mjs && npx --no-install @vscode/vsce package --no-dependencies --allow-missing-repository",
     "test": "node test/smoke.mjs",
     "test:debug": "node test/debug-instr.mjs",
-    "dwarf": "node scripts/build-dwarf-worker.mjs"
+    "dwarf": "node scripts/build-dwarf-worker.mjs",
+    "test:session": "node test/debug-session.mjs"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",

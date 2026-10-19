@@ -76,7 +76,14 @@ const host = {
   getWasmGlobal() { throw new Error("unexpected"); },
   getWasmOp() { throw new Error("unexpected"); },
 };
-const { spawn } = require(path.join(EXT, ".dev/dwarf-pkg/node-test/index.js"));
+// .dev/ 是本地开发脚手架（gitignore）：没准备好就跳过，而不是报错
+let spawn;
+try {
+  ({ spawn } = require(path.join(EXT, ".dev/dwarf-pkg/node-test/index.js")));
+} catch {
+  console.log("跳过：缺少 .dev/dwarf-pkg（先跑 scripts/build-dwarf-worker.mjs，并把 @vscode/dwarf-debugging 解包到 .dev/dwarf-pkg/package）");
+  process.exit(0);
+}
 const engine = spawn(host);
 await engine.rpc.sendMessage("hello", [], false);
 const MOD = "m0";

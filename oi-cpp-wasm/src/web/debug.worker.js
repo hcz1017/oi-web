@@ -11,7 +11,7 @@ const post = (m, transfer) => self.postMessage(m, transfer || []);
 
 let cfg = null;
 let siteById = new Map();      // siteId -> { id, line, file, body, origOffset }
-let enabledSites = new Set();  // 当前生效的断点 siteId
+let bp = null;                 // 断点位图（Int32Array on SharedArrayBuffer）：宿主可随时改，无需消息
 let ctrl = null;               // Int32Array(SAB)
 let inst = null;
 let resumeMode = 1;            // 默认 continue（只在断点处停）
@@ -38,11 +38,13 @@ function captureStack() {
 function probe(siteId) {
   const site = siteById.get(siteId);
   if (!site) return;
+  // 断点位图由宿主在主线程直接改（worker 阻塞时收不到 postMessage）
+  const isBreakpoint = !!bp && (Atomics.load(bp, siteId >>> 5) & (1 << (siteId & 31))) !== 0;
   const hit =
     resumeMode === 2 ? true :
     resumeMode === 3 ? site.body === stopBody :
     resumeMode === 4 ? site.body !== stopBody :
-    enabledSites.has(siteId);
+    isBreakpoint;
   if (!hit) return;
 
   // 暂停：抓栈 + 内存快照（快照给宿主的 DWARF 引擎读变量用）
@@ -108,19 +110,13 @@ self.onmessage = (ev) => {
   if (m.type === "init") {
     cfg = m;
     siteById = new Map((m.sites || []).map((s) => [s.id, s]));
-    enabledSites = new Set(m.breakpoints || []);
     ctrl = new Int32Array(m.sab);
+    bp = m.breakpointSab ? new Int32Array(m.breakpointSab) : null;
     run();
     return;
   }
-  if (m.type === "breakpoints") { enabledSites = new Set(m.ids || []); return; }
-  if (m.type === "resume") {
-    // 宿主写模式到 ctrl[1]，把 ctrl[0] 置 1 并唤醒
-    Atomics.store(ctrl, 1, m.mode || 1);
-    Atomics.store(ctrl, 0, 1);
-    Atomics.notify(ctrl, 0);
-    return;
-  }
+  // 注意：暂停期间 worker 阻塞在 Atomics.wait，收不到消息 ——
+  // 断点更新/恢复都由宿主直接改 SharedArrayBuffer（见 probe() 与 ctrl 协议）。
   if (m.type === "shutdown") { try { self.close(); } catch {} }
 };
 

@@ -505,6 +505,7 @@ async function startDebugging() {
   pendingDebugTarget = {
     source: doc.getText(),
     fileName,
+    sourceUri: doc.uri.toString(),
     flags: String(cfg.get("flags", "-std=c++20")),
   };
   symbols.memory = null;

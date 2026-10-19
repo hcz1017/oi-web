@@ -71,7 +71,9 @@ export class WasmDebugAdapter {
   }
 
   async on_launch(req) {
+    this._event("output", { category: "console", output: "正在构建调试版本（-O0 -g，带插桩桩）…\n" });
     await this._prepare();
+    this._event("output", { category: "console", output: "调试准备完成，等待断点配置…\n" });
     this._respond(req, {});
     // 告诉 VS Code：可以发断点了
     this._event("initialized", {});
@@ -131,9 +133,12 @@ export class WasmDebugAdapter {
             if (fname) name = fname;
           } catch {}
         }
+        const isUserFile = file && file.endsWith("/" + this.target.fileName);
         frames.push({
           id: i + 1, name,
-          source: file ? { name: file.split("/").pop(), path: file } : undefined,
+          source: file
+            ? { name: file.split("/").pop(), path: isUserFile && this.target.sourceUri ? this.target.sourceUri : file }
+            : undefined,
           line, column: 1,
         });
       }
@@ -200,11 +205,14 @@ export class WasmDebugAdapter {
 
   // ---------------------------------------------------------------- 内部
   _resume(req, mode) {
-    if (!this.worker) { this._respond(req, {}); return; }
+    if (!this.worker || !this.ctrl) { this._respond(req, {}); return; }
     this._lastMode = mode;
     this.paused = null;
     this._event("continued", { threadId: 1, allThreadsContinued: true });
-    this.worker.postMessage({ type: "resume", mode });
+    // ⚠️ 必须由宿主直接写 SAB：worker 正在 Atomics.wait，收不到 postMessage
+    Atomics.store(this.ctrl, 1, mode);
+    Atomics.store(this.ctrl, 0, 1);
+    Atomics.notify(this.ctrl, 0);
     this._respond(req, { allThreadsContinued: true });
   }
 
@@ -289,7 +297,12 @@ export class WasmDebugAdapter {
   }
 
   _syncBreakpointsToWorker() {
-    if (this.worker) this.worker.postMessage({ type: "breakpoints", ids: [...this.enabledSites] });
+    if (!this.bp) return;
+    this.bp.fill(0);
+    for (const id of this.enabledSites) {
+      const w = id >>> 5, m = 1 << (id & 31);
+      Atomics.store(this.bp, w, Atomics.load(this.bp, w) | m);
+    }
   }
 
   async _startProgram() {
@@ -297,6 +310,11 @@ export class WasmDebugAdapter {
     if (!s) { this._event("terminated", {}); return; }
     this.sab = new SharedArrayBuffer(8);
     this.ctrl = new Int32Array(this.sab);
+    // 断点位图（按最大 siteId 分配；宿主可随时改，worker 无需收消息）
+    const words = Math.ceil(Math.max(1, ...s.sites.map((x) => x.id)) / 32) + 1;
+    this.bpSab = new SharedArrayBuffer(words * 4);
+    this.bp = new Int32Array(this.bpSab);
+    this._syncBreakpointsToWorker();
     this.worker = new Worker(this.workerUrl);
     this.worker.onmessage = (ev) => this._onWorkerMessage(ev.data);
     this.worker.onerror = (e) => { this._error2("debug worker 崩溃: " + ((e && e.message) || e)); };
@@ -304,7 +322,7 @@ export class WasmDebugAdapter {
       type: "init",
       wasm: s.instr.wasm.buffer,
       sites: s.sites,
-      breakpoints: [...this.enabledSites],
+      breakpointSab: this.bpSab,
       sab: this.sab,
       fileName: s.fileName,
     }, [s.instr.wasm.buffer]);
@@ -352,6 +370,9 @@ export class WasmDebugAdapter {
   _kill() {
     if (this.terminated) return;
     this.terminated = true;
+    try {
+      if (this.session && this.session.engine) this.session.engine.removeRawModule(MOD_ID).catch(() => {});
+    } catch {}
     if (this.worker) { try { this.worker.postMessage({ type: "shutdown" }); } catch {} try { this.worker.terminate(); } catch {} this.worker = null; }
     this.paused = null;
     this.memory = null;

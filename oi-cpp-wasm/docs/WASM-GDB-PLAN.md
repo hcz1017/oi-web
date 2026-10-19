@@ -5,6 +5,23 @@
 
 ---
 
+## 0. 实现进展（2026-10-19）
+
+| 规划项 | 状态 | 实现方式 |
+|---|---|---|
+| 符号层（DWARF） | ✅ 已接 | `@vscode/dwarf-debugging` 的 `SymbolsBackend.wasm`（MIT），宿主只实现 4 个 getter |
+| 行断点 | ✅ | 引擎 `sourceLocationToRawLocation` → 语句起点 → 插桩 siteId |
+| 暂停/继续 | ✅ | 插桩调用 `oi.probe(siteId)` + `Atomics.wait`（位图 SAB 传断点，ctrl SAB 恢复） |
+| 调用栈 | ✅ | 探针里抓 JS 栈（`wasm-function[N]:0xNN`）→ 函数体起点 → 引擎映射 文件:行 |
+| stepIn / stepOut | ✅ | 恢复模式：任意语句 / 离开当前函数体 |
+| stepOver | ⚠️ 近似 | "同一函数体内的下一条语句" |
+| 变量 / 求值 | ⚠️ 部分 | 线性内存快照已给引擎；`locals`/`globals` 快照未做 |
+| 头文件断点 | ❌ | 目前只对当前调试的源文件建站点（避免给 165 个头文件插桩） |
+
+Node 端验证：`npm run test:debug`（插桩正确性）、`npm run test:session`（暂停/继续/单步/栈/内存/退出码）。
+
+---
+
 ## 1. 为什么 clangd 能跑、gdb 不能
 
 | | clangd / clang | gdb |
