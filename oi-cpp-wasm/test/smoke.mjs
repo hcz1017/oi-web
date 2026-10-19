@@ -39,7 +39,7 @@ int main(){
   int ovf = 0;
   int carry = __builtin_add_overflow(2147483647, 1, &ovf);
   auto bits = __builtin_bit_cast(unsigned, 1.0f);
-  printf("%llu %llu %d %d %d %d %u\n", hi, lo, pc, clz, carry, ovf, bits);
+  printf("%llu %llu %d %d %d %d %u\\n", hi, lo, pc, clz, carry, ovf, bits);
   return 0; }`,
   "交互 stdin": `#include <cstdio>
 int main(){ int n; while (scanf("%d", &n) == 1) printf("%d\\n", n + 1); return 0; }`,
