@@ -201,9 +201,10 @@
     "test:client": "node test/dwarf-client.mjs",
     "test:dwarf": "node test/dwarf-browser-env.mjs",
     "test:eval": "node test/debug-eval.mjs",
-    "test:all": "node test/lineedit.mjs && node test/smoke.mjs && node test/debug-instr.mjs && node test/debug-session.mjs && node test/debug-eval.mjs && node test/debug-vars.mjs && node test/dap-flow.mjs && node test/dwarf-client.mjs && node test/dwarf-browser-env.mjs",
+    "test:all": "node test/lineedit.mjs && node test/smoke.mjs && node test/debug-instr.mjs && node test/debug-session.mjs && node test/debug-eval.mjs && node test/debug-vars.mjs && node test/debug-stl.mjs && node test/dap-flow.mjs && node test/dwarf-client.mjs && node test/dwarf-browser-env.mjs",
     "test:vars": "node test/debug-vars.mjs",
-    "test:lineedit": "node test/lineedit.mjs"
+    "test:lineedit": "node test/lineedit.mjs",
+    "test:stl": "node test/debug-stl.mjs"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",
