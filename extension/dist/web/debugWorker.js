@@ -1089,11 +1089,32 @@
     pending = null;
     if (!site) return;
     const frames = captureStack();
-    let memory = null;
+    let memorySegments = null;
+    let memorySize = 0;
+    const LOW_CAP = 16 * 1024 * 1024;
     try {
       const buf = inst && inst.exports && inst.exports.memory && inst.exports.memory.buffer;
-      if (buf) memory = new Uint8Array(buf).slice(0);
+      if (buf) {
+        memorySize = buf.byteLength;
+        let sp = 0;
+        try {
+          const globalsOff = scratchBase + (bodyLocals[site.body] || []).length * 8;
+          sp = new Int32Array(buf, globalsOff, 1)[0] >>> 0;
+        } catch {
+          sp = 0;
+        }
+        const PAGE = 65536;
+        const stackLow = sp > 0 ? Math.min(memorySize, Math.max(LOW_CAP, (sp - PAGE & ~(PAGE - 1)) >>> 0)) : Math.max(0, memorySize - 8 * 1024 * 1024);
+        const segs = [];
+        const lowEnd = Math.min(LOW_CAP, stackLow, memorySize);
+        if (lowEnd > 0) segs.push({ offset: 0, bytes: new Uint8Array(buf, 0, lowEnd).slice(0) });
+        if (stackLow < memorySize) {
+          segs.push({ offset: stackLow, bytes: new Uint8Array(buf, stackLow, memorySize - stackLow).slice(0) });
+        }
+        memorySegments = segs;
+      }
     } catch {
+      memorySegments = null;
     }
     const locals = bodyLocals[site.body] || [];
     post({
@@ -1101,7 +1122,8 @@
       siteId: site.id,
       site,
       frames,
-      memory,
+      memorySegments,
+      memorySize,
       localsBase: scratchBase,
       body: site.body,
       bodyLocals: locals,

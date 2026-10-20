@@ -59,12 +59,12 @@ let snap = null, frame = null;
 const host = {
   getWasmLinearMemory(offset, length) {
     if (!snap) throw new Error("no snapshot");
-    return snap.buffer.slice(snap.byteOffset + offset, snap.byteOffset + offset + length);
+    return snap.read(offset, length);
   },
   getWasmLocal(local) {
     if (!snap || !frame) throw new Error("no frame");
     const type = (frame.types || [])[local];
-    const dv = new DataView(snap.buffer, snap.byteOffset + frame.base + local * 8, 8);
+    const dv = snap.dv(frame.base + local * 8, 8);
     switch (type) {
       case 0x7f: return { type: "i32", value: dv.getInt32(0, true) };
       case 0x7e: return { type: "i64", value: dv.getBigInt64(0, true) };
@@ -76,7 +76,7 @@ const host = {
   getWasmGlobal(global) {
     if (!snap || !frame || !frame.globalsBase) throw new Error("no globals snapshot");
     const type = (frame.globalTypes || [])[global];
-    const dv = new DataView(snap.buffer, snap.byteOffset + frame.globalsBase + global * 8, 8);
+    const dv = snap.dv(frame.globalsBase + global * 8, 8);
     switch (type) {
       case 0x7f: return { type: "i32", value: dv.getInt32(0, true) };
       case 0x7e: return { type: "i64", value: dv.getBigInt64(0, true) };

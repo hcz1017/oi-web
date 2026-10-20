@@ -205,7 +205,9 @@ must(!!p1, "命中断点并暂停");
 if (p1) {
   must(p1.siteId === bpSite.id, `暂停在期望站点（${p1.siteId} == ${bpSite.id}）`);
   must(Array.isArray(p1.frames) && p1.frames.length >= 2, `栈帧 ${p1.frames.length} 层（含 wasm 函数索引）`);
-  must(!!p1.memory && p1.memory.byteLength > 0, `内存快照 ${p1.memory ? (p1.memory.byteLength / 1024).toFixed(0) + "KB" : "-"}`);
+  const segMB = (p1.memorySegments || []).reduce((n, s) => n + s.bytes.length, 0) / 1048576;
+  must(!!p1.memorySegments && p1.memorySegments.length > 0 && p1.memorySize > 0,
+    `内存快照 总 ${(p1.memorySize / 1048576).toFixed(1)}MB / 拷贝 ${segMB.toFixed(1)}MB（${(p1.memorySegments || []).length} 段）`);
   // 用引擎把栈帧映射成源码行（验证适配器 stackTrace 的关键路径）
   let mapped = 0;
   for (const f of p1.frames.slice(0, 3)) {

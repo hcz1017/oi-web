@@ -116,15 +116,40 @@ function pause() {
   if (!site) return;
 
   const frames = captureStack();
-  let memory = null;
+  // ---- 分段内存快照 ----
+  // 调试栈开得很大（512MB），整块拷贝会让每次暂停卡死；这里只拷贝真正有用的区域：
+  //   低区：静态数据 + 堆（__heap_base 起向上分配，最多 LOW_CAP）
+  //   栈区：当前 __stack_pointer 到内存末尾（= 实际用掉的栈 + 极小的顶部余量）
+  let memorySegments = null;
+  let memorySize = 0;
+  const LOW_CAP = 16 * 1024 * 1024;
   try {
     const buf = inst && inst.exports && inst.exports.memory && inst.exports.memory.buffer;
-    if (buf) memory = new Uint8Array(buf).slice(0);   // copy：程序还要继续跑
-  } catch { /* ignore */ }
+    if (buf) {
+      memorySize = buf.byteLength;
+      // __stack_pointer：wasi-sdk 输出里是全局 0（i32，可变）
+      let sp = 0;
+      try {
+        const globalsOff = scratchBase + (bodyLocals[site.body] || []).length * 8;
+        sp = new Int32Array(buf, globalsOff, 1)[0] >>> 0;
+      } catch { sp = 0; }
+      const PAGE = 65536;
+      const stackLow = sp > 0
+        ? Math.min(memorySize, Math.max(LOW_CAP, ((sp - PAGE) & ~(PAGE - 1)) >>> 0))
+        : Math.max(0, memorySize - 8 * 1024 * 1024);   // 拿不到 sp 时保守拷最后 8MB（栈区）
+      const segs = [];
+      const lowEnd = Math.min(LOW_CAP, stackLow, memorySize);
+      if (lowEnd > 0) segs.push({ offset: 0, bytes: new Uint8Array(buf, 0, lowEnd).slice(0) });
+      if (stackLow < memorySize) {
+        segs.push({ offset: stackLow, bytes: new Uint8Array(buf, stackLow, memorySize - stackLow).slice(0) });
+      }
+      memorySegments = segs;
+    }
+  } catch { memorySegments = null; }
 
   const locals = bodyLocals[site.body] || [];
   post({
-    type: "paused", siteId: site.id, site, frames, memory,
+    type: "paused", siteId: site.id, site, frames, memorySegments, memorySize,
     localsBase: scratchBase, body: site.body,
     bodyLocals: locals,
     // globals 紧跟在 locals 之后；宿主按 globalTypes 解释

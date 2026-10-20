@@ -7,11 +7,13 @@
 //   · 变量：暂停时把线性内存快照给 DWARF 引擎；引擎读 locals/globals 时我们暂无快照 → 显示为不可用
 import * as vscode from "vscode";
 import { instrumentWasm, firstInstrOffset, parseWasm } from "../core/wasm-bin.mjs";
+import { SparseMem, EMPTY_MEM } from "../core/mem-view.mjs";
+
+
 
 
 /** 引擎 evaluate 的返回格式 → 给人看的字符串 */
-function formatValue(vi) {
-  if (vi == null) return "<no value>";
+function formatValue(vi) {  if (vi == null) return "<no value>";
   if (typeof vi === "string") return vi;
   if (vi.description != null) return String(vi.description);   // 引擎给的展示串（BigInt 友好）
   if (vi.displayValue != null) return String(vi.displayValue);
@@ -180,23 +182,23 @@ export class WasmDebugAdapter {
   _readString(addr) {
     const mem = this.memory;
     if (!mem || addr < 0 || addr + 12 > mem.byteLength) return null;
-    const b = (o) => mem[addr + o];
+    const b = (o) => mem.u8(addr + o);
     const isLong = (b(11) & 0x80) !== 0;
     if (!isLong) {
       const size = b(11) & 0x7f;
       if (size > 11) return null;
-      return new TextDecoder().decode(mem.subarray(addr, addr + size));
+      return new TextDecoder().decode(mem.sub(addr, size));
     }
-    const u32 = (o) => new DataView(mem.buffer, mem.byteOffset + addr + o, 4).getUint32(0, true);
+    const u32 = (o) => mem.dv(addr + o, 4).getUint32(0, true);
     const ptr = u32(0), size = u32(4);
     if (!ptr || size > 1 << 20 || ptr + size > mem.byteLength) return null;
-    return new TextDecoder().decode(mem.subarray(ptr, ptr + size));
+    return new TextDecoder().decode(mem.sub(ptr, size));
   }
   /** __int128 / unsigned __int128（16 字节，小端） */
   _readInt128(addr, signed) {
     const mem = this.memory;
     if (!mem || addr < 0 || addr + 16 > mem.byteLength) return null;
-    const dv = new DataView(mem.buffer, mem.byteOffset + addr, 16);
+    const dv = mem.dv(addr, 16);
     const lo = dv.getBigUint64(0, true), hi = dv.getBigUint64(8, true);
     let v = (hi << 64n) | lo;
     if (signed && (hi & 0x8000000000000000n)) v -= 1n << 128n;
@@ -232,7 +234,7 @@ export class WasmDebugAdapter {
     const mem = this.memory;
     const size = this._primSize(typeName);
     if (!mem || !size || addr < 0 || addr + size > mem.byteLength) return null;
-    const dv = new DataView(mem.buffer, mem.byteOffset + addr, size);
+    const dv = mem.dv(addr, size);
     const t = String(typeName).trim();
     let value;
     if (/^(unsigned|bool)/.test(t)) value = size === 1 ? dv.getUint8(0) : size === 2 ? dv.getUint16(0, true) : size === 4 ? dv.getUint32(0, true) : dv.getBigUint64(0, true);
@@ -359,7 +361,7 @@ export class WasmDebugAdapter {
   _memU32(addr) {
     const mem = this.memory;
     if (!mem || addr < 0 || addr + 4 > mem.byteLength) return 0;
-    return new DataView(mem.buffer, mem.byteOffset + addr, 4).getUint32(0, true);
+    return mem.dv(addr, 4).getUint32(0, true);
   }
 
   async _pqChildren(expr) {
@@ -746,22 +748,18 @@ export class WasmDebugAdapter {
       let lines = [];
       try { lines = (await engine.getMappedLines(this.modId, file)) || []; } catch { lines = []; }
       for (const line0 of lines) {
-        // 同一行可能有多条语句（DWARF 行表按语句切分），每个命中列都是一个独立站点，
-        // 这样"下一行(步进)"落点是逻辑上的下一条语句，而不是下一个物理行
-        const offsets = [];
-        for (let col = 0; col <= 200; col++) {
+        // 每行只取**第一个**能映射到 wasm 的偏移（列扫描命中即停）。
+        // ⚠️ 不要扫完所有列：那会让每行产生几十次引擎 RPC，几十行的文件就要
+        //    几千次往返，准备阶段被拖死 → 断点设不上、调试感觉"废了"。
+        let rangeStart = null;
+        for (let col = 0; col <= 200 && rangeStart == null; col++) {
           const rs = await engine.sourceLocationToRawLocation({
             rawModuleId: this.modId, sourceFileURL: file, lineNumber: line0, columnNumber: col,
           }).catch(() => null);
-          if (!rs || !rs.length) continue;
-          for (const r of rs) {
-            if (r && typeof r.startOffset === "number" && !offsets.includes(r.startOffset)) {
-              offsets.push(r.startOffset);
-            }
-          }
+          if (rs && rs.length) rangeStart = rs[0].startOffset;
         }
-        offsets.sort((a, b) => a - b);
-        for (const rangeStart of offsets) {
+        if (rangeStart == null) continue;
+        {
           const origOffset = codeBase + rangeStart;
           const bodyIdx = info.code.bodies.findIndex((b) => origOffset >= b.bodyStart && origOffset < b.end);
           if (bodyIdx < 0) continue;
@@ -933,7 +931,9 @@ export class WasmDebugAdapter {
         siteId: m.siteId, site: m.site, frames: m.frames || [], memory: m.memory, stopId: { siteId: m.siteId },
         localsBase: m.localsBase || 0, bodyLocals: m.bodyLocals || [],
       };
-      this.memory = m.memory || null;
+      this.memory = m.memorySegments
+        ? new SparseMem(m.memorySize || 0, m.memorySegments)
+        : (m.memory ? new SparseMem(m.memory.byteLength, [{ offset: 0, bytes: m.memory }]) : EMPTY_MEM);
       this.onSnapshot(this.memory);   // 内存快照给引擎读变量
       this.onFrame?.({
         base: this.paused.localsBase, types: this.paused.bodyLocals,
@@ -942,7 +942,7 @@ export class WasmDebugAdapter {
       this.stats.pauses++;
       const site = m.site;
       const where = site ? `${site.file.split("/").pop()}:${site.line}` : "?";
-      this.log(`⏸ 暂停 site=${m.siteId} ${where}（栈 ${this.paused.frames.length} 帧，内存快照 ${this.memory ? (this.memory.byteLength / 1024).toFixed(0) + "KB" : "无"}）`);
+      this.log(`⏸ 暂停 site=${m.siteId} ${where}（栈 ${this.paused.frames.length} 帧，内存 ${(this.memory.byteLength / 1048576).toFixed(1)}MB，快照拷贝 ${(this.memory.bytesCopied / 1048576).toFixed(1)}MB）`);
       this._term(`\r\n\x1b[33m[暂停] ${where}（第 ${this.stats.pauses} 次）\x1b[0m\r\n`);
       this._statusMsg(`$(debug-pause) OI C++ 调试：已暂停 ${where}`);
       this._event("stopped", {

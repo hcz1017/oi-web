@@ -423,6 +423,8 @@ function getSymbolsEngine() {
       getWasmLinearMemory(offset, length) {
         const mem = symbols.memory;
         if (!mem) throw new Error("当前没有暂停快照");
+        // 分段快照：按绝对地址取，缺失区间补 0
+        if (typeof mem.read === "function") return mem.read(offset, length);
         return mem.buffer.slice(mem.byteOffset + offset, mem.byteOffset + offset + length);
       },
       // 暂停时插桩会把所有 wasm local 写进线性内存的一页里（frame.base + i*8），
@@ -431,7 +433,8 @@ function getSymbolsEngine() {
         const mem = symbols.memory, f = symbols.frame;
         if (!mem || !f) throw new Error("当前没有暂停快照");
         const type = (f.types || [])[local];
-        const dv = new DataView(mem.buffer, mem.byteOffset + f.base + local * 8, 8);
+        const dv = typeof mem.dv === "function" ? mem.dv(f.base + local * 8, 8)
+          : new DataView(mem.buffer, mem.byteOffset + f.base + local * 8, 8);
         switch (type) {
           case 0x7f: return { type: "i32", value: dv.getInt32(0, true) };
           case 0x7e: return { type: "i64", value: dv.getBigInt64(0, true) };
@@ -444,7 +447,8 @@ function getSymbolsEngine() {
         const mem = symbols.memory, f = symbols.frame;
         if (!mem || !f || !f.globalsBase) throw new Error("当前没有 globals 快照");
         const type = (f.globalTypes || [])[global];
-        const dv = new DataView(mem.buffer, mem.byteOffset + f.globalsBase + global * 8, 8);
+        const dv = typeof mem.dv === "function" ? mem.dv(f.globalsBase + global * 8, 8)
+          : new DataView(mem.buffer, mem.byteOffset + f.globalsBase + global * 8, 8);
         switch (type) {
           case 0x7f: return { type: "i32", value: dv.getInt32(0, true) };
           case 0x7e: return { type: "i64", value: dv.getBigInt64(0, true) };

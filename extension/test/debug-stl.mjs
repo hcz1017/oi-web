@@ -80,10 +80,10 @@ const rd = (dv, t) => t === 0x7f ? { type: "i32", value: dv.getInt32(0, true) }
 const host = {
   getWasmLinearMemory(o, l) {
     if (!snap) throw new Error("no snapshot");
-    return snap.buffer.slice(snap.byteOffset + o, snap.byteOffset + o + l);
+    return snap.read(o, l);
   },
-  getWasmLocal(i) { return rd(new DataView(snap.buffer, snap.byteOffset + frame.base + i * 8, 8), frame.types[i]); },
-  getWasmGlobal(i) { return rd(new DataView(snap.buffer, snap.byteOffset + frame.globalsBase + i * 8, 8), frame.globalTypes[i]); },
+  getWasmLocal(i) { return rd(snap.dv(frame.base + i * 8, 8), frame.types[i]); },
+  getWasmGlobal(i) { return rd(snap.dv(frame.globalsBase + i * 8, 8), frame.globalTypes[i]); },
   getWasmOp() { throw new Error("no ops"); },
 };
 const spawned = spawn(host);

@@ -249,7 +249,8 @@ function computeEmptyStackOffsets(bytes, body, sigCtx) {
     const results = tidx >= 0 ? (sigCtx.typeResults[tidx] ?? 0) : 0;
     return { pop: params.length, push: results };
   };
-  while (p < body.end) {
+  let stopped = false;            // 遇到无法线性解码的指令：保留已扫出的点，不再往后扫
+  while (p < body.end && !stopped) {
     if (!poisoned && depth === 0) empty.add(p);   // 只记录"可达且栈空"的指令边界
     const op = bytes[p++];
     const pop = (n) => { depth = Math.max(0, depth - n); };
@@ -258,6 +259,34 @@ function computeEmptyStackOffsets(bytes, body, sigCtx) {
       case 0x01: break;                                               // nop
       case 0x00:                                                      // unreachable：清栈且后文线性不可达
         depth = 0; poisoned = true; break;
+      case 0x1b:                                                      // select（弹 3 压 1）
+        depth = Math.max(0, depth - 3) + 1; break;
+      case 0xc0: case 0xc1: case 0xc2: case 0xc3: case 0xc4:            // 符号扩展（extend8/16/32）
+        depth = Math.max(0, depth - 1) + 1; break;
+      case 0x1c: {                                                    // select (typed)：vec(valtype)
+        let n = 0, sh = 0;
+        for (;;) { const b = bytes[p++]; n |= (b & 0x7f) << sh; sh += 7; if (!(b & 0x80)) break; }
+        p += n;                                                       // 类型列表
+        depth = Math.max(0, depth - 3) + 1; break;
+      }
+      case 0xd0:                                                      // ref.null <heaptype>
+        p++; depth += 1; break;
+      case 0xd1:                                                      // ref.is_null
+        depth = Math.max(0, depth - 1) + 1; break;
+      case 0xd2:                                                      // ref.func <funcidx>
+        while (bytes[p++] & 0x80) {}
+        depth += 1; break;
+      case 0xfc: {                                                    // 前缀指令（饱和截断等）
+        let sub = 0, sh = 0;
+        for (;;) { const b = bytes[p++]; sub |= (b & 0x7f) << sh; sh += 7; if (!(b & 0x80)) break; }
+        if (sub <= 7) { depth = Math.max(0, depth - 1) + 1; }           // trunc_sat 系列
+        else if (sub === 8) { while (bytes[p++] & 0x80) {} while (bytes[p++] & 0x80) {} depth = Math.max(0, depth - 3); }
+        else if (sub === 9) { while (bytes[p++] & 0x80) {} }
+        else if (sub === 10) { while (bytes[p++] & 0x80) {} while (bytes[p++] & 0x80) {} depth = Math.max(0, depth - 3); }
+        else if (sub === 11) { while (bytes[p++] & 0x80) {} depth = Math.max(0, depth - 3); }
+        else { stopped = true; break; }
+        break;
+      }
       case 0x02: case 0x03: case 0x04:                                // block / loop / if
         blockStack.push(depth); p++; break;                           // blocktype 立即数
       case 0x05:                                                      // else
@@ -271,7 +300,8 @@ function computeEmptyStackOffsets(bytes, body, sigCtx) {
         else depth = Math.max(0, depth - 1);                          // br_if 弹条件
         break;
       }
-      case 0x0e: throw new Error("br_table");
+      case 0x0e:                                                      // br_table：立即数是标签表，无法线性推进
+        stopped = true; break;
       case 0x0f:                                                      // return：之后线性不可达
         poisoned = true;
         break;
@@ -279,12 +309,17 @@ function computeEmptyStackOffsets(bytes, body, sigCtx) {
       case 0x28: case 0x29: case 0x2a: case 0x2b: case 0x2c: case 0x2d:
       case 0x2e: case 0x2f: case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35:
       case 0x36: case 0x37: case 0x38: case 0x39: case 0x3a: case 0x3b:
-      case 0x3c: case 0x3d: case 0x3e: case 0x3f: case 0x40:
+      case 0x3c: case 0x3d: case 0x3e:
         depth = Math.max(0, depth - (OP_STACK_EFFECT[op] ? OP_STACK_EFFECT[op][0] : 0));
         if (OP_STACK_EFFECT[op]) depth += OP_STACK_EFFECT[op][1];
         // align(ULEB) + offset(ULEB)：offset 可能 >127（如 0xcc 0x04 = 524），必须按 LEB 读
         while (bytes[p++] & 0x80) {}
         while (bytes[p++] & 0x80) {}
+        break;
+      case 0x3f: case 0x40:                                          // memory.size / memory.grow：只有 memidx 一个字节
+        depth = Math.max(0, depth - (OP_STACK_EFFECT[op] ? OP_STACK_EFFECT[op][0] : 0));
+        if (OP_STACK_EFFECT[op]) depth += OP_STACK_EFFECT[op][1];
+        p += 1;
         break;
       // —— call：效应由函数签名决定（类型段已解析）——
       case 0x10: {
@@ -311,13 +346,17 @@ function computeEmptyStackOffsets(bytes, body, sigCtx) {
         while (bytes[p++] & 0x80) {}
         break;
       // —— 带一个 SLEB 立即数 ——
-      case 0x41: case 0x42: case 0x43: case 0x44:
+      case 0x41: case 0x42:                                          // i32/i64.const：SLEB
         depth += OP_STACK_EFFECT[op][1];
         while (bytes[p++] & 0x80) {}
         break;
+      case 0x43:                                                      // f32.const：4 字节原始数据
+        depth += 1; p += 4; break;
+      case 0x44:                                                      // f64.const：8 字节原始数据
+        depth += 1; p += 8; break;
       default: {
         const io = OP_STACK_EFFECT[op];
-        if (io == null) throw new Error("未建模的 opcode 0x" + op.toString(16) + " @0x" + (p - 1).toString(16) + " (body " + body.index + ")");
+        if (io == null) { stopped = true; break; }        // 未知指令：保留已扫出的点，停止后续扫描
         depth = Math.max(0, depth - io[0]) + io[1];
         break;
       }
@@ -403,18 +442,19 @@ export function instrumentWasm(bytes, sites) {
     if (empty === null) { dropped.push({ ...s, why: "栈模拟失败，保守放弃（" + (emptyStackErr.get(body.index) || "?") + "）" }); continue; }
     if (!empty.has(s.offset)) {
       // DWARF 行首 offset 可能落在表达式中间（-O0 下前置指令已垫高栈）。
-      // 回退到本函数体内最近的栈空点（即这条语句真正的第一条"自足"指令，
-      // 语义等价、行号不变）。多个站点撞到同一回退点是正常的——同一位置
-      // 只插一份探针，站点间以别名共享（见下方 byRel 分组）。
-      let fallback = null;
+      // 先向前回退（语义最接近该语句起点），找不到再向后找（同一语句内靠后的
+      // 栈空点也行：暂停时上报的行号仍是这一行）。多个站点撞到同一位置时
+      // 只插一份探针，站点之间以别名共享（见下方 byRel 分组）。
+      let fallback = null, forward = null;
       for (const off of empty) {
-        if (off >= s.offset) continue;                     // 只向前回退
         if (off <= body.localsEnd) continue;               // locals 区不可插
-        if (fallback == null || off > fallback) fallback = off;
+        if (off < s.offset) { if (fallback == null || off > fallback) fallback = off; }
+        else if (off > s.offset) { if (forward == null || off < forward) forward = off; }
       }
-      if (fallback == null) { dropped.push({ ...s, why: "附近没有栈空的插桩点" }); continue; }
+      const chosen = fallback != null ? fallback : forward;
+      if (chosen == null) { dropped.push({ ...s, why: "函数里没有可用的栈空点" }); continue; }
       if (!perBody.has(body.index)) perBody.set(body.index, []);
-      perBody.get(body.index).push({ rel: fallback - body.bodyStart, id: s.id, requested: s.offset });
+      perBody.get(body.index).push({ rel: chosen - body.bodyStart, id: s.id, requested: s.offset });
       continue;
     }
     if (!perBody.has(body.index)) perBody.set(body.index, []);
