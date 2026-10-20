@@ -48,6 +48,12 @@ int main() {
   list<int> lst{4, 6};
   unordered_set<int> us{8, 9};
   unordered_map<int, int> um{{3, 30}, {4, 40}};
+  string a = "hello";
+  string b = "this_is_a_very_long_string_over_22";
+  set<string> ss{"ab", "cd"};
+  map<string, int> ms{{"k1", 1}, {"k2", 2}};
+  map<int, string> mi{{1, "x"}, {2, "y"}};
+  __int128 big = (__int128)1 << 100;
   vector<int> v{11, 12};
   printf("%zu\\n", s.size() + m.size() + pq.size() + lst.size() + us.size() + v.size());
   return 0;
@@ -138,6 +144,7 @@ const varsResp = await waitFor((m) => m.type === "response" && m.command === "va
 const vars = (varsResp.body.variables || []);
 const byName = new Map(vars.map((v) => [v.name, v]));
 must(vars.length > 0, `Locals 变量: ${JSON.stringify(vars.map((v) => v.name))}`);
+must(!vars.some((v) => /^std::/.test(v.name)), "没有 std:: 内部变量（piecewise_construct 等已过滤）");
 
 // 展开某个变量
 let seqNo = 20;
@@ -171,6 +178,23 @@ must(!!umKids && (umKids || []).length >= 2, `unordered_map<int,int> 展开: ${J
 const usKids = await expand("us");
 must(!!usKids && (usKids || []).length >= 2 && (usKids || []).every((x) => /^\d+$/.test(x.value) || /^\[/.test(x.name)),
   `unordered_set<int> 展开: ${JSON.stringify(fmt(usKids))}`);
+
+// 字符串 / int128 / 带 string 的容器
+const aVar = byName.get("a");
+must(!!aVar && aVar.value === '"hello"', `string a = ${aVar && aVar.value}（应为 "hello"）`);
+const bVar = byName.get("b");
+must(!!bVar && bVar.value === '"this_is_a_very_long_string_over_22"', `长 string b = ${bVar && bVar.value}`);
+const bigVar = byName.get("big");
+must(!!bigVar && bigVar.value === ((1n << 100n).toString()), `__int128 big = ${bigVar && bigVar.value}`);
+
+const ssKids = await expand("ss");
+must(!!ssKids && fmt(ssKids).join(",") === '[0]="ab",[1]="cd"', `set<string> 展开: ${JSON.stringify(fmt(ssKids))}`);
+
+const msKids = await expand("ms");
+must(!!msKids && fmt(msKids).some((x) => x.includes("k1") && x.endsWith("=1")), `map<string,int> 展开: ${JSON.stringify(fmt(msKids))}`);
+
+const miKids = await expand("mi");
+must(!!miKids && fmt(miKids).some((x) => x.endsWith('="x"')), `map<int,string> 展开: ${JSON.stringify(fmt(miKids))}`);
 
 const vKids = await expand("v");
 must(!!vKids && fmt(vKids).join(",") === "0=11,1=12", `vector<int> 展开: ${JSON.stringify(fmt(vKids))}`);

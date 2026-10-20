@@ -68,15 +68,31 @@ export class WasmDebugAdapter {
     this._objRefs.set(id, { objectId, expr, typeName });
     return id;
   }
-  /** 引擎 evaluate/getProperties 的 remote object → DAP variable */
-  _toVariable(name, value, fallbackType, expr) {
-    const hasKids = !!(value && value.hasChildren && value.objectId != null);
+  /** 引擎 evaluate/getProperties 的 remote object → DAP variable
+   *  string / __int128 走内存快照解码（引擎求值器认不出这两类） */
+  async _toVariable(name, value, fallbackType, expr) {
     const typeName = (value && (value.description || value.type)) || fallbackType || "";
+    const e = expr != null ? expr : name;
+    if (value && this._isStringType(typeName)) {
+      try {
+        const addr = await this._num(`(unsigned)&(${e})`);
+        const decoded = this._decodeAt(addr, typeName);
+        if (decoded) return { name, value: decoded.value, type: typeName, variablesReference: 0 };
+      } catch {}
+    }
+    if (value && this._isInt128Type(typeName)) {
+      try {
+        const addr = await this._num(`(unsigned)&(${e})`);
+        const decoded = this._decodeAt(addr, typeName);
+        if (decoded) return { name, value: decoded.value, type: typeName, variablesReference: 0 };
+      } catch {}
+    }
+    const hasKids = !!(value && value.hasChildren && value.objectId != null);
     return {
       name,
       value: formatValue(value),
       type: typeName,
-      variablesReference: hasKids ? this._refFor(value.objectId, expr != null ? expr : name, typeName) : 0,
+      variablesReference: hasKids ? this._refFor(value.objectId, e, typeName) : 0,
     };
   }
 
@@ -107,14 +123,17 @@ export class WasmDebugAdapter {
     if (t.endsWith(">")) t = t.slice(0, -1).trim();
     return t || null;
   }
-  _mkVar(name, value) {
-    const hasKids = !!(value && value.hasChildren && value.objectId != null);
-    return {
-      name,
-      value: formatValue(value),
-      type: (value && value.description) || "",
-      variablesReference: hasKids ? this._refFor(value.objectId, name, (value && value.description) || "") : 0,
-    };
+  _mkVar(name, value, type) {
+    if (value && typeof value === "object" && value.objectId != null) {
+      const hasKids = !!value.hasChildren;
+      return {
+        name,
+        value: formatValue(value),
+        type: value.description || type || "",
+        variablesReference: hasKids ? this._refFor(value.objectId, name, value.description || type || "") : 0,
+      };
+    }
+    return { name, value: value == null ? "?" : String(value), type: type || "", variablesReference: 0 };
   }
 
   /** 从 "std::map<int, int, ...>" 这类描述里拆出顶层模板实参 */
@@ -136,6 +155,59 @@ export class WasmDebugAdapter {
   _qualify(name) {
     return String(name).replace(/std::__(?!2::)/g, "std::__2::__");
   }
+  /** std::string / basic_string<char> 解码（libc++ wasm32 实测布局）：
+   *   短串(<=10)：数据在偏移 0，长度在偏移 11（bit7=0）
+   *   长串：指针@0，长度@4，偏移 11 的 bit7=1 */
+  _readString(addr) {
+    const mem = this.memory;
+    if (!mem || addr < 0 || addr + 12 > mem.byteLength) return null;
+    const b = (o) => mem[addr + o];
+    const isLong = (b(11) & 0x80) !== 0;
+    if (!isLong) {
+      const size = b(11) & 0x7f;
+      if (size > 11) return null;
+      return new TextDecoder().decode(mem.subarray(addr, addr + size));
+    }
+    const u32 = (o) => new DataView(mem.buffer, mem.byteOffset + addr + o, 4).getUint32(0, true);
+    const ptr = u32(0), size = u32(4);
+    if (!ptr || size > 1 << 20 || ptr + size > mem.byteLength) return null;
+    return new TextDecoder().decode(mem.subarray(ptr, ptr + size));
+  }
+  /** __int128 / unsigned __int128（16 字节，小端） */
+  _readInt128(addr, signed) {
+    const mem = this.memory;
+    if (!mem || addr < 0 || addr + 16 > mem.byteLength) return null;
+    const dv = new DataView(mem.buffer, mem.byteOffset + addr, 16);
+    const lo = dv.getBigUint64(0, true), hi = dv.getBigUint64(8, true);
+    let v = (hi << 64n) | lo;
+    if (signed && (hi & 0x8000000000000000n)) v -= 1n << 128n;
+    return v.toString();
+  }
+  _isStringType(t) {
+    const s = String(t || "").trim().replace(/^const\s+/, "");
+    // 注意必须锚定整串：set<std::basic_string<...>> 的模板参数里有 basic_string，但整体不是字符串
+    return /^(?:(?:std|std::__2)::)?(?:basic_string\s*<|string$)/.test(s);
+  }
+  _isInt128Type(t) { return /(^|[\s:])(unsigned )?__int128(\*?)$/.test(String(t).trim()); }
+  /** 按类型从内存快照解码一个值（基础类型 / string / __int128） */
+  _decodeAt(addr, typeName) {
+    const t = String(typeName || "").trim().replace(/^const\s+/, "");
+    if (this._isStringType(t)) {
+      const s = this._readString(addr);
+      return s == null ? null : { kind: "string", value: JSON.stringify(s) };
+    }
+    if (this._isInt128Type(t)) {
+      const s = this._readInt128(addr, !/^unsigned/.test(t));
+      return s == null ? null : { kind: "int128", value: s };
+    }
+    const sz = this._primSize(t);
+    if (sz) {
+      const v = this._readPrim(addr, t);
+      return v == null ? null : { kind: "prim", value: String(v.value) };
+    }
+    return null;
+  }
+
   /** 从暂停内存快照按基础类型读值（不依赖求值器的类型名） */
   _readPrim(addr, typeName) {
     const mem = this.memory;
@@ -173,63 +245,57 @@ export class WasmDebugAdapter {
 
   /** map 的一个元素：pair<const K, V>。完整 pair 类型名在求值器里往往不可见，
    *  所以键/值用「基础类型 + 偏移」直接解码；非基础类型给占位提示。 */
-  async _mapPair(desc, addr) {
-    return this._mapPairAt(desc, addr, 16);   // sizeof(std::__2::__tree_node_base<void *>)（已实测）
-  }
   async _mapPairAt(desc, addr, baseSize) {
     const args = this._templateArgs(desc);
     const K = args[0], V = args[1];
-    const szK = this._primSize(K), szV = this._primSize(V);
-    if (szK && szV) {
-      const offV = Math.ceil(szK / szV) * szV;   // pair<const K,V> 中 second 的偏移（基础类型成立）
-      const key = await this._ev(`*(((${K}*)((unsigned)${addr} + ${baseSize})))`).catch(() => null);
-      const val = await this._ev(`*(((${V}*)((unsigned)${addr} + ${baseSize + offV})))`).catch(() => null);
-      const v = this._mkVar(`[${formatValue(key)}]`, val);
-      v.type = `${K} → ${V}`;
-      return v;
+    const szK = this._sizeOf(K), szV = this._sizeOf(V);
+    if (szK == null || szV == null) {
+      return { name: `[0x${Number(addr).toString(16)}]`, value: `（类型 ${K} → ${V} 暂不支持解码）`, type: "info", variablesReference: 0 };
     }
-    return { name: `[0x${Number(addr).toString(16)}]`, value: "（键/值类型非基础类型，暂不支持解码）", type: `${K} → ${V}`, variablesReference: 0 };
+    const offV = Math.ceil(szK / this._alignOf(V)) * this._alignOf(V);
+    const k = this._decodeAt(addr + baseSize, K);
+    const v = this._decodeAt(addr + baseSize + offV, V);
+    return this._mkVar(k ? `[${k.value}]` : `[0x${Number(addr).toString(16)}]`, v ? v.value : "?", `${K} → ${V}`);
   }
 
+  /** 节点指针原始偏移（libc++ wasm32 实测）：
+   *  tree: __left_(0) __right_(4) __parent_(8) color(12) → 值偏移 16
+   *  list: __prev_(0) __next_(4) → 值偏移 8
+   *  hash: __next_(0) __hash_(4) → 值偏移 8 */
+  _memU32At(addr, off) { return this._memU32(addr + off); }
+
   async _treeChildren(expr, isMap, desc) {
+    const args = this._templateArgs(desc);
+    const K = args[0], V = isMap ? args[1] : null;
     const size = await this._num(`${expr}.__tree_.__size_`);
-    // map 的完整节点类型名可能不在 DWARF 里；用基类节点类型遍历，值再用基础类型解码
-    const nodeType = isMap
-      ? "std::__2::__tree_node_base<void *>"
-      : await this._nodeType(`${expr}.__tree_.__node_alloc_`);
-    if (!nodeType) return null;
     const N = Math.min(Math.max(size, 0), 200);
+    const VALUE_OFF = 16;
     let addr = await this._num(`(unsigned)${expr}.__tree_.__begin_node_`);
     const out = [];
     for (let i = 0; i < N && addr; i++) {
-      const node = `((${nodeType}*)${addr})`;
-      if (isMap) {
-        const pair = await this._mapPair(desc, addr);
-        out.push(pair);
-      } else {
-        const val = await this._ev(`${node}->__value_`).catch(() => null);
-        out.push(this._mkVar(`[${i}]`, val));
+      if (isMap) out.push(await this._mapPairAt(desc, addr, VALUE_OFF));
+      else {
+        const d = this._decodeAt(addr + VALUE_OFF, K);
+        out.push(this._mkVar(`[${i}]`, d ? d.value : `?（${K}）`, K));
       }
       if (i === N - 1) break;
-      // 中序后继：有右子树 → 右子树最左；否则向上爬到"我是左孩子"的位置
-      const right = await this._num(`(unsigned)${node}->__right_`);
+      const right = this._memU32At(addr, 4);
       if (right) {
         addr = right;
-        for (let g = 0; g < 64; g++) {
-          const left = await this._num(`(unsigned)((${nodeType}*)${addr})->__left_`);
+        for (let g = 0; g < 128; g++) {
+          const left = this._memU32At(addr, 0);
           if (!left) break;
           addr = left;
         }
       } else {
         let child = addr;
-        let addr2 = await this._num(`(unsigned)${node}->__parent_`);
-        for (let g = 0; g < 64 && addr2; g++) {
-          const pRight = await this._num(`(unsigned)((${nodeType}*)${addr2})->__right_`);
-          if (pRight !== child) break;
-          child = addr2;
-          addr2 = await this._num(`(unsigned)((${nodeType}*)${addr2})->__parent_`);
+        let up = this._memU32At(addr, 8);
+        for (let g = 0; g < 128 && up; g++) {
+          if (this._memU32At(up, 4) !== child) break;
+          child = up;
+          up = this._memU32At(up, 8);
         }
-        addr = addr2;
+        addr = up;
       }
     }
     if (size > N) out.push({ name: `（还有 ${size - N} 个）`, value: "…", type: "info", variablesReference: 0 });
@@ -237,21 +303,16 @@ export class WasmDebugAdapter {
   }
 
   async _listChildren(expr, desc) {
+    const args = this._templateArgs(desc);
+    const T = args[0];
     const size = await this._num(`${expr}.__size_`);
-    let nodeType = await this._nodeType(`${expr}.__node_alloc_`);
-    if (!nodeType) {
-      const args = this._templateArgs(desc);
-      if (args[0]) nodeType = `std::__2::__list_node<${args[0]}, void *>`;
-    }
-    if (!nodeType) return null;
     const N = Math.min(Math.max(size, 0), 200);
     let addr = await this._num(`(unsigned)${expr}.__end_.__next_`);
     const out = [];
     for (let i = 0; i < N && addr; i++) {
-      const node = `((${nodeType}*)${addr})`;
-      const val = await this._ev(`${node}->__value_`).catch(() => null);
-      out.push(this._mkVar(`[${i}]`, val));
-      addr = await this._num(`(unsigned)${node}->__next_`);
+      const d = this._decodeAt(addr + 8, T);
+      out.push(this._mkVar(`[${i}]`, d ? d.value : `?（${T}）`, T));
+      addr = this._memU32At(addr, 4);
     }
     if (size > N) out.push({ name: `（还有 ${size - N} 个）`, value: "…", type: "info", variablesReference: 0 });
     return out;
@@ -261,37 +322,21 @@ export class WasmDebugAdapter {
     const args = this._templateArgs(desc);
     const isMap = /(^|::)unordered_(multi)?map</.test(desc);
     const K = args[0], V = isMap ? args[1] : null;
-    const szK = this._primSize(K), szV = isMap ? this._primSize(V) : 0;
-    if (!szK || (isMap && !szV)) {
-      // 键/值不是基础类型：给出明确提示（string 等的内部布局无法安全解码）
-      return [{
-        name: "（暂不支持）",
-        value: `键/值类型 ${K}${isMap ? " → " + V : ""} 不是基础类型，暂不支持解码`,
-        type: "info", variablesReference: 0,
-      }];
-    }
-    // 哈希节点布局（实测 libc++ v2 / wasm32）：__next_(4) + __hash_ 缓存(4)，值从偏移 8 开始
-    const BASE = 8;
+    const BASE = 8;                                  // __next_(4) + __hash_(4)
     let addr = await this._num(`(unsigned)${expr}.__table_.__first_node_.__next_`);
     const out = [];
     for (let i = 0; i < 200 && addr; i++) {
-      if (isMap) {
-        const k = this._readPrim(addr + BASE, K);
-        const offV = Math.ceil(szK / szV) * szV;
-        const v = this._readPrim(addr + BASE + offV, V);
-        if (!k || !v) break;
-        out.push({ name: `[${String(k.value)}]`, value: String(v.value), type: `${K} → ${V}`, variablesReference: 0 });
-      } else {
-        const v = this._readPrim(addr + BASE, K);
-        if (!v) break;
-        out.push({ name: `[${i}]`, value: String(v.value), type: K, variablesReference: 0 });
+      if (isMap) out.push(await this._mapPairAt(desc, addr, BASE));
+      else {
+        const d = this._decodeAt(addr + BASE, K);
+        out.push(this._mkVar(`[${i}]`, d ? d.value : `?（${K}）`, K));
       }
       addr = this._memU32(addr);
     }
     return out;
   }
 
-  /** 读 4 字节无符号（哈希节点的 __next_） */
+  /** 读 4 字节无符号（链表 next 指针 / 通用 u32） */
   _memU32(addr) {
     const mem = this.memory;
     if (!mem || addr < 0 || addr + 4 > mem.byteLength) return 0;
@@ -299,7 +344,7 @@ export class WasmDebugAdapter {
   }
 
   async _pqChildren(expr) {
-    // priority_queue 的底层就是 vector c（堆序数组）：直接展示元素，并给出 top
+    // priority_queue 底层是堆序 vector；直接把元素摊开（方便看堆结构），并标出 top()
     const c = await this._ev(`${expr}.c`);
     const out = [];
     if (c && c.objectId != null) {
@@ -307,14 +352,34 @@ export class WasmDebugAdapter {
       try { props = await this.session.engine.getProperties(c.objectId); } catch {}
       const top = props.length ? formatValue(props[0].value) : "?";
       out.push({ name: "top()（堆顶）", value: top, type: "", variablesReference: 0 });
-      out.push({ name: `c（底层 vector，size=${props.length}）`, value: (c.description || "vector"), type: c.description || "", variablesReference: this._refFor(c.objectId, `${expr}.c`, c.description || "") });
+      props.forEach((p, i) => {
+        out.push({
+          name: `c[${i}]`,
+          value: formatValue(p.value),
+          type: (p.value && p.value.description) || "",
+          variablesReference: 0,
+        });
+      });
     } else {
       out.push({ name: "（空）", value: "?", type: "", variablesReference: 0 });
     }
     return out;
   }
 
-  /** 写终端（把 \n 统一成终端需要的 \r\n）；同时不影响 Debug Console 的 output 事件 */
+  _sizeOf(t) {
+    const s = String(t || "").trim().replace(/^const\s+/, "");
+    if (this._isStringType(s)) return 12;
+    if (this._isInt128Type(s)) return 16;
+    return this._primSize(s);
+  }
+  _alignOf(t) {
+    const s = String(t || "").trim().replace(/^const\s+/, "");
+    if (this._isStringType(s)) return 4;
+    if (this._isInt128Type(s)) return 8;
+    const sz = this._primSize(s);
+    return sz == null ? 4 : Math.min(sz, 8);
+  }
+
   _term(text) {
     if (!this.terminal) return;
     const s = String(text).replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
@@ -503,27 +568,41 @@ export class WasmDebugAdapter {
         const stl = await this._stlChildren(info);
         if (stl) return this._respond(req, { variables: stl });
         const props = await s.engine.getProperties(info.objectId);
-        return this._respond(req, {
-          variables: (props || []).map((p) => {
-            const childExpr = /^\d+$/.test(p.name)
-              ? `${info.expr}[${p.name}]`
-              : `${info.expr}.${p.name}`;
-            return this._toVariable(p.name, p.value, undefined, childExpr);
-          }),
-        });
+        const mapped = [];
+        for (const p of props || []) {
+          const childExpr = /^\d+$/.test(p.name)
+            ? `${info.expr}[${p.name}]`
+            : `${info.expr}.${p.name}`;
+          mapped.push(await this._toVariable(p.name, p.value, undefined, childExpr));
+        }
+        return this._respond(req, { variables: mapped });
       }
 
       // 2) 局部变量
-      const vars = await s.engine.listVariablesInScope(loc);
+      const rawVars = await s.engine.listVariablesInScope(loc);
+      // 过滤标准库内部符号（piecewise_construct / __dso_handle 之类），
+      // 它们是引擎把 GLOBAL 也列出来的产物，对用户没意义
+      const INTERNAL = /^(std::|__|_GLOBAL__|operator|typeinfo|vtable|__cxa|__wasm)/;
+      const vars = (rawVars || []).filter((v) => !INTERNAL.test(String(v.name || "")));
       const out = [];
       for (let i = 0; i < vars.length; i++) {
         const info = vars[i];
         try {
           // ⚠️ 宿主→引擎的 RPC 只暴露 evaluate，没有 getValueInfo（后者只是插件内部方法）
           const vi = await s.engine.evaluate(info.name, loc, p.stopId);
-          out.push(this._toVariable(info.name, vi, info.type, info.name));
+          out.push(await this._toVariable(info.name, vi, info.type, info.name));
         } catch (e) {
-          out.push({ name: info.name, value: "<不可用>", type: info.type, variablesReference: 0 });
+          // __int128 之类求值器不支持的类型：用类型信息 + 取地址从内存快照解码
+          let decoded = null;
+          try {
+            if (this._isInt128Type(info.type) || this._isStringType(info.type)) {
+              const addr = await this._num(`(unsigned)&(${info.name})`);
+              decoded = this._decodeAt(addr, info.type);
+            }
+          } catch {}
+          out.push(decoded
+            ? { name: info.name, value: decoded.value, type: info.type, variablesReference: 0 }
+            : { name: info.name, value: "<不可用>", type: info.type, variablesReference: 0 });
         }
       }
       this._respond(req, { variables: out });
