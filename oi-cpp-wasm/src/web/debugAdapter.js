@@ -198,6 +198,14 @@ export class WasmDebugAdapter {
   }
 
   async on_scopes(req) {
+    const frameId = (req.arguments && req.arguments.frameId) || 1;
+    // WASM 只能读"当前帧"的 wasm local（浏览器没有提供读外层帧 local 的 API），
+    // 所以外层栈帧给一个说明性 scope，而不是假装有值或直接空白。
+    if (frameId !== 1) {
+      return this._respond(req, {
+        scopes: [{ name: `Locals（第 ${frameId} 帧）`, variablesReference: 2, expensive: false }],
+      });
+    }
     this._respond(req, { scopes: [{ name: "Locals", variablesReference: 1, expensive: false }] });
   }
 
@@ -205,6 +213,17 @@ export class WasmDebugAdapter {
     // MVP：变量读取依赖 locals/global 快照，目前只保证内存里的变量能被引擎解析；失败就返回空
     try {
       const s = this.session, p = this.paused;
+      const ref = req.arguments && req.arguments.variablesReference;
+      if (ref === 2) {
+        return this._respond(req, {
+          variables: [{
+            name: "（说明）",
+            value: "外层栈帧的局部变量暂不支持：WASM 只允许读当前帧的 local。用「继续」回到该帧后可查看。",
+            type: "info",
+            variablesReference: 0,
+          }],
+        });
+      }
       if (!s || !p) return this._respond(req, { variables: [] });
       const loc = this._currentRawLocation();
       const vars = await s.engine.listVariablesInScope(loc);
@@ -231,14 +250,27 @@ export class WasmDebugAdapter {
   }
 
   async on_evaluate(req) {
+    const args = req.arguments || {};
+    const ctx = args.context || "repl";
+    const isHover = ctx === "hover";
     try {
+      const frameId = args.frameId || 1;
       const s = this.session, p = this.paused;
-      if (!s || !p) return this._respond(req, { result: "<no active stop>", variablesReference: 0 });
+      if (!s || !p) return this._respond(req, { result: "", variablesReference: 0 });
+      if (frameId !== 1) {
+        return this._respond(req, {
+          result: "外层栈帧暂不支持求值（WASM 只能读当前帧 local）", variablesReference: 0,
+        });
+      }
       const loc = this._currentRawLocation();
-      const vi = await s.engine.evaluate(String(req.arguments && req.arguments.expression), loc, p.stopId);
+      const vi = await s.engine.evaluate(String(args.expression || ""), loc, p.stopId);
       this._respond(req, { result: formatValue(vi), variablesReference: 0 });
     } catch (e) {
-      this._respond(req, { result: "<unavailable: " + ((e && e.message) || e) + ">", variablesReference: 0 });
+      const msg = String((e && e.message) || e);
+      if (isHover) return this._respond(req, { result: "", variablesReference: 0 });
+      // 把引擎的 EvalError 前缀剥掉，只留诊断本身（调试控制台里更好读）
+      const short = msg.replace(/^EvalError: /, "").replace(/<expr>:\d+:\d+: /, "");
+      this._respond(req, { result: "错误: " + short, variablesReference: 0 });
     }
   }
 
