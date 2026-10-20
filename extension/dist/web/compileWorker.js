@@ -1,0 +1,1772 @@
+(() => {
+  // src/core/dbg-stub.mjs
+  var DBG_STUB_SOURCE = `// oi-cpp-wasm debug stub (auto-generated, do not edit)
+// probe\uFF1A\u8FD4\u56DE\u672C\u6B21\u6682\u505C\u7684 locals \u5FEB\u7167\u5730\u5740\uFF080 = \u8FD9\u6B21\u4E0D\u9700\u8981\u6682\u505C\uFF09
+__attribute__((import_module("oi"), import_name("probe")))
+extern int __oi_probe(int site);
+
+// pause\uFF1Alocals \u5199\u5B8C\u4E4B\u540E\u8C03\u7528\uFF0C\u771F\u6B63\u963B\u585E\u7B49\u5F85\u5BBF\u4E3B\u6062\u590D
+__attribute__((import_module("oi"), import_name("pause")))
+extern void __oi_pause(void);
+
+// \u4EC5\u7528\u4E8E\u8BA9\u94FE\u63A5\u5668\u4FDD\u7559\u4E0A\u9762\u4E24\u4E2A import\uFF08\u8FD0\u884C\u671F\u4E0D\u4F1A\u88AB\u8C03\u7528\uFF09
+__attribute__((used, visibility("default")))
+void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
+`;
+
+  // ../node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+  var CLOCKID_REALTIME = 0;
+  var CLOCKID_MONOTONIC = 1;
+  var ERRNO_SUCCESS = 0;
+  var ERRNO_BADF = 8;
+  var ERRNO_EXIST = 20;
+  var ERRNO_INVAL = 28;
+  var ERRNO_ISDIR = 31;
+  var ERRNO_NAMETOOLONG = 37;
+  var ERRNO_NOENT = 44;
+  var ERRNO_NOSYS = 52;
+  var ERRNO_NOTDIR = 54;
+  var ERRNO_NOTEMPTY = 55;
+  var ERRNO_NOTSUP = 58;
+  var ERRNO_PERM = 63;
+  var ERRNO_NOTCAPABLE = 76;
+  var RIGHTS_FD_DATASYNC = 1 << 0;
+  var RIGHTS_FD_READ = 1 << 1;
+  var RIGHTS_FD_SEEK = 1 << 2;
+  var RIGHTS_FD_FDSTAT_SET_FLAGS = 1 << 3;
+  var RIGHTS_FD_SYNC = 1 << 4;
+  var RIGHTS_FD_TELL = 1 << 5;
+  var RIGHTS_FD_WRITE = 1 << 6;
+  var RIGHTS_FD_ADVISE = 1 << 7;
+  var RIGHTS_FD_ALLOCATE = 1 << 8;
+  var RIGHTS_PATH_CREATE_DIRECTORY = 1 << 9;
+  var RIGHTS_PATH_CREATE_FILE = 1 << 10;
+  var RIGHTS_PATH_LINK_SOURCE = 1 << 11;
+  var RIGHTS_PATH_LINK_TARGET = 1 << 12;
+  var RIGHTS_PATH_OPEN = 1 << 13;
+  var RIGHTS_FD_READDIR = 1 << 14;
+  var RIGHTS_PATH_READLINK = 1 << 15;
+  var RIGHTS_PATH_RENAME_SOURCE = 1 << 16;
+  var RIGHTS_PATH_RENAME_TARGET = 1 << 17;
+  var RIGHTS_PATH_FILESTAT_GET = 1 << 18;
+  var RIGHTS_PATH_FILESTAT_SET_SIZE = 1 << 19;
+  var RIGHTS_PATH_FILESTAT_SET_TIMES = 1 << 20;
+  var RIGHTS_FD_FILESTAT_GET = 1 << 21;
+  var RIGHTS_FD_FILESTAT_SET_SIZE = 1 << 22;
+  var RIGHTS_FD_FILESTAT_SET_TIMES = 1 << 23;
+  var RIGHTS_PATH_SYMLINK = 1 << 24;
+  var RIGHTS_PATH_REMOVE_DIRECTORY = 1 << 25;
+  var RIGHTS_PATH_UNLINK_FILE = 1 << 26;
+  var RIGHTS_POLL_FD_READWRITE = 1 << 27;
+  var RIGHTS_SOCK_SHUTDOWN = 1 << 28;
+  var Iovec = class _Iovec {
+    static read_bytes(view, ptr) {
+      const iovec = new _Iovec();
+      iovec.buf = view.getUint32(ptr, true);
+      iovec.buf_len = view.getUint32(ptr + 4, true);
+      return iovec;
+    }
+    static read_bytes_array(view, ptr, len) {
+      const iovecs = [];
+      for (let i = 0; i < len; i++) {
+        iovecs.push(_Iovec.read_bytes(view, ptr + 8 * i));
+      }
+      return iovecs;
+    }
+  };
+  var Ciovec = class _Ciovec {
+    static read_bytes(view, ptr) {
+      const iovec = new _Ciovec();
+      iovec.buf = view.getUint32(ptr, true);
+      iovec.buf_len = view.getUint32(ptr + 4, true);
+      return iovec;
+    }
+    static read_bytes_array(view, ptr, len) {
+      const iovecs = [];
+      for (let i = 0; i < len; i++) {
+        iovecs.push(_Ciovec.read_bytes(view, ptr + 8 * i));
+      }
+      return iovecs;
+    }
+  };
+  var WHENCE_SET = 0;
+  var WHENCE_CUR = 1;
+  var WHENCE_END = 2;
+  var FILETYPE_CHARACTER_DEVICE = 2;
+  var FILETYPE_DIRECTORY = 3;
+  var FILETYPE_REGULAR_FILE = 4;
+  var Dirent = class {
+    head_length() {
+      return 24;
+    }
+    name_length() {
+      return this.dir_name.byteLength;
+    }
+    write_head_bytes(view, ptr) {
+      view.setBigUint64(ptr, this.d_next, true);
+      view.setBigUint64(ptr + 8, this.d_ino, true);
+      view.setUint32(ptr + 16, this.dir_name.length, true);
+      view.setUint8(ptr + 20, this.d_type);
+    }
+    write_name_bytes(view8, ptr, buf_len) {
+      view8.set(this.dir_name.slice(0, Math.min(this.dir_name.byteLength, buf_len)), ptr);
+    }
+    constructor(next_cookie, d_ino, name, type) {
+      const encoded_name = new TextEncoder().encode(name);
+      this.d_next = next_cookie;
+      this.d_ino = d_ino;
+      this.d_namlen = encoded_name.byteLength;
+      this.d_type = type;
+      this.dir_name = encoded_name;
+    }
+  };
+  var FDFLAGS_APPEND = 1 << 0;
+  var FDFLAGS_DSYNC = 1 << 1;
+  var FDFLAGS_NONBLOCK = 1 << 2;
+  var FDFLAGS_RSYNC = 1 << 3;
+  var FDFLAGS_SYNC = 1 << 4;
+  var Fdstat = class {
+    write_bytes(view, ptr) {
+      view.setUint8(ptr, this.fs_filetype);
+      view.setUint16(ptr + 2, this.fs_flags, true);
+      view.setBigUint64(ptr + 8, this.fs_rights_base, true);
+      view.setBigUint64(ptr + 16, this.fs_rights_inherited, true);
+    }
+    constructor(filetype, flags) {
+      this.fs_rights_base = 0n;
+      this.fs_rights_inherited = 0n;
+      this.fs_filetype = filetype;
+      this.fs_flags = flags;
+    }
+  };
+  var FSTFLAGS_ATIM = 1 << 0;
+  var FSTFLAGS_ATIM_NOW = 1 << 1;
+  var FSTFLAGS_MTIM = 1 << 2;
+  var FSTFLAGS_MTIM_NOW = 1 << 3;
+  var OFLAGS_CREAT = 1 << 0;
+  var OFLAGS_DIRECTORY = 1 << 1;
+  var OFLAGS_EXCL = 1 << 2;
+  var OFLAGS_TRUNC = 1 << 3;
+  var Filestat = class {
+    write_bytes(view, ptr) {
+      view.setBigUint64(ptr, this.dev, true);
+      view.setBigUint64(ptr + 8, this.ino, true);
+      view.setUint8(ptr + 16, this.filetype);
+      view.setBigUint64(ptr + 24, this.nlink, true);
+      view.setBigUint64(ptr + 32, this.size, true);
+      view.setBigUint64(ptr + 38, this.atim, true);
+      view.setBigUint64(ptr + 46, this.mtim, true);
+      view.setBigUint64(ptr + 52, this.ctim, true);
+    }
+    constructor(ino, filetype, size) {
+      this.dev = 0n;
+      this.nlink = 0n;
+      this.atim = 0n;
+      this.mtim = 0n;
+      this.ctim = 0n;
+      this.ino = ino;
+      this.filetype = filetype;
+      this.size = size;
+    }
+  };
+  var EVENTTYPE_CLOCK = 0;
+  var EVENTRWFLAGS_FD_READWRITE_HANGUP = 1 << 0;
+  var SUBCLOCKFLAGS_SUBSCRIPTION_CLOCK_ABSTIME = 1 << 0;
+  var Subscription = class _Subscription {
+    static read_bytes(view, ptr) {
+      return new _Subscription(view.getBigUint64(ptr, true), view.getUint8(ptr + 8), view.getUint32(ptr + 16, true), view.getBigUint64(ptr + 24, true), view.getUint16(ptr + 36, true));
+    }
+    constructor(userdata, eventtype, clockid, timeout, flags) {
+      this.userdata = userdata;
+      this.eventtype = eventtype;
+      this.clockid = clockid;
+      this.timeout = timeout;
+      this.flags = flags;
+    }
+  };
+  var Event = class {
+    write_bytes(view, ptr) {
+      view.setBigUint64(ptr, this.userdata, true);
+      view.setUint16(ptr + 8, this.error, true);
+      view.setUint8(ptr + 10, this.eventtype);
+    }
+    constructor(userdata, error, eventtype) {
+      this.userdata = userdata;
+      this.error = error;
+      this.eventtype = eventtype;
+    }
+  };
+  var RIFLAGS_RECV_PEEK = 1 << 0;
+  var RIFLAGS_RECV_WAITALL = 1 << 1;
+  var ROFLAGS_RECV_DATA_TRUNCATED = 1 << 0;
+  var SDFLAGS_RD = 1 << 0;
+  var SDFLAGS_WR = 1 << 1;
+  var PREOPENTYPE_DIR = 0;
+  var PrestatDir = class {
+    write_bytes(view, ptr) {
+      view.setUint32(ptr, this.pr_name.byteLength, true);
+    }
+    constructor(name) {
+      this.pr_name = new TextEncoder().encode(name);
+    }
+  };
+  var Prestat = class _Prestat {
+    static dir(name) {
+      const prestat = new _Prestat();
+      prestat.tag = PREOPENTYPE_DIR;
+      prestat.inner = new PrestatDir(name);
+      return prestat;
+    }
+    write_bytes(view, ptr) {
+      view.setUint32(ptr, this.tag, true);
+      this.inner.write_bytes(view, ptr + 4);
+    }
+  };
+
+  // ../node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+  var Debug = class Debug2 {
+    enable(enabled) {
+      this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
+    }
+    get enabled() {
+      return this.isEnabled;
+    }
+    constructor(isEnabled) {
+      this.isEnabled = isEnabled;
+      this.prefix = "wasi:";
+      this.enable(isEnabled);
+    }
+  };
+  function createLogger(enabled, prefix) {
+    if (enabled) {
+      const a = (() => {
+      }).bind(console, "%c%s", "color: #265BA0", prefix);
+      return a;
+    } else {
+      return () => {
+      };
+    }
+  }
+  var debug = new Debug(false);
+
+  // ../node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+  var WASIProcExit = class extends Error {
+    constructor(code) {
+      super("exit with exit code " + code);
+      this.code = code;
+    }
+  };
+  var WASI = class WASI2 {
+    start(instance) {
+      this.inst = instance;
+      try {
+        instance.exports._start();
+        return 0;
+      } catch (e) {
+        if (e instanceof WASIProcExit) {
+          return e.code;
+        } else {
+          throw e;
+        }
+      }
+    }
+    initialize(instance) {
+      this.inst = instance;
+      if (instance.exports._initialize) {
+        instance.exports._initialize();
+      }
+    }
+    constructor(args, env, fds, options = {}) {
+      this.args = [];
+      this.env = [];
+      this.fds = [];
+      debug.enable(options.debug);
+      this.args = args;
+      this.env = env;
+      this.fds = fds;
+      const self2 = this;
+      this.wasiImport = { args_sizes_get(argc, argv_buf_size) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        buffer.setUint32(argc, self2.args.length, true);
+        let buf_size = 0;
+        for (const arg of self2.args) {
+          buf_size += arg.length + 1;
+        }
+        buffer.setUint32(argv_buf_size, buf_size, true);
+        debug.log(buffer.getUint32(argc, true), buffer.getUint32(argv_buf_size, true));
+        return 0;
+      }, args_get(argv, argv_buf) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        const orig_argv_buf = argv_buf;
+        for (let i = 0; i < self2.args.length; i++) {
+          buffer.setUint32(argv, argv_buf, true);
+          argv += 4;
+          const arg = new TextEncoder().encode(self2.args[i]);
+          buffer8.set(arg, argv_buf);
+          buffer.setUint8(argv_buf + arg.length, 0);
+          argv_buf += arg.length + 1;
+        }
+        if (debug.enabled) {
+          debug.log(new TextDecoder("utf-8").decode(buffer8.slice(orig_argv_buf, argv_buf)));
+        }
+        return 0;
+      }, environ_sizes_get(environ_count, environ_size) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        buffer.setUint32(environ_count, self2.env.length, true);
+        let buf_size = 0;
+        for (const environ of self2.env) {
+          buf_size += new TextEncoder().encode(environ).length + 1;
+        }
+        buffer.setUint32(environ_size, buf_size, true);
+        debug.log(buffer.getUint32(environ_count, true), buffer.getUint32(environ_size, true));
+        return 0;
+      }, environ_get(environ, environ_buf) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        const orig_environ_buf = environ_buf;
+        for (let i = 0; i < self2.env.length; i++) {
+          buffer.setUint32(environ, environ_buf, true);
+          environ += 4;
+          const e = new TextEncoder().encode(self2.env[i]);
+          buffer8.set(e, environ_buf);
+          buffer.setUint8(environ_buf + e.length, 0);
+          environ_buf += e.length + 1;
+        }
+        if (debug.enabled) {
+          debug.log(new TextDecoder("utf-8").decode(buffer8.slice(orig_environ_buf, environ_buf)));
+        }
+        return 0;
+      }, clock_res_get(id, res_ptr) {
+        let resolutionValue;
+        switch (id) {
+          case CLOCKID_MONOTONIC: {
+            resolutionValue = 5000n;
+            break;
+          }
+          case CLOCKID_REALTIME: {
+            resolutionValue = 1000000n;
+            break;
+          }
+          default:
+            return ERRNO_NOSYS;
+        }
+        const view = new DataView(self2.inst.exports.memory.buffer);
+        view.setBigUint64(res_ptr, resolutionValue, true);
+        return ERRNO_SUCCESS;
+      }, clock_time_get(id, precision, time) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        if (id === CLOCKID_REALTIME) {
+          buffer.setBigUint64(time, BigInt((/* @__PURE__ */ new Date()).getTime()) * 1000000n, true);
+        } else if (id == CLOCKID_MONOTONIC) {
+          let monotonic_time;
+          try {
+            monotonic_time = BigInt(Math.round(performance.now() * 1e6));
+          } catch (e) {
+            monotonic_time = 0n;
+          }
+          buffer.setBigUint64(time, monotonic_time, true);
+        } else {
+          buffer.setBigUint64(time, 0n, true);
+        }
+        return 0;
+      }, fd_advise(fd, offset, len, advice) {
+        if (self2.fds[fd] != void 0) {
+          return ERRNO_SUCCESS;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_allocate(fd, offset, len) {
+        if (self2.fds[fd] != void 0) {
+          return self2.fds[fd].fd_allocate(offset, len);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_close(fd) {
+        if (self2.fds[fd] != void 0) {
+          const ret = self2.fds[fd].fd_close();
+          self2.fds[fd] = void 0;
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_datasync(fd) {
+        if (self2.fds[fd] != void 0) {
+          return self2.fds[fd].fd_sync();
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_fdstat_get(fd, fdstat_ptr) {
+        if (self2.fds[fd] != void 0) {
+          const { ret, fdstat } = self2.fds[fd].fd_fdstat_get();
+          if (fdstat != null) {
+            fdstat.write_bytes(new DataView(self2.inst.exports.memory.buffer), fdstat_ptr);
+          }
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_fdstat_set_flags(fd, flags) {
+        if (self2.fds[fd] != void 0) {
+          return self2.fds[fd].fd_fdstat_set_flags(flags);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_fdstat_set_rights(fd, fs_rights_base, fs_rights_inheriting) {
+        if (self2.fds[fd] != void 0) {
+          return self2.fds[fd].fd_fdstat_set_rights(fs_rights_base, fs_rights_inheriting);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_filestat_get(fd, filestat_ptr) {
+        if (self2.fds[fd] != void 0) {
+          const { ret, filestat } = self2.fds[fd].fd_filestat_get();
+          if (filestat != null) {
+            filestat.write_bytes(new DataView(self2.inst.exports.memory.buffer), filestat_ptr);
+          }
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_filestat_set_size(fd, size) {
+        if (self2.fds[fd] != void 0) {
+          return self2.fds[fd].fd_filestat_set_size(size);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_filestat_set_times(fd, atim, mtim, fst_flags) {
+        if (self2.fds[fd] != void 0) {
+          return self2.fds[fd].fd_filestat_set_times(atim, mtim, fst_flags);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_pread(fd, iovs_ptr, iovs_len, offset, nread_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const iovecs = Iovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
+          let nread = 0;
+          for (const iovec of iovecs) {
+            const { ret, data } = self2.fds[fd].fd_pread(iovec.buf_len, offset);
+            if (ret != ERRNO_SUCCESS) {
+              buffer.setUint32(nread_ptr, nread, true);
+              return ret;
+            }
+            buffer8.set(data, iovec.buf);
+            nread += data.length;
+            offset += BigInt(data.length);
+            if (data.length != iovec.buf_len) {
+              break;
+            }
+          }
+          buffer.setUint32(nread_ptr, nread, true);
+          return ERRNO_SUCCESS;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_prestat_get(fd, buf_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const { ret, prestat } = self2.fds[fd].fd_prestat_get();
+          if (prestat != null) {
+            prestat.write_bytes(buffer, buf_ptr);
+          }
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_prestat_dir_name(fd, path_ptr, path_len) {
+        if (self2.fds[fd] != void 0) {
+          const { ret, prestat } = self2.fds[fd].fd_prestat_get();
+          if (prestat == null) {
+            return ret;
+          }
+          const prestat_dir_name = prestat.inner.pr_name;
+          const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+          buffer8.set(prestat_dir_name.slice(0, path_len), path_ptr);
+          return prestat_dir_name.byteLength > path_len ? ERRNO_NAMETOOLONG : ERRNO_SUCCESS;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_pwrite(fd, iovs_ptr, iovs_len, offset, nwritten_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const iovecs = Ciovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
+          let nwritten = 0;
+          for (const iovec of iovecs) {
+            const data = buffer8.slice(iovec.buf, iovec.buf + iovec.buf_len);
+            const { ret, nwritten: nwritten_part } = self2.fds[fd].fd_pwrite(data, offset);
+            if (ret != ERRNO_SUCCESS) {
+              buffer.setUint32(nwritten_ptr, nwritten, true);
+              return ret;
+            }
+            nwritten += nwritten_part;
+            offset += BigInt(nwritten_part);
+            if (nwritten_part != data.byteLength) {
+              break;
+            }
+          }
+          buffer.setUint32(nwritten_ptr, nwritten, true);
+          return ERRNO_SUCCESS;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_read(fd, iovs_ptr, iovs_len, nread_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const iovecs = Iovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
+          let nread = 0;
+          for (const iovec of iovecs) {
+            const { ret, data } = self2.fds[fd].fd_read(iovec.buf_len);
+            if (ret != ERRNO_SUCCESS) {
+              buffer.setUint32(nread_ptr, nread, true);
+              return ret;
+            }
+            buffer8.set(data, iovec.buf);
+            nread += data.length;
+            if (data.length != iovec.buf_len) {
+              break;
+            }
+          }
+          buffer.setUint32(nread_ptr, nread, true);
+          return ERRNO_SUCCESS;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_readdir(fd, buf, buf_len, cookie, bufused_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          let bufused = 0;
+          while (true) {
+            const { ret, dirent } = self2.fds[fd].fd_readdir_single(cookie);
+            if (ret != 0) {
+              buffer.setUint32(bufused_ptr, bufused, true);
+              return ret;
+            }
+            if (dirent == null) {
+              break;
+            }
+            if (buf_len - bufused < dirent.head_length()) {
+              bufused = buf_len;
+              break;
+            }
+            const head_bytes = new ArrayBuffer(dirent.head_length());
+            dirent.write_head_bytes(new DataView(head_bytes), 0);
+            buffer8.set(new Uint8Array(head_bytes).slice(0, Math.min(head_bytes.byteLength, buf_len - bufused)), buf);
+            buf += dirent.head_length();
+            bufused += dirent.head_length();
+            if (buf_len - bufused < dirent.name_length()) {
+              bufused = buf_len;
+              break;
+            }
+            dirent.write_name_bytes(buffer8, buf, buf_len - bufused);
+            buf += dirent.name_length();
+            bufused += dirent.name_length();
+            cookie = dirent.d_next;
+          }
+          buffer.setUint32(bufused_ptr, bufused, true);
+          return 0;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_renumber(fd, to) {
+        if (self2.fds[fd] != void 0 && self2.fds[to] != void 0) {
+          const ret = self2.fds[to].fd_close();
+          if (ret != 0) {
+            return ret;
+          }
+          self2.fds[to] = self2.fds[fd];
+          self2.fds[fd] = void 0;
+          return 0;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_seek(fd, offset, whence, offset_out_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const { ret, offset: offset_out } = self2.fds[fd].fd_seek(offset, whence);
+          buffer.setBigInt64(offset_out_ptr, offset_out, true);
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_sync(fd) {
+        if (self2.fds[fd] != void 0) {
+          return self2.fds[fd].fd_sync();
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_tell(fd, offset_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const { ret, offset } = self2.fds[fd].fd_tell();
+          buffer.setBigUint64(offset_ptr, offset, true);
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const iovecs = Ciovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
+          let nwritten = 0;
+          for (const iovec of iovecs) {
+            const data = buffer8.slice(iovec.buf, iovec.buf + iovec.buf_len);
+            const { ret, nwritten: nwritten_part } = self2.fds[fd].fd_write(data);
+            if (ret != ERRNO_SUCCESS) {
+              buffer.setUint32(nwritten_ptr, nwritten, true);
+              return ret;
+            }
+            nwritten += nwritten_part;
+            if (nwritten_part != data.byteLength) {
+              break;
+            }
+          }
+          buffer.setUint32(nwritten_ptr, nwritten, true);
+          return ERRNO_SUCCESS;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_create_directory(fd, path_ptr, path_len) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
+          return self2.fds[fd].path_create_directory(path);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_filestat_get(fd, flags, path_ptr, path_len, filestat_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
+          const { ret, filestat } = self2.fds[fd].path_filestat_get(flags, path);
+          if (filestat != null) {
+            filestat.write_bytes(buffer, filestat_ptr);
+          }
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_filestat_set_times(fd, flags, path_ptr, path_len, atim, mtim, fst_flags) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
+          return self2.fds[fd].path_filestat_set_times(flags, path, atim, mtim, fst_flags);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_link(old_fd, old_flags, old_path_ptr, old_path_len, new_fd, new_path_ptr, new_path_len) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[old_fd] != void 0 && self2.fds[new_fd] != void 0) {
+          const old_path = new TextDecoder("utf-8").decode(buffer8.slice(old_path_ptr, old_path_ptr + old_path_len));
+          const new_path = new TextDecoder("utf-8").decode(buffer8.slice(new_path_ptr, new_path_ptr + new_path_len));
+          const { ret, inode_obj } = self2.fds[old_fd].path_lookup(old_path, old_flags);
+          if (inode_obj == null) {
+            return ret;
+          }
+          return self2.fds[new_fd].path_link(new_path, inode_obj, false);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_open(fd, dirflags, path_ptr, path_len, oflags, fs_rights_base, fs_rights_inheriting, fd_flags, opened_fd_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
+          debug.log(path);
+          const { ret, fd_obj } = self2.fds[fd].path_open(dirflags, path, oflags, fs_rights_base, fs_rights_inheriting, fd_flags);
+          if (ret != 0) {
+            return ret;
+          }
+          self2.fds.push(fd_obj);
+          const opened_fd = self2.fds.length - 1;
+          buffer.setUint32(opened_fd_ptr, opened_fd, true);
+          return 0;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_readlink(fd, path_ptr, path_len, buf_ptr, buf_len, nread_ptr) {
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
+          debug.log(path);
+          const { ret, data } = self2.fds[fd].path_readlink(path);
+          if (data != null) {
+            const data_buf = new TextEncoder().encode(data);
+            if (data_buf.length > buf_len) {
+              buffer.setUint32(nread_ptr, 0, true);
+              return ERRNO_BADF;
+            }
+            buffer8.set(data_buf, buf_ptr);
+            buffer.setUint32(nread_ptr, data_buf.length, true);
+          }
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_remove_directory(fd, path_ptr, path_len) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
+          return self2.fds[fd].path_remove_directory(path);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_rename(fd, old_path_ptr, old_path_len, new_fd, new_path_ptr, new_path_len) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0 && self2.fds[new_fd] != void 0) {
+          const old_path = new TextDecoder("utf-8").decode(buffer8.slice(old_path_ptr, old_path_ptr + old_path_len));
+          const new_path = new TextDecoder("utf-8").decode(buffer8.slice(new_path_ptr, new_path_ptr + new_path_len));
+          let { ret, inode_obj } = self2.fds[fd].path_unlink(old_path);
+          if (inode_obj == null) {
+            return ret;
+          }
+          ret = self2.fds[new_fd].path_link(new_path, inode_obj, true);
+          if (ret != ERRNO_SUCCESS) {
+            if (self2.fds[fd].path_link(old_path, inode_obj, true) != ERRNO_SUCCESS) {
+              throw "path_link should always return success when relinking an inode back to the original place";
+            }
+          }
+          return ret;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_symlink(old_path_ptr, old_path_len, fd, new_path_ptr, new_path_len) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const old_path = new TextDecoder("utf-8").decode(buffer8.slice(old_path_ptr, old_path_ptr + old_path_len));
+          const new_path = new TextDecoder("utf-8").decode(buffer8.slice(new_path_ptr, new_path_ptr + new_path_len));
+          return ERRNO_NOTSUP;
+        } else {
+          return ERRNO_BADF;
+        }
+      }, path_unlink_file(fd, path_ptr, path_len) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+        if (self2.fds[fd] != void 0) {
+          const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
+          return self2.fds[fd].path_unlink_file(path);
+        } else {
+          return ERRNO_BADF;
+        }
+      }, poll_oneoff(in_ptr, out_ptr, nsubscriptions) {
+        if (nsubscriptions === 0) {
+          return ERRNO_INVAL;
+        }
+        if (nsubscriptions > 1) {
+          debug.log("poll_oneoff: only a single subscription is supported");
+          return ERRNO_NOTSUP;
+        }
+        const buffer = new DataView(self2.inst.exports.memory.buffer);
+        const s = Subscription.read_bytes(buffer, in_ptr);
+        const eventtype = s.eventtype;
+        const clockid = s.clockid;
+        const timeout = s.timeout;
+        if (eventtype !== EVENTTYPE_CLOCK) {
+          debug.log("poll_oneoff: only clock subscriptions are supported");
+          return ERRNO_NOTSUP;
+        }
+        let getNow = void 0;
+        if (clockid === CLOCKID_MONOTONIC) {
+          getNow = () => BigInt(Math.round(performance.now() * 1e6));
+        } else if (clockid === CLOCKID_REALTIME) {
+          getNow = () => BigInt((/* @__PURE__ */ new Date()).getTime()) * 1000000n;
+        } else {
+          return ERRNO_INVAL;
+        }
+        const endTime = (s.flags & SUBCLOCKFLAGS_SUBSCRIPTION_CLOCK_ABSTIME) !== 0 ? timeout : getNow() + timeout;
+        while (endTime > getNow()) {
+        }
+        const event = new Event(s.userdata, ERRNO_SUCCESS, eventtype);
+        event.write_bytes(buffer, out_ptr);
+        return ERRNO_SUCCESS;
+      }, proc_exit(exit_code) {
+        throw new WASIProcExit(exit_code);
+      }, proc_raise(sig) {
+        throw "raised signal " + sig;
+      }, sched_yield() {
+      }, random_get(buf, buf_len) {
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer).subarray(buf, buf + buf_len);
+        if ("crypto" in globalThis && (typeof SharedArrayBuffer === "undefined" || !(self2.inst.exports.memory.buffer instanceof SharedArrayBuffer))) {
+          for (let i = 0; i < buf_len; i += 65536) {
+            crypto.getRandomValues(buffer8.subarray(i, i + 65536));
+          }
+        } else {
+          for (let i = 0; i < buf_len; i++) {
+            buffer8[i] = Math.random() * 256 | 0;
+          }
+        }
+      }, sock_recv(fd, ri_data, ri_flags) {
+        throw "sockets not supported";
+      }, sock_send(fd, si_data, si_flags) {
+        throw "sockets not supported";
+      }, sock_shutdown(fd, how) {
+        throw "sockets not supported";
+      }, sock_accept(fd, flags) {
+        throw "sockets not supported";
+      } };
+    }
+  };
+
+  // ../node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+  var Fd = class {
+    fd_allocate(offset, len) {
+      return ERRNO_NOTSUP;
+    }
+    fd_close() {
+      return 0;
+    }
+    fd_fdstat_get() {
+      return { ret: ERRNO_NOTSUP, fdstat: null };
+    }
+    fd_fdstat_set_flags(flags) {
+      return ERRNO_NOTSUP;
+    }
+    fd_fdstat_set_rights(fs_rights_base, fs_rights_inheriting) {
+      return ERRNO_NOTSUP;
+    }
+    fd_filestat_get() {
+      return { ret: ERRNO_NOTSUP, filestat: null };
+    }
+    fd_filestat_set_size(size) {
+      return ERRNO_NOTSUP;
+    }
+    fd_filestat_set_times(atim, mtim, fst_flags) {
+      return ERRNO_NOTSUP;
+    }
+    fd_pread(size, offset) {
+      return { ret: ERRNO_NOTSUP, data: new Uint8Array() };
+    }
+    fd_prestat_get() {
+      return { ret: ERRNO_NOTSUP, prestat: null };
+    }
+    fd_pwrite(data, offset) {
+      return { ret: ERRNO_NOTSUP, nwritten: 0 };
+    }
+    fd_read(size) {
+      return { ret: ERRNO_NOTSUP, data: new Uint8Array() };
+    }
+    fd_readdir_single(cookie) {
+      return { ret: ERRNO_NOTSUP, dirent: null };
+    }
+    fd_seek(offset, whence) {
+      return { ret: ERRNO_NOTSUP, offset: 0n };
+    }
+    fd_sync() {
+      return 0;
+    }
+    fd_tell() {
+      return { ret: ERRNO_NOTSUP, offset: 0n };
+    }
+    fd_write(data) {
+      return { ret: ERRNO_NOTSUP, nwritten: 0 };
+    }
+    path_create_directory(path) {
+      return ERRNO_NOTSUP;
+    }
+    path_filestat_get(flags, path) {
+      return { ret: ERRNO_NOTSUP, filestat: null };
+    }
+    path_filestat_set_times(flags, path, atim, mtim, fst_flags) {
+      return ERRNO_NOTSUP;
+    }
+    path_link(path, inode, allow_dir) {
+      return ERRNO_NOTSUP;
+    }
+    path_unlink(path) {
+      return { ret: ERRNO_NOTSUP, inode_obj: null };
+    }
+    path_lookup(path, dirflags) {
+      return { ret: ERRNO_NOTSUP, inode_obj: null };
+    }
+    path_open(dirflags, path, oflags, fs_rights_base, fs_rights_inheriting, fd_flags) {
+      return { ret: ERRNO_NOTDIR, fd_obj: null };
+    }
+    path_readlink(path) {
+      return { ret: ERRNO_NOTSUP, data: null };
+    }
+    path_remove_directory(path) {
+      return ERRNO_NOTSUP;
+    }
+    path_rename(old_path, new_fd, new_path) {
+      return ERRNO_NOTSUP;
+    }
+    path_unlink_file(path) {
+      return ERRNO_NOTSUP;
+    }
+  };
+  var Inode = class _Inode {
+    static issue_ino() {
+      return _Inode.next_ino++;
+    }
+    static root_ino() {
+      return 0n;
+    }
+    constructor() {
+      this.ino = _Inode.issue_ino();
+    }
+  };
+  Inode.next_ino = 1n;
+
+  // ../node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+  var OpenFile = class extends Fd {
+    fd_allocate(offset, len) {
+      if (this.file.size > offset + len) {
+      } else {
+        const new_data = new Uint8Array(Number(offset + len));
+        new_data.set(this.file.data, 0);
+        this.file.data = new_data;
+      }
+      return ERRNO_SUCCESS;
+    }
+    fd_fdstat_get() {
+      return { ret: 0, fdstat: new Fdstat(FILETYPE_REGULAR_FILE, 0) };
+    }
+    fd_filestat_set_size(size) {
+      if (this.file.size > size) {
+        this.file.data = new Uint8Array(this.file.data.buffer.slice(0, Number(size)));
+      } else {
+        const new_data = new Uint8Array(Number(size));
+        new_data.set(this.file.data, 0);
+        this.file.data = new_data;
+      }
+      return ERRNO_SUCCESS;
+    }
+    fd_read(size) {
+      const slice = this.file.data.slice(Number(this.file_pos), Number(this.file_pos + BigInt(size)));
+      this.file_pos += BigInt(slice.length);
+      return { ret: 0, data: slice };
+    }
+    fd_pread(size, offset) {
+      const slice = this.file.data.slice(Number(offset), Number(offset + BigInt(size)));
+      return { ret: 0, data: slice };
+    }
+    fd_seek(offset, whence) {
+      let calculated_offset;
+      switch (whence) {
+        case WHENCE_SET:
+          calculated_offset = offset;
+          break;
+        case WHENCE_CUR:
+          calculated_offset = this.file_pos + offset;
+          break;
+        case WHENCE_END:
+          calculated_offset = BigInt(this.file.data.byteLength) + offset;
+          break;
+        default:
+          return { ret: ERRNO_INVAL, offset: 0n };
+      }
+      if (calculated_offset < 0) {
+        return { ret: ERRNO_INVAL, offset: 0n };
+      }
+      this.file_pos = calculated_offset;
+      return { ret: 0, offset: this.file_pos };
+    }
+    fd_tell() {
+      return { ret: 0, offset: this.file_pos };
+    }
+    fd_write(data) {
+      if (this.file.readonly) return { ret: ERRNO_BADF, nwritten: 0 };
+      if (this.file_pos + BigInt(data.byteLength) > this.file.size) {
+        const old = this.file.data;
+        this.file.data = new Uint8Array(Number(this.file_pos + BigInt(data.byteLength)));
+        this.file.data.set(old);
+      }
+      this.file.data.set(data, Number(this.file_pos));
+      this.file_pos += BigInt(data.byteLength);
+      return { ret: 0, nwritten: data.byteLength };
+    }
+    fd_pwrite(data, offset) {
+      if (this.file.readonly) return { ret: ERRNO_BADF, nwritten: 0 };
+      if (offset + BigInt(data.byteLength) > this.file.size) {
+        const old = this.file.data;
+        this.file.data = new Uint8Array(Number(offset + BigInt(data.byteLength)));
+        this.file.data.set(old);
+      }
+      this.file.data.set(data, Number(offset));
+      return { ret: 0, nwritten: data.byteLength };
+    }
+    fd_filestat_get() {
+      return { ret: 0, filestat: this.file.stat() };
+    }
+    constructor(file) {
+      super();
+      this.file_pos = 0n;
+      this.file = file;
+    }
+  };
+  var OpenDirectory = class extends Fd {
+    fd_seek(offset, whence) {
+      return { ret: ERRNO_BADF, offset: 0n };
+    }
+    fd_tell() {
+      return { ret: ERRNO_BADF, offset: 0n };
+    }
+    fd_allocate(offset, len) {
+      return ERRNO_BADF;
+    }
+    fd_fdstat_get() {
+      return { ret: 0, fdstat: new Fdstat(FILETYPE_DIRECTORY, 0) };
+    }
+    fd_readdir_single(cookie) {
+      if (debug.enabled) {
+        debug.log("readdir_single", cookie);
+        debug.log(cookie, this.dir.contents.keys());
+      }
+      if (cookie == 0n) {
+        return { ret: ERRNO_SUCCESS, dirent: new Dirent(1n, this.dir.ino, ".", FILETYPE_DIRECTORY) };
+      } else if (cookie == 1n) {
+        return { ret: ERRNO_SUCCESS, dirent: new Dirent(2n, this.dir.parent_ino(), "..", FILETYPE_DIRECTORY) };
+      }
+      if (cookie >= BigInt(this.dir.contents.size) + 2n) {
+        return { ret: 0, dirent: null };
+      }
+      const [name, entry] = Array.from(this.dir.contents.entries())[Number(cookie - 2n)];
+      return { ret: 0, dirent: new Dirent(cookie + 1n, entry.ino, name, entry.stat().filetype) };
+    }
+    path_filestat_get(flags, path_str) {
+      const { ret: path_err, path } = Path.from(path_str);
+      if (path == null) {
+        return { ret: path_err, filestat: null };
+      }
+      const { ret, entry } = this.dir.get_entry_for_path(path);
+      if (entry == null) {
+        return { ret, filestat: null };
+      }
+      return { ret: 0, filestat: entry.stat() };
+    }
+    path_lookup(path_str, dirflags) {
+      const { ret: path_ret, path } = Path.from(path_str);
+      if (path == null) {
+        return { ret: path_ret, inode_obj: null };
+      }
+      const { ret, entry } = this.dir.get_entry_for_path(path);
+      if (entry == null) {
+        return { ret, inode_obj: null };
+      }
+      return { ret: ERRNO_SUCCESS, inode_obj: entry };
+    }
+    path_open(dirflags, path_str, oflags, fs_rights_base, fs_rights_inheriting, fd_flags) {
+      const { ret: path_ret, path } = Path.from(path_str);
+      if (path == null) {
+        return { ret: path_ret, fd_obj: null };
+      }
+      let { ret, entry } = this.dir.get_entry_for_path(path);
+      if (entry == null) {
+        if (ret != ERRNO_NOENT) {
+          return { ret, fd_obj: null };
+        }
+        if ((oflags & OFLAGS_CREAT) == OFLAGS_CREAT) {
+          const { ret: ret2, entry: new_entry } = this.dir.create_entry_for_path(path_str, (oflags & OFLAGS_DIRECTORY) == OFLAGS_DIRECTORY);
+          if (new_entry == null) {
+            return { ret: ret2, fd_obj: null };
+          }
+          entry = new_entry;
+        } else {
+          return { ret: ERRNO_NOENT, fd_obj: null };
+        }
+      } else if ((oflags & OFLAGS_EXCL) == OFLAGS_EXCL) {
+        return { ret: ERRNO_EXIST, fd_obj: null };
+      }
+      if ((oflags & OFLAGS_DIRECTORY) == OFLAGS_DIRECTORY && entry.stat().filetype !== FILETYPE_DIRECTORY) {
+        return { ret: ERRNO_NOTDIR, fd_obj: null };
+      }
+      return entry.path_open(oflags, fs_rights_base, fd_flags);
+    }
+    path_create_directory(path) {
+      return this.path_open(0, path, OFLAGS_CREAT | OFLAGS_DIRECTORY, 0n, 0n, 0).ret;
+    }
+    path_link(path_str, inode, allow_dir) {
+      const { ret: path_ret, path } = Path.from(path_str);
+      if (path == null) {
+        return path_ret;
+      }
+      if (path.is_dir) {
+        return ERRNO_NOENT;
+      }
+      const { ret: parent_ret, parent_entry, filename, entry } = this.dir.get_parent_dir_and_entry_for_path(path, true);
+      if (parent_entry == null || filename == null) {
+        return parent_ret;
+      }
+      if (entry != null) {
+        const source_is_dir = inode.stat().filetype == FILETYPE_DIRECTORY;
+        const target_is_dir = entry.stat().filetype == FILETYPE_DIRECTORY;
+        if (source_is_dir && target_is_dir) {
+          if (allow_dir && entry instanceof Directory) {
+            if (entry.contents.size == 0) {
+            } else {
+              return ERRNO_NOTEMPTY;
+            }
+          } else {
+            return ERRNO_EXIST;
+          }
+        } else if (source_is_dir && !target_is_dir) {
+          return ERRNO_NOTDIR;
+        } else if (!source_is_dir && target_is_dir) {
+          return ERRNO_ISDIR;
+        } else if (inode.stat().filetype == FILETYPE_REGULAR_FILE && entry.stat().filetype == FILETYPE_REGULAR_FILE) {
+        } else {
+          return ERRNO_EXIST;
+        }
+      }
+      if (!allow_dir && inode.stat().filetype == FILETYPE_DIRECTORY) {
+        return ERRNO_PERM;
+      }
+      parent_entry.contents.set(filename, inode);
+      return ERRNO_SUCCESS;
+    }
+    path_unlink(path_str) {
+      const { ret: path_ret, path } = Path.from(path_str);
+      if (path == null) {
+        return { ret: path_ret, inode_obj: null };
+      }
+      const { ret: parent_ret, parent_entry, filename, entry } = this.dir.get_parent_dir_and_entry_for_path(path, true);
+      if (parent_entry == null || filename == null) {
+        return { ret: parent_ret, inode_obj: null };
+      }
+      if (entry == null) {
+        return { ret: ERRNO_NOENT, inode_obj: null };
+      }
+      parent_entry.contents.delete(filename);
+      return { ret: ERRNO_SUCCESS, inode_obj: entry };
+    }
+    path_unlink_file(path_str) {
+      const { ret: path_ret, path } = Path.from(path_str);
+      if (path == null) {
+        return path_ret;
+      }
+      const { ret: parent_ret, parent_entry, filename, entry } = this.dir.get_parent_dir_and_entry_for_path(path, false);
+      if (parent_entry == null || filename == null || entry == null) {
+        return parent_ret;
+      }
+      if (entry.stat().filetype === FILETYPE_DIRECTORY) {
+        return ERRNO_ISDIR;
+      }
+      parent_entry.contents.delete(filename);
+      return ERRNO_SUCCESS;
+    }
+    path_remove_directory(path_str) {
+      const { ret: path_ret, path } = Path.from(path_str);
+      if (path == null) {
+        return path_ret;
+      }
+      const { ret: parent_ret, parent_entry, filename, entry } = this.dir.get_parent_dir_and_entry_for_path(path, false);
+      if (parent_entry == null || filename == null || entry == null) {
+        return parent_ret;
+      }
+      if (!(entry instanceof Directory) || entry.stat().filetype !== FILETYPE_DIRECTORY) {
+        return ERRNO_NOTDIR;
+      }
+      if (entry.contents.size !== 0) {
+        return ERRNO_NOTEMPTY;
+      }
+      if (!parent_entry.contents.delete(filename)) {
+        return ERRNO_NOENT;
+      }
+      return ERRNO_SUCCESS;
+    }
+    fd_filestat_get() {
+      return { ret: 0, filestat: this.dir.stat() };
+    }
+    fd_filestat_set_size(size) {
+      return ERRNO_BADF;
+    }
+    fd_read(size) {
+      return { ret: ERRNO_BADF, data: new Uint8Array() };
+    }
+    fd_pread(size, offset) {
+      return { ret: ERRNO_BADF, data: new Uint8Array() };
+    }
+    fd_write(data) {
+      return { ret: ERRNO_BADF, nwritten: 0 };
+    }
+    fd_pwrite(data, offset) {
+      return { ret: ERRNO_BADF, nwritten: 0 };
+    }
+    constructor(dir) {
+      super();
+      this.dir = dir;
+    }
+  };
+  var PreopenDirectory = class extends OpenDirectory {
+    fd_prestat_get() {
+      return { ret: 0, prestat: Prestat.dir(this.prestat_name) };
+    }
+    constructor(name, contents) {
+      super(new Directory(contents));
+      this.prestat_name = name;
+    }
+  };
+  var File = class extends Inode {
+    path_open(oflags, fs_rights_base, fd_flags) {
+      if (this.readonly && (fs_rights_base & BigInt(RIGHTS_FD_WRITE)) == BigInt(RIGHTS_FD_WRITE)) {
+        return { ret: ERRNO_PERM, fd_obj: null };
+      }
+      if ((oflags & OFLAGS_TRUNC) == OFLAGS_TRUNC) {
+        if (this.readonly) return { ret: ERRNO_PERM, fd_obj: null };
+        this.data = new Uint8Array([]);
+      }
+      const file = new OpenFile(this);
+      if (fd_flags & FDFLAGS_APPEND) file.fd_seek(0n, WHENCE_END);
+      return { ret: ERRNO_SUCCESS, fd_obj: file };
+    }
+    get size() {
+      return BigInt(this.data.byteLength);
+    }
+    stat() {
+      return new Filestat(this.ino, FILETYPE_REGULAR_FILE, this.size);
+    }
+    constructor(data, options) {
+      super();
+      this.data = new Uint8Array(data);
+      this.readonly = !!options?.readonly;
+    }
+  };
+  var Path = class Path2 {
+    static from(path) {
+      const self2 = new Path2();
+      self2.is_dir = path.endsWith("/");
+      if (path.startsWith("/")) {
+        return { ret: ERRNO_NOTCAPABLE, path: null };
+      }
+      if (path.includes("\0")) {
+        return { ret: ERRNO_INVAL, path: null };
+      }
+      for (const component of path.split("/")) {
+        if (component === "" || component === ".") {
+          continue;
+        }
+        if (component === "..") {
+          if (self2.parts.pop() == void 0) {
+            return { ret: ERRNO_NOTCAPABLE, path: null };
+          }
+          continue;
+        }
+        self2.parts.push(component);
+      }
+      return { ret: ERRNO_SUCCESS, path: self2 };
+    }
+    to_path_string() {
+      let s = this.parts.join("/");
+      if (this.is_dir) {
+        s += "/";
+      }
+      return s;
+    }
+    constructor() {
+      this.parts = [];
+      this.is_dir = false;
+    }
+  };
+  var Directory = class _Directory extends Inode {
+    parent_ino() {
+      if (this.parent == null) {
+        return Inode.root_ino();
+      }
+      return this.parent.ino;
+    }
+    path_open(oflags, fs_rights_base, fd_flags) {
+      return { ret: ERRNO_SUCCESS, fd_obj: new OpenDirectory(this) };
+    }
+    stat() {
+      return new Filestat(this.ino, FILETYPE_DIRECTORY, 0n);
+    }
+    get_entry_for_path(path) {
+      let entry = this;
+      for (const component of path.parts) {
+        if (!(entry instanceof _Directory)) {
+          return { ret: ERRNO_NOTDIR, entry: null };
+        }
+        const child = entry.contents.get(component);
+        if (child !== void 0) {
+          entry = child;
+        } else {
+          debug.log(component);
+          return { ret: ERRNO_NOENT, entry: null };
+        }
+      }
+      if (path.is_dir) {
+        if (entry.stat().filetype != FILETYPE_DIRECTORY) {
+          return { ret: ERRNO_NOTDIR, entry: null };
+        }
+      }
+      return { ret: ERRNO_SUCCESS, entry };
+    }
+    get_parent_dir_and_entry_for_path(path, allow_undefined) {
+      const filename = path.parts.pop();
+      if (filename === void 0) {
+        return { ret: ERRNO_INVAL, parent_entry: null, filename: null, entry: null };
+      }
+      const { ret: entry_ret, entry: parent_entry } = this.get_entry_for_path(path);
+      if (parent_entry == null) {
+        return { ret: entry_ret, parent_entry: null, filename: null, entry: null };
+      }
+      if (!(parent_entry instanceof _Directory)) {
+        return { ret: ERRNO_NOTDIR, parent_entry: null, filename: null, entry: null };
+      }
+      const entry = parent_entry.contents.get(filename);
+      if (entry === void 0) {
+        if (!allow_undefined) {
+          return { ret: ERRNO_NOENT, parent_entry: null, filename: null, entry: null };
+        } else {
+          return { ret: ERRNO_SUCCESS, parent_entry, filename, entry: null };
+        }
+      }
+      if (path.is_dir) {
+        if (entry.stat().filetype != FILETYPE_DIRECTORY) {
+          return { ret: ERRNO_NOTDIR, parent_entry: null, filename: null, entry: null };
+        }
+      }
+      return { ret: ERRNO_SUCCESS, parent_entry, filename, entry };
+    }
+    create_entry_for_path(path_str, is_dir) {
+      const { ret: path_ret, path } = Path.from(path_str);
+      if (path == null) {
+        return { ret: path_ret, entry: null };
+      }
+      let { ret: parent_ret, parent_entry, filename, entry } = this.get_parent_dir_and_entry_for_path(path, true);
+      if (parent_entry == null || filename == null) {
+        return { ret: parent_ret, entry: null };
+      }
+      if (entry != null) {
+        return { ret: ERRNO_EXIST, entry: null };
+      }
+      debug.log("create", path);
+      let new_child;
+      if (!is_dir) {
+        new_child = new File(new ArrayBuffer(0));
+      } else {
+        new_child = new _Directory(/* @__PURE__ */ new Map());
+      }
+      parent_entry.contents.set(filename, new_child);
+      entry = new_child;
+      return { ret: ERRNO_SUCCESS, entry };
+    }
+    constructor(contents) {
+      super();
+      this.parent = null;
+      if (contents instanceof Array) {
+        this.contents = new Map(contents);
+      } else {
+        this.contents = contents;
+      }
+      for (const entry of this.contents.values()) {
+        if (entry instanceof _Directory) {
+          entry.parent = this;
+        }
+      }
+    }
+  };
+  var ConsoleStdout = class _ConsoleStdout extends Fd {
+    fd_filestat_get() {
+      const filestat = new Filestat(this.ino, FILETYPE_CHARACTER_DEVICE, BigInt(0));
+      return { ret: 0, filestat };
+    }
+    fd_fdstat_get() {
+      const fdstat = new Fdstat(FILETYPE_CHARACTER_DEVICE, 0);
+      fdstat.fs_rights_base = BigInt(RIGHTS_FD_WRITE);
+      return { ret: 0, fdstat };
+    }
+    fd_write(data) {
+      this.write(data);
+      return { ret: 0, nwritten: data.byteLength };
+    }
+    static lineBuffered(write) {
+      const dec = new TextDecoder("utf-8", { fatal: false });
+      let line_buf = "";
+      return new _ConsoleStdout((buffer) => {
+        line_buf += dec.decode(buffer, { stream: true });
+        const lines = line_buf.split("\n");
+        for (const [i, line] of lines.entries()) {
+          if (i < lines.length - 1) {
+            write(line);
+          } else {
+            line_buf = line;
+          }
+        }
+      });
+    }
+    constructor(write) {
+      super();
+      this.ino = Inode.issue_ino();
+      this.write = write;
+    }
+  };
+
+  // src/core/tarfs.mjs
+  var BLOCK = 512;
+  var str = (u8, off, len) => {
+    let s = "";
+    for (let i = 0; i < len; i++) {
+      const c = u8[off + i];
+      if (!c) break;
+      s += String.fromCharCode(c);
+    }
+    return s;
+  };
+  var oct = (u8, off, len) => {
+    const s = str(u8, off, len).trim();
+    if (!s) return 0;
+    if (!/^[0-7]+$/.test(s)) throw new Error(`tar: \u975E\u6CD5\u516B\u8FDB\u5236\u5B57\u6BB5 "${s}" (offset ${off})`);
+    const n = parseInt(s, 8);
+    if (!Number.isFinite(n) || n < 0) throw new Error("tar: \u975E\u6CD5 size");
+    return n;
+  };
+  function parseTar(u8) {
+    const out = [];
+    let off = 0;
+    let pendingPath = null;
+    while (off + BLOCK <= u8.length) {
+      const name = str(u8, off, 100);
+      if (name === "") break;
+      const m5 = String.fromCharCode(u8[off + 257], u8[off + 258], u8[off + 259], u8[off + 260], u8[off + 261]);
+      const m6 = u8[off + 262];
+      const isPosixUstar = m5 === "ustar" && m6 === 0;
+      const isGnuTar = m5 === "ustar" && m6 === 32;
+      if (!isPosixUstar && !isGnuTar) throw new Error("tar: \u4E0D\u662F ustar/GNU \u683C\u5F0F\uFF08magic \u4E0D\u5339\u914D\uFF09");
+      const size = oct(u8, off + 124, 12);
+      const type = String.fromCharCode(u8[off + 156] || 48);
+      const prefix = isPosixUstar ? str(u8, off + 345, 155) : "";
+      const dataOff = off + BLOCK;
+      if (dataOff + size > u8.length) throw new Error(`tar: \u6570\u636E\u8D8A\u754C\uFF08${name}, size=${size}\uFF09`);
+      if (type === "L") {
+        pendingPath = str(u8, dataOff, size).replace(/\0+$/, "");
+        off = dataOff + Math.ceil(size / BLOCK) * BLOCK;
+        continue;
+      }
+      if (type === "x" || type === "g") {
+        off = dataOff + Math.ceil(size / BLOCK) * BLOCK;
+        continue;
+      }
+      if (type === "0" || type === "\0" || type === " " || type === "7") {
+        const path = (pendingPath || (prefix ? prefix + "/" + name : name)).replace(/\/+$/, "");
+        out.push({ path, type: "file", data: u8.subarray(dataOff, dataOff + size) });
+        pendingPath = null;
+      } else if (type === "5") {
+        const path = (pendingPath || (prefix ? prefix + "/" + name : name)).replace(/\/+$/, "");
+        out.push({ path, type: "dir" });
+        pendingPath = null;
+      }
+      off = dataOff + Math.ceil(size / BLOCK) * BLOCK;
+    }
+    if (!out.length) throw new Error("tar: \u89E3\u6790\u51FA 0 \u4E2A\u6761\u76EE\uFF08\u683C\u5F0F\u4E0D\u652F\u6301\uFF1F\uFF09");
+    return out;
+  }
+  var isDir = (e) => e instanceof Directory;
+  function buildFs(entries, extra = []) {
+    const root = new Directory(/* @__PURE__ */ new Map());
+    const ensureDir = (parts) => {
+      let d = root;
+      for (const p of parts) {
+        let e = d.contents.get(p);
+        if (e === void 0) {
+          e = new Directory(/* @__PURE__ */ new Map());
+          d.contents.set(p, e);
+        }
+        if (!isDir(e)) throw new Error(`tar: \u8DEF\u5F84\u51B2\u7A81 "${parts.join("/")}"\uFF08\u540C\u540D\u9879\u65E2\u662F\u6587\u4EF6\u53C8\u662F\u76EE\u5F55\uFF09`);
+        d = e;
+      }
+      return d;
+    };
+    for (const e of [...entries, ...extra]) {
+      const parts = e.path.split("/").filter(Boolean);
+      if (!parts.length) continue;
+      if (e.type === "dir") {
+        ensureDir(parts);
+        continue;
+      }
+      const dir = ensureDir(parts.slice(0, -1));
+      const last = parts[parts.length - 1];
+      if (isDir(dir.contents.get(last))) throw new Error(`tar: \u8DEF\u5F84\u51B2\u7A81 "${e.path}"`);
+      dir.contents.set(last, new File(e.data.slice()));
+    }
+    return root;
+  }
+  function readFsFile(root, path) {
+    const parts = path.split("/").filter(Boolean);
+    let d = root;
+    for (const p of parts.slice(0, -1)) {
+      const e = d.contents.get(p);
+      if (!e || !isDir(e)) return null;
+      d = e;
+    }
+    const f = d.contents.get(parts[parts.length - 1]);
+    if (!f || f.data === void 0) return null;
+    return f.data.slice();
+  }
+
+  // src/core/flags.mjs
+  var TRIPLE = "wasm32-wasip1";
+  var RESOURCE_DIR = "/lib/clang/22";
+  var LIBDIR = "/lib/wasm32-wasi";
+  var ISYS = ["/compat", "/include/c++/v1", "/include/wasm32-wasi", "/include", `${RESOURCE_DIR}/include`];
+  var splitFlags = (s) => String(s || "").split(/\s+/).filter(Boolean);
+  var FORBIDDEN_BARE = [/^-c$/, /^-S$/, /^-E$/, /^-fsyntax-only$/, /^-emit-llvm$/, /^-emit-ast$/];
+  var FORBIDDEN_WITH_VALUE = [/^-o$/, /^-x$/];
+  var FORBIDDEN_INLINE = [/^-o./, /^--output=/, /^-x./, /^-emit-/];
+  function filterUserFlags(flags) {
+    const list = Array.isArray(flags) ? flags : splitFlags(flags);
+    const kept = [], dropped = [];
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      if (FORBIDDEN_WITH_VALUE.some((r) => r.test(f))) {
+        dropped.push(f);
+        if (i + 1 < list.length) dropped.push(list[++i]);
+        continue;
+      }
+      if (FORBIDDEN_BARE.some((r) => r.test(f)) || FORBIDDEN_INLINE.some((r) => r.test(f))) {
+        dropped.push(f);
+        continue;
+      }
+      kept.push(f);
+    }
+    return { kept, dropped };
+  }
+
+  // src/core/toolchain.mjs
+  var Toolchain = class {
+    /**
+     * @param {{clangWasm: Uint8Array, lldWasm: Uint8Array, sysrootTar: Uint8Array, compatBits?: Uint8Array}} assets
+     */
+    constructor({ clangWasm, lldWasm, sysrootTar, compatBits }) {
+      this.clangWasm = clangWasm;
+      this.lldWasm = lldWasm;
+      this.sysrootTar = sysrootTar;
+      this.entries = parseTar(sysrootTar);
+      if (compatBits) this.entries.push({ path: "compat/bits/stdc++.h", type: "file", data: compatBits });
+      this._clangMod = null;
+      this._lldMod = null;
+      this._root = null;
+    }
+    async _clang() {
+      this._clangMod ??= await WebAssembly.compile(this.clangWasm);
+      return this._clangMod;
+    }
+    async _lld() {
+      this._lldMod ??= await WebAssembly.compile(this.lldWasm);
+      return this._lldMod;
+    }
+    /** 根 FS 只建一次（1343 个文件，每次重建代价明显）；每次编译只在 /workspace 里动文件 */
+    _fs() {
+      if (!this._root) this._root = buildFs(this.entries);
+      return this._root;
+    }
+    _workspace() {
+      const root = this._fs();
+      let ws = root.contents.get("workspace");
+      if (!ws) {
+        ws = new Directory(/* @__PURE__ */ new Map());
+        root.contents.set("workspace", ws);
+      }
+      return ws;
+    }
+    _put(name, bytes) {
+      this._workspace().contents.set(name, new File(bytes.slice()));
+    }
+    _del(name) {
+      this._workspace().contents.delete(name);
+    }
+    async _run(mod, argv, root, { stdin, onOut, onErr, extraImports } = {}) {
+      const fds = [
+        stdin ?? new OpenFile(new File(new Uint8Array(0))),
+        new ConsoleStdout((b) => onOut && onOut(b)),
+        new ConsoleStdout((b) => onErr && onErr(b)),
+        new PreopenDirectory("/", root.contents)
+      ];
+      const wasi = new WASI([argv[0], ...argv.slice(1)], [], fds);
+      const inst = await WebAssembly.instantiate(mod, {
+        wasi_snapshot_preview1: wasi.wasiImport,
+        ...extraImports || {}
+      });
+      try {
+        return wasi.start(inst) ?? 0;
+      } catch (e) {
+        if (e instanceof WASIProcExit) return e.code;
+        throw e;
+      }
+    }
+    /**
+     * 编译一个源文件 → wasm 字节
+     * @returns {{wasm: Uint8Array|null, log: string, exit: number}}
+     */
+    async compile({ source, fileName = "main.cpp", flags = [], opt = 2, debug: debug2 = true, debugStub = false } = {}) {
+      const lang = /\.c$/i.test(fileName) ? "c" : "c++";
+      const dec = new TextDecoder("utf-8", { fatal: false });
+      let log = "";
+      const collect = (b) => {
+        log += dec.decode(b, { stream: true });
+      };
+      const { kept, dropped } = filterUserFlags(flags);
+      if (dropped.length) log += `[oi] \u5DF2\u5FFD\u7565\u4E0D\u652F\u6301\u7684\u7F16\u8BD1\u53C2\u6570: ${dropped.join(" ")}
+`;
+      const root = this._fs();
+      this._del("out.o");
+      this._del("out.wasm");
+      this._del("dbgstub.o");
+      this._del("dbgstub.c");
+      this._put(fileName, new TextEncoder().encode(source));
+      const cc1 = [
+        "-cc1",
+        "-triple",
+        TRIPLE,
+        "-emit-obj",
+        "-disable-free",
+        "-isysroot",
+        "/",
+        "-resource-dir",
+        RESOURCE_DIR,
+        ...ISYS.flatMap((d) => ["-internal-isystem", d]),
+        "-ferror-limit",
+        "19",
+        "-fcolor-diagnostics",
+        `-O${opt}`,
+        "-o",
+        "/workspace/out.o",
+        "/workspace/" + fileName,
+        "-x",
+        lang,
+        ...kept,
+        // ⚠️ 这里是 -cc1 模式：不认 -fno-exceptions/-nostdinc/-g 这类 driver 参数。
+        //    -cc1 下等价物是：-fexceptions=0（默认即关）+ 通过 -internal-isystem 控制 include
+        //    + -debug-info-kind=standalone。clangd 侧（driver 模式）才用 SHARED_FLAGS/-g。
+        ...debug2 ? ["-debug-info-kind=standalone", "-dwarf-version=4", "-debugger-tuning=gdb", "-fdebug-compilation-dir=/workspace"] : []
+      ];
+      const c = await this._clang();
+      const ec = await this._run(c, ["clang", ...cc1], root, { onErr: collect, onOut: collect });
+      const obj = readFsFile(root, "/workspace/out.o");
+      if (ec !== 0 || !obj || !obj.length) {
+        log += dec.decode();
+        return { wasm: null, log, exit: ec };
+      }
+      let stubObj = null;
+      if (debugStub) {
+        this._put("dbgstub.c", new TextEncoder().encode(DBG_STUB_SOURCE));
+        const stubArgs = [
+          "-cc1",
+          "-triple",
+          TRIPLE,
+          "-emit-obj",
+          "-disable-free",
+          "-isysroot",
+          "/",
+          "-resource-dir",
+          RESOURCE_DIR,
+          ...ISYS.flatMap((d) => ["-internal-isystem", d]),
+          "-ferror-limit",
+          "19",
+          "-fcolor-diagnostics",
+          "-o",
+          "/workspace/dbgstub.o",
+          "/workspace/dbgstub.c",
+          "-x",
+          "c"
+          // ⚠️ 不要带用户 flags：桩是 C 文件，-std=c++20 之类会直接报
+          //    "invalid argument '-std=c++20' not allowed with 'C'"
+        ];
+        const ec2 = await this._run(c, ["clang", ...stubArgs], root, { onErr: collect, onOut: collect });
+        stubObj = readFsFile(root, "/workspace/dbgstub.o");
+        if (ec2 !== 0 || !stubObj || !stubObj.length) {
+          log += dec.decode();
+          return { wasm: null, log, exit: ec2 };
+        }
+      }
+      const link = [
+        "--export-dynamic",
+        "-z",
+        "stack-size=1048576",
+        `-L${LIBDIR}/noeh`,
+        `-L${LIBDIR}`,
+        `${LIBDIR}/crt1.o`,
+        ...stubObj ? ["/workspace/dbgstub.o"] : [],
+        "/workspace/out.o",
+        // wasi-sdk 顺序：libc++ → libc++abi → libc → libm（静态库单趟扫描，顺序反了会缺符号）
+        ...lang === "c" ? [] : ["-lc++", "-lc++abi"],
+        "-lc",
+        "-lm",
+        `-L${RESOURCE_DIR}/lib/wasi`,
+        "-lclang_rt.builtins-wasm32",
+        "-o",
+        "/workspace/out.wasm"
+      ];
+      const l = await this._lld();
+      const el = await this._run(l, ["wasm-ld", ...link], root, { onErr: collect, onOut: collect });
+      log += dec.decode();
+      const wasm = readFsFile(root, "/workspace/out.wasm");
+      if (el !== 0 || !wasm || !wasm.length) return { wasm: null, log, exit: el };
+      return { wasm, log, exit: 0 };
+    }
+    /** 仅 Node 侧冒烟用；浏览器里运行走 runWorker.js */
+    async run(wasmBytes, { args = [], stdin, onOut, onErr, extraImports } = {}) {
+      const root = this._fs();
+      const mod = await WebAssembly.compile(wasmBytes);
+      return this._run(mod, ["program", ...args], root, { onOut, onErr, stdin, extraImports });
+    }
+  };
+
+  // src/web/compileWorker.js
+  var post = (m, transfer) => self.postMessage(m, transfer || []);
+  self.onerror = (e) => post({ type: "error", message: "compile worker \u5185\u90E8\u9519\u8BEF: " + (e.message || e) });
+  self.addEventListener("unhandledrejection", (e) => {
+    const r = e && e.reason;
+    post({ type: "error", message: "compile worker \u672A\u6355\u83B7\u5F02\u5E38: " + (r && (r.stack || r.message) || r) });
+  });
+  async function fetchGz(url) {
+    const r = await fetch(url, { cache: "force-cache" });
+    if (!r.ok) throw new Error(`\u53D6\u4E0D\u5230 ${url}: HTTP ${r.status}`);
+    const ds = new DecompressionStream("gzip");
+    return new Uint8Array(await new Response(r.body.pipeThrough(ds)).arrayBuffer());
+  }
+  async function fetchRaw(url) {
+    const r = await fetch(url, { cache: "force-cache" });
+    if (!r.ok) throw new Error(`\u53D6\u4E0D\u5230 ${url}: HTTP ${r.status}`);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  var tc = null;
+  self.onmessage = async (ev) => {
+    const m = ev.data || {};
+    try {
+      if (m.type === "init") {
+        const b = String(m.assetsBase).replace(/\/+$/, "");
+        post({ type: "log", message: "\u52A0\u8F7D\u5DE5\u5177\u94FE\uFF08clang 15MB + lld 7.5MB + sysroot 5.2MB\uFF09\u2026" });
+        const [clangWasm, lldWasm, sysrootTar] = await Promise.all([
+          fetchGz(`${b}/clang.wasm.gz`),
+          fetchGz(`${b}/lld.wasm.gz`),
+          fetchGz(`${b}/sysroot.tar.gz`)
+        ]);
+        const compatBits = await fetchRaw(`${b}/compat/bits/stdc++.h`).catch(() => null);
+        tc = new Toolchain({ clangWasm, lldWasm, sysrootTar, compatBits });
+        post({ type: "ready" });
+        return;
+      }
+      if (m.type === "compile") {
+        if (!tc) throw new Error("\u5DE5\u5177\u94FE\u672A\u5C31\u7EEA");
+        const t0 = performance.now();
+        const r = await tc.compile({
+          source: m.source,
+          fileName: m.fileName,
+          flags: m.flags || [],
+          opt: m.opt ?? 2,
+          debug: m.debugInfo !== false,
+          // 调试构建：先链接 dbg-stub，预置 import "oi"."probe"（插桩需要）
+          debugStub: !!m.debugStub
+        });
+        const ms = Math.round(performance.now() - t0);
+        if (!r.wasm) {
+          post({ type: "compiled", id: m.id, ok: false, log: r.log, ms, exit: r.exit });
+          return;
+        }
+        post({ type: "compiled", id: m.id, ok: true, log: r.log, ms, size: r.wasm.length, wasm: r.wasm.buffer }, [r.wasm.buffer]);
+        return;
+      }
+      throw new Error("\u672A\u77E5\u6D88\u606F " + m.type);
+    } catch (e) {
+      post({ type: "error", id: m.id, message: e && (e.stack || e.message) || String(e) });
+    }
+  };
+  post({ type: "log", message: "compile worker \u5C31\u7EEA" });
+})();

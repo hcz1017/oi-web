@@ -4,7 +4,7 @@
   "description": "在 VS Code Web 里用 WASM Clang 编译单文件 C++，并在真实终端里交互运行。",
   "version": "0.1.0",
   "publisher": "oi-web",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "engines": {
     "vscode": "^1.91.0"
   },

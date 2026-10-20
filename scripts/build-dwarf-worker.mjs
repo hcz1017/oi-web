@@ -16,7 +16,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const EXT = path.resolve(HERE, "..");
+const EXT = path.resolve(HERE, "..", "extension");
 const SRC = path.join(EXT, ".dev/dwarf-pkg/package");
 const OUT = path.join(EXT, "assets/dwarf");
 

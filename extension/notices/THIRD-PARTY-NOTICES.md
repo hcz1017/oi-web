@@ -47,3 +47,9 @@ LLVM 许可原文见 `notices/LLVM-LICENSE.txt`；WASI 相关许可见 `notices/
   - `assets/dwarf/worker.js`：上游 worker 的浏览器适配版（`scripts/build-dwarf-worker.mjs` 生成：
     仅在文件头注入 require/`parentPort`/`fs` shim，其余逻辑未改）
   - `assets/dwarf/LICENSE`：原许可证全文
+
+## 中文语言包翻译数据（web/zh-main.i18n.json）
+
+- 来源：Microsoft `MS-CEINTL.vscode-language-pack-zh-hans`（Visual Studio Code 官方简体中文语言包）
+- 许可证：MIT（见 https://marketplace.visualstudio.com/items?itemName=MS-CEINTL.vscode-language-pack-zh-hans）
+- 用途：构建时生成 vscode-web 的中文 `nls.messages.js`（仅包含翻译文本，不含代码）

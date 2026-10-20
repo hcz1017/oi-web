@@ -20,9 +20,9 @@ const CACHE_BASE = path.join(ROOT, ".vscode-test-web");
 const dirs = readdirSync(CACHE_BASE).filter((d) => d.startsWith("vscode-web-stable"));
 if (!dirs.length) throw new Error("缺少 .vscode-test-web/vscode-web-stable-*");
 const W = path.join(CACHE_BASE, dirs.sort().pop());
-const EXT = path.join(ROOT, "oi-cpp-wasm");
-const TEMPLATE = path.join(ROOT, ".dev-web/index.raw.html");
-const SW = path.join(ROOT, "web-extras/coi-serviceworker.js");
+const EXT = path.join(ROOT, "extension");
+const TEMPLATE = path.join(ROOT, "web/index.template.html");
+const SW = path.join(ROOT, "web/coi-serviceworker.js");
 for (const p of [W, EXT, TEMPLATE, SW]) if (!existsSync(p)) throw new Error("缺少输入: " + p);
 
 rmSync(OUT, { recursive: true, force: true });
@@ -43,30 +43,45 @@ for (const item of ["package.json", "package.nls.json", "LICENSE", "README.md", 
 // ---------- 3) index.html（地址运行时修正 + SW 兜底） ----------
 console.log("[3/4] 生成 index.html …");
 let html = readFileSync(TEMPLATE, "utf8");
-// 脚本/模块引用改成站内绝对路径，避免绑定构建时的 host:port
-html = html.replaceAll('src="http://127.0.0.1:8099', 'src="/');
-html = html.replaceAll("from 'http://127.0.0.1:8099", "from '/");
+// 1) 先把 host:port 从 "scheme://host:port" 里去掉 → 变成根相对路径 /static/...
+//    （注意不能替换成 "/"：原来 8099 后面已经跟着 /static，会拼出 //static 变成跨域主机）
+html = html.replaceAll("http://127.0.0.1:8099", "");
+// 2) meta 里的 authority 字段（含 HTML 转义后的形态）留给运行时脚本用当前 origin 重写
 html = html.replaceAll('"authority":"127.0.0.1:8099"', '"authority":"__HOST__"');
-html = html.replaceAll("http://127.0.0.1:8099", "__ORIGIN__");
-// meta 属性里是 HTML 转义后的 &quot;，上面的模式匹配不到，这里兜底替换裸 host:port
 html = html.replaceAll("127.0.0.1:8099", "__HOST__");
 
-// 页面最前面挂 SW 兜底（自身会检测 crossOriginIsolated，最多刷 3 次）
+// 3) 页面最前面挂 SW 兜底（自身检测 crossOriginIsolated，最多刷 3 次）
 html = html.replace("<head>", '<head>\n\t\t<script src="/coi-serviceworker.js"></script>');
 
-// 配置里残留的 __ORIGIN__/__HOST__ 在 workbench 启动前替换掉；顺带移除语言包扩展条目
+// 4) workbench 启动前：把配置里的扩展 URI 重写成当前 origin，根相对路径补全为绝对地址
 const FIX = `<script>
 (function () {
-  var origin = location.origin, host = location.host;
+  var origin = location.origin;
+  var proto = location.protocol.replace(/:$/, "");
+  var host = location.host;
   var m = document.getElementById("vscode-workbench-web-configuration");
   if (!m) return;
-  var raw = (m.getAttribute("data-settings") || "")
-    .split("__ORIGIN__").join(origin)
-    .split("__HOST__").join(host);
+  var raw = (m.getAttribute("data-settings") || "").split("__HOST__").join(host);
   try {
     var cfg = JSON.parse(raw);
-    if (cfg.additionalBuiltinExtensions) cfg.additionalBuiltinExtensions = [];
-    m.setAttribute("data-settings", JSON.stringify(cfg).replace(/"/g, "&quot;"));
+    // 扩展位置：scheme/authority 用当前页面
+    function fixExt(e) {
+      if (!e) return;
+      e.scheme = proto;
+      e.authority = host;
+    }
+    if (cfg.developmentOptions && cfg.developmentOptions.extensions) cfg.developmentOptions.extensions.forEach(fixExt);
+    if (cfg.additionalBuiltinExtensions) { cfg.additionalBuiltinExtensions = []; }
+    if (cfg.workspaceUri) delete cfg.workspaceUri;
+    // endpoint 模板：根相对路径补成绝对
+    var pc = cfg.productConfiguration || {};
+    Object.keys(pc).forEach(function (k) {
+      if (typeof pc[k] === "string" && pc[k].charAt(0) === "/") pc[k] = origin + pc[k];
+    });
+    // ⚠️ setAttribute 存的是字面量：不能把 " 转义成 &quot;（HTML 解析期的转义在
+    //    getAttribute 时会被解码，但 JS 写入的不会被解码）→ 否则 workbench 启动时
+    //    JSON.parse 直接报 "Expected property name or '}'"
+    m.setAttribute("data-settings", JSON.stringify(cfg));
   } catch (e) {
     m.setAttribute("data-settings", raw);
   }

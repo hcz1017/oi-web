@@ -21,7 +21,13 @@ const W = path.join(CACHE, dirs.sort().pop());
 const OUT = path.join(W, "out");
 const NLS = path.join(OUT, "nls.messages.js");
 const EN_BACKUP = path.join(OUT, "nls.messages.en.js");
-const PACK = path.join(ROOT, ".dev-zh/zh-pack/translations/main.i18n.json");
+// 语言包翻译数据随仓库提交（web/zh-main.i18n.json，MS-CEINTL 官方包，MIT）
+const PACK_CANDIDATES = [
+  path.join(ROOT, "web/zh-main.i18n.json"),
+  path.join(ROOT, ".dev-zh/zh-pack/translations/main.i18n.json"),
+];
+const PACK = PACK_CANDIDATES.find((p) => existsSync(p));
+if (!PACK) throw new Error("缺少中文翻译数据（web/zh-main.i18n.json）");
 
 if (process.argv.includes("--restore")) {
   if (!existsSync(EN_BACKUP)) throw new Error("没有英文备份（nls.messages.en.js）");
