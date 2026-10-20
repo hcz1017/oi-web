@@ -467,6 +467,14 @@ export class WasmDebugAdapter {
     if (this.terminal && typeof this.terminal.onInput === "function") {
       this.terminal.onInput((bytes) => this._queueInput(bytes));
     }
+    if (this.terminal && typeof this.terminal.onEof === "function") {
+      // Ctrl+D：把 EOF 写进 stdin 单槽（state=3），程序的下一次 read 会立刻拿到 EOF
+      this.terminal.onEof(() => {
+        if (!this.stdinCtrl) return;
+        Atomics.store(this.stdinCtrl, 0, 3);
+        Atomics.notify(this.stdinCtrl, 0);
+      });
+    }
 
     this.log(`启动调试运行 worker（${s.sites.length} 个站点，断点 ${this.enabledSites.size} 个）`);
     this._term("程序即将运行。\r\n\x1b[90m· 输入直接在本终端键入（和平时运行一样）\r\n· 命中断点会在左侧停住，可看调用栈/单步\r\n· 停止会话请按调试工具条的 ⏹ 或 Ctrl+Shift+F5\x1b[0m\r\n\r\n");

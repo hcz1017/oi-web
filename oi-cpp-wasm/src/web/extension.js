@@ -14,6 +14,7 @@ import { startClangd, stopClangd } from "./lsp.js";
 import { registerHeaderFs } from "./headerfs.js";
 import { DwarfEngine } from "./dwarf.js";
 import { WasmDebugAdapter } from "./debugAdapter.js";
+import { createLineEditor } from "./lineedit.mjs";
 
 const TERM_NAME = "OI C++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -612,23 +613,22 @@ function getDebugTerminal(fileName) {
   const writeEmitter = new vscode.EventEmitter();
   const closeEmitter = new vscode.EventEmitter();
   let inputCb = null;
+  let eofCb = null;
+  // 和正常运行一致的行编辑：回车才提交一行，否则单按空格/字母就被程序读走
+  const editor = createLineEditor({
+    write: (s) => { try { writeEmitter.fire(s); } catch {} },
+    send: (text, opts) => {
+      if (opts && opts.eof) { try { eofCb?.(); } catch {} return; }
+      if (text == null) return;
+      if (inputCb) inputCb(new TextEncoder().encode(text));
+    },
+  });
   const pty = {
     onDidWrite: writeEmitter.event,
     onDidClose: closeEmitter.event,
     open() {},
     close() { try { closeEmitter.fire(); } catch {} },
-    handleInput(data) {
-      // Pseudoterminal 不会自动回显：自己回显，否则用户以为"输入没反应"
-      let echo = "";
-      for (const ch of String(data)) {
-        if (ch === "\r") echo += "\r\n";
-        else if (ch === "\x7f") echo += "\b \b";     // 退格
-        else echo += ch;
-      }
-      try { writeEmitter.fire(echo); } catch {}
-      // 终端回车是 \r，程序里的 scanf/cin 期待 \n
-      if (inputCb) inputCb(new TextEncoder().encode(String(data).replace(/\r/g, "\n")));
-    },
+    handleInput(data) { editor.input(data); },
   };
   const term = vscode.window.createTerminal({ name: `OI 调试 · ${fileName}`, pty });
   term.show();
@@ -636,6 +636,7 @@ function getDebugTerminal(fileName) {
     term,
     write: (s) => { try { writeEmitter.fire(String(s)); } catch {} },
     onInput: (cb) => { inputCb = cb; },
+    onEof: (cb) => { eofCb = cb; },
     show: () => { try { term.show(); } catch {} },
   };
   return debugTerminal;
