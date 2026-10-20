@@ -60,6 +60,7 @@ let running = false;
 let pending = null;            // probe 判定要暂停后暂存的站点（等 pause() 真正停）
 let scratchBase = 0;           // locals 快照区（memory.grow 出来的那一页）
 let bodyLocals = [];           // 每个函数体的 local 类型表（来自插桩）
+let globalTypes = [];          // 全局变量类型表（插桩时按 wasm global 索引顺序）
 
 /** 从 JS 栈里提取 wasm 帧（V8：at name (wasm-function[12]:0x1a5)） */
 function captureStack() {
@@ -118,10 +119,14 @@ function pause() {
     if (buf) memory = new Uint8Array(buf).slice(0);   // copy：程序还要继续跑
   } catch { /* ignore */ }
 
+  const locals = bodyLocals[site.body] || [];
   post({
     type: "paused", siteId: site.id, site, frames, memory,
     localsBase: scratchBase, body: site.body,
-    bodyLocals: bodyLocals[site.body] || [],
+    bodyLocals: locals,
+    // globals 紧跟在 locals 之后；宿主按 globalTypes 解释
+    globalsBase: scratchBase + locals.length * 8,
+    globalTypes,
   });
 
   Atomics.wait(ctrl, 0, 0);
@@ -188,6 +193,7 @@ self.onmessage = (ev) => {
     cfg = m;
     siteById = new Map((m.sites || []).map((s) => [s.id, s]));
     bodyLocals = m.bodyLocals || [];
+    globalTypes = m.globalTypes || [];
     ctrl = new Int32Array(m.sab);
     bp = m.breakpointSab ? new Int32Array(m.breakpointSab) : null;
     run();

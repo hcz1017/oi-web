@@ -66,7 +66,9 @@ export function parseWasm(bytes) {
   const entries = [];
   let code = null;
   const allImports = [];        // 所有 import（含非函数）
+  const importedGlobalTypes = [];
   let funcImportCount = 0;
+  let definedGlobalTypes = [];
 
   while (pos < bytes.length) {
     const id = bytes[pos];
@@ -79,6 +81,29 @@ export function parseWasm(bytes) {
     if (contentEnd > bytes.length) throw new Error("段长度越界");
     entries.push({ id, start, contentStart, contentEnd });
 
+    if (id === 6) {                             // global 段
+      let p = contentStart, count;
+      [count, p] = readU32(bytes, p);
+      for (let i = 0; i < count; i++) {
+        const type = bytes[p++];      // 0x7f i32 / 0x7e i64 / 0x7d f32 / 0x7c f64
+        p++;                          // mutability
+        // 跳过 init expr：若干字节后以 0x0b end 结束（支持 global.get / i32.const 等简单形式）
+        let depth = 0;
+        for (;;) {
+          const op = bytes[p++];
+          if (op === 0x0b) break;
+          if (op === 0x23 || op === 0x24) { let _i; [_i, p] = readU32(bytes, p); }        // global.get/set
+          else if (op === 0x41) { while (bytes[p++] & 0x80); }                            // i32.const sleb
+          else if (op === 0x42) { while (bytes[p++] & 0x80); }                            // i64.const
+          else if (op === 0x43) { p += 4; }                                               // f32.const
+          else if (op === 0x44) { p += 8; }                                               // f64.const
+          else if (op === 0x6a || op === 0x6b || op === 0x6c) { /* add/sub/mul 之类无需参数 */ }
+          else if (depth === 0) { /* 未知的简单 op，无立即数 */ }
+          void depth;
+        }
+        definedGlobalTypes.push(type);
+      }
+    }
     if (id === 2) {                             // import 段
       let p = contentStart, count;
       [count, p] = readU32(bytes, p);
@@ -91,6 +116,7 @@ export function parseWasm(bytes) {
         const isFunc = kind === 0;
         allImports.push({ module, name, kind, index: isFunc ? funcImportCount : -1 });
         if (isFunc) funcImportCount++;
+        if (kind === 3) importedGlobalTypes.push(bytes[p]);
         // 跳过 type/table/memory/global 的描述
         if (kind === 0) { let _t; [_t, p] = readU32(bytes, p); }
         else if (kind === 1) { p++; const fl = bytes[p - 1]; if (fl & 1) { let _m; [_m, p] = readU32(bytes, p); } let _l; [_l, p] = readU32(bytes, p); }
@@ -137,6 +163,7 @@ export function parseWasm(bytes) {
     entries, code, funcImports: allImports.filter((x) => x.kind === 0),
     probeImportIndex: probe ? probe.index : -1,
     pauseImportIndex: pause ? pause.index : -1,
+    globalTypes: [...importedGlobalTypes, ...definedGlobalTypes],
   };
 }
 
@@ -178,6 +205,7 @@ export function instrumentWasm(bytes, sites) {
   }
   const probeIdx = info.probeImportIndex;
   const pauseIdx = info.pauseImportIndex;
+  const globalTypes = info.globalTypes || [];
   const { code } = info;
 
   // 1) 把 site 归到函数体（用 orig 相对位置）；非法位置丢弃（宁可少插，不要插坏）
@@ -210,6 +238,7 @@ export function instrumentWasm(bytes, sites) {
         0x20, ...writeU32(tempIdx), 0x45,               // local.get $tmp ; i32.eqz
         0x0d, 0x00,                                     // br_if 0（ptr==0 时跳过）
       ];
+      const localsBytesLen = body.locals.length * 8;
       for (let i = 0; i < body.locals.length; i++) {
         const op = STORE_OPS[body.locals[i]];
         if (!op) continue;                              // v128/其他类型暂不保存
@@ -218,6 +247,17 @@ export function instrumentWasm(bytes, sites) {
           0x41, ...writeS32(i * 8), 0x6a,               // i32.const off ; i32.add
           0x20, ...writeU32(i),                         // local.get i
           op[0], op[1], 0x00,                           // <store> align, offset=0
+        );
+      }
+      // globals 快照（引擎读取全局/TLS/栈指针时会要 getWasmGlobal）
+      for (let g = 0; g < globalTypes.length; g++) {
+        const op = STORE_OPS[globalTypes[g]];
+        if (!op) continue;
+        out.push(
+          0x20, ...writeU32(tempIdx),
+          0x41, ...writeS32(localsBytesLen + g * 8), 0x6a,
+          0x23, ...writeU32(g),                         // global.get g
+          op[0], op[1], 0x00,
         );
       }
       out.push(0x10, ...writeU32(pauseIdx), 0x0b);      // call pause ; end
@@ -283,6 +323,7 @@ export function instrumentWasm(bytes, sites) {
     probeImportIndex: probeIdx,
     pauseImportIndex: pauseIdx,
     bodyLocals: code.bodies.map((b) => b.locals),
+    globalTypes,
     codeContentStartOrig: code.contentStart,
   };
 }

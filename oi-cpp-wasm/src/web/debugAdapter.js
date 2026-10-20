@@ -57,7 +57,26 @@ export class WasmDebugAdapter {
     this.memory = null;         // 暂停时的内存快照
     this._configured = false;
     this._status = null;
+    this._objRefs = new Map();     // variablesReference -> engine objectId（结构体/STL 展开用）
+    this._nextObjRef = 100;
     this.stats = { t0: 0, pauses: 0, sites: 0, files: 0, exit: null };
+  }
+
+  _refFor(objectId) {
+    if (objectId == null) return 0;
+    const id = this._nextObjRef++;
+    this._objRefs.set(id, objectId);
+    return id;
+  }
+  /** 引擎 evaluate/getProperties 的 remote object → DAP variable */
+  _toVariable(name, value, fallbackType) {
+    const hasKids = !!(value && value.hasChildren && value.objectId != null);
+    return {
+      name,
+      value: formatValue(value),
+      type: (value && (value.description || value.type)) || fallbackType || "",
+      variablesReference: hasKids ? this._refFor(value.objectId) : 0,
+    };
   }
 
   /** 写终端（把 \n 统一成终端需要的 \r\n）；同时不影响 Debug Console 的 output 事件 */
@@ -226,22 +245,28 @@ export class WasmDebugAdapter {
       }
       if (!s || !p) return this._respond(req, { variables: [] });
       const loc = this._currentRawLocation();
+
+      // 1) 结构体/STL 成员展开
+      if (s && this._objRefs.has(ref)) {
+        const objectId = this._objRefs.get(ref);
+        const props = await s.engine.getProperties(objectId);
+        return this._respond(req, {
+          variables: (props || []).map((p) => this._toVariable(p.name, p.value)),
+        });
+      }
+
+      // 2) 局部变量
       const vars = await s.engine.listVariablesInScope(loc);
       const out = [];
       for (let i = 0; i < vars.length; i++) {
         const info = vars[i];
-        let value = "";
         try {
           // ⚠️ 宿主→引擎的 RPC 只暴露 evaluate，没有 getValueInfo（后者只是插件内部方法）
           const vi = await s.engine.evaluate(info.name, loc, p.stopId);
-          value = formatValue(vi);
-        } catch (e) { value = "<unavailable>"; }
-        out.push({
-          name: info.name,
-          value: value === "" ? "<unavailable>" : value,
-          type: info.type,
-          variablesReference: 0,
-        });
+          out.push(this._toVariable(info.name, vi, info.type));
+        } catch (e) {
+          out.push({ name: info.name, value: "<不可用>", type: info.type, variablesReference: 0 });
+        }
       }
       this._respond(req, { variables: out });
     } catch (e) {
@@ -264,7 +289,11 @@ export class WasmDebugAdapter {
       }
       const loc = this._currentRawLocation();
       const vi = await s.engine.evaluate(String(args.expression || ""), loc, p.stopId);
-      this._respond(req, { result: formatValue(vi), variablesReference: 0 });
+      const hasKids = !!(vi && vi.hasChildren && vi.objectId != null);
+      this._respond(req, {
+        result: formatValue(vi),
+        variablesReference: hasKids ? this._refFor(vi.objectId) : 0,
+      });
     } catch (e) {
       const msg = String((e && e.message) || e);
       if (isHover) return this._respond(req, { result: "", variablesReference: 0 });
@@ -378,6 +407,7 @@ export class WasmDebugAdapter {
       siteById: new Map(sites.map((s) => [s.id, s])),
       siteIdToBody: new Map(sites.map((s) => [s.id, s.body])),
       bodyLocals: instr.bodyLocals || [],
+      globalTypes: instr.globalTypes || [],
     };
     this.stats.sites = sites.length;
     this.stats.files = userFiles.length;
@@ -453,6 +483,7 @@ export class WasmDebugAdapter {
       sab: this.sab,
       stdinSAB: this.stdinSab,
       bodyLocals: s.bodyLocals || [],
+      globalTypes: s.globalTypes || [],
       fileName: s.fileName,
     }, [s.instr.wasm.buffer]);
     // 注意：instr.wasm 的 buffer 被转移走了，后面不要再读它
@@ -515,7 +546,10 @@ export class WasmDebugAdapter {
       };
       this.memory = m.memory || null;
       this.onSnapshot(this.memory);   // 内存快照给引擎读变量
-      this.onFrame?.({ base: this.paused.localsBase, types: this.paused.bodyLocals });
+      this.onFrame?.({
+        base: this.paused.localsBase, types: this.paused.bodyLocals,
+        globalsBase: m.globalsBase, globalTypes: m.globalTypes || [],
+      });
       this.stats.pauses++;
       const site = m.site;
       const where = site ? `${site.file.split("/").pop()}:${site.line}` : "?";
@@ -545,13 +579,21 @@ export class WasmDebugAdapter {
     if (this.terminated) return;
     this.terminated = true;
     try {
-      if (this.session && this.session.engine) this.session.engine.removeRawModule(MOD_ID).catch(() => {});
+      if (this.session && this.session.engine) {
+        for (const objectId of this._objRefs.values()) {
+          try { this.session.engine.releaseObject(objectId).catch(() => {}); } catch {}
+        }
+        this.session.engine.removeRawModule(MOD_ID).catch(() => {});
+      }
     } catch {}
+    this._objRefs.clear();
     if (this.worker) { try { this.worker.postMessage({ type: "shutdown" }); } catch {} try { this.worker.terminate(); } catch {} this.worker = null; }
     this.paused = null;
     this.memory = null;
     try { this._status?.dispose(); } catch {}
     this._status = null;
+    this._objRefs = new Map();     // variablesReference -> engine objectId（结构体/STL 展开用）
+    this._nextObjRef = 100;
   }
 
   // ---- 供宿主（extension.js）注入：DWARF 引擎的宿主 getter 需要读暂停快照 ----

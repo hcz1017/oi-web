@@ -439,7 +439,19 @@ function getSymbolsEngine() {
           default: throw new Error("不支持的 local 类型: " + type);
         }
       },
-      getWasmGlobal() { throw new Error("globals 快照尚未实现"); },
+      getWasmGlobal(global) {
+        const mem = symbols.memory, f = symbols.frame;
+        if (!mem || !f || !f.globalsBase) throw new Error("当前没有 globals 快照");
+        const type = (f.globalTypes || [])[global];
+        const dv = new DataView(mem.buffer, mem.byteOffset + f.globalsBase + global * 8, 8);
+        switch (type) {
+          case 0x7f: return { type: "i32", value: dv.getInt32(0, true) };
+          case 0x7e: return { type: "i64", value: dv.getBigInt64(0, true) };
+          case 0x7d: return { type: "f32", value: dv.getFloat32(0, true) };
+          case 0x7c: return { type: "f64", value: dv.getFloat64(0, true) };
+          default: throw new Error("不支持的 global 类型: " + type);
+        }
+      },
       getWasmOp() { throw new Error("operand stack 不可用"); },
     };
     const engine = new DwarfEngine(workerUrl("dwarfWorker.js"), assetsBase(), host);
