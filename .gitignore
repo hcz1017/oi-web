@@ -17,3 +17,9 @@ out.o
 # 系统
 .DS_Store
 Thumbs.db
+
+# 中文语言包 / 临时验证（依赖仍在本仓库目录内）
+.dev-zh/
+.dev-web/
+dist-cf/
+oi-web-cf.zip

@@ -5,10 +5,17 @@
   "description": "浏览器里的 C++：WASM Clang + 真 VS Code 终端 + clangd（纯静态，零后端）",
   "license": "MIT",
   "scripts": {
-    "web": "bash ./run-wasm-web.sh",
-    "dev": "bash ./run-wasm-web.sh",
-    "bundle": "node oi-cpp-wasm/esbuild.mjs",
-    "test": "node oi-cpp-wasm/test/smoke.mjs"
+    "web": "bash ./run-web-zh.sh",
+    "start": "bash ./run-web-zh.sh",
+    "dev": "bash ./run-web-zh.sh",
+    "build": "node oi-cpp-wasm/esbuild.mjs",
+    "pack": "node scripts/build-cf-dist.mjs",
+    "pack:cf": "node scripts/build-cf-dist.mjs",
+    "nls": "node scripts/build-zh-nls.mjs",
+    "patch:test-web": "node scripts/patch-test-web.mjs",
+    "dwarf": "node oi-cpp-wasm/scripts/build-dwarf-worker.mjs",
+    "test": "node oi-cpp-wasm/test/smoke.mjs",
+    "test:all": "node oi-cpp-wasm/test/smoke.mjs && node oi-cpp-wasm/test/debug-instr.mjs && node oi-cpp-wasm/test/debug-session.mjs && node oi-cpp-wasm/test/debug-vars.mjs && node oi-cpp-wasm/test/debug-stl.mjs && node oi-cpp-wasm/test/dap-flow.mjs"
   },
   "devDependencies": {
     "@vscode/test-web": "^0.0.81"

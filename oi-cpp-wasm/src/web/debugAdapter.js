@@ -62,6 +62,25 @@ export class WasmDebugAdapter {
     this.stats = { t0: 0, pauses: 0, sites: 0, files: 0, exit: null };
   }
 
+  /** 求值器报错时的兜底：只支持简单标识符，按作用域里的类型 + 内存快照解码 */
+  async _fallbackEvaluate(expr) {
+    const name = String(expr || "").trim();
+    if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+    const s = this.session, p = this.paused;
+    if (!s || !p) return null;
+    try {
+      const vars = await s.engine.listVariablesInScope(this._currentRawLocation());
+      const info = (vars || []).find((v) => v.name === name);
+      if (!info || !info.type) return null;
+      if (!this._isInt128Type(info.type) && !this._isStringType(info.type)) return null;
+      const addr = await this._num(`(unsigned)&(${name})`);
+      const decoded = this._decodeAt(addr, info.type);
+      return decoded ? decoded.value : null;
+    } catch {
+      return null;
+    }
+  }
+
   _refFor(objectId, expr, typeName) {
     if (objectId == null) return 0;
     const id = this._nextObjRef++;
@@ -625,15 +644,20 @@ export class WasmDebugAdapter {
         });
       }
       const loc = this._currentRawLocation();
-      const vi = await s.engine.evaluate(String(args.expression || ""), loc, p.stopId);
-      const hasKids = !!(vi && vi.hasChildren && vi.objectId != null);
       const expr = String(args.expression || "");
+      const vi = await s.engine.evaluate(expr, loc, p.stopId);
+      const hasKids = !!(vi && vi.hasChildren && vi.objectId != null);
       this._respond(req, {
         result: formatValue(vi),
         variablesReference: hasKids ? this._refFor(vi.objectId, expr, (vi && vi.description) || "") : 0,
       });
     } catch (e) {
       const msg = String((e && e.message) || e);
+      // 引擎求值器不支持 __int128 / string 等类型 → 按变量名查类型后从内存快照解码
+      const fallback = await this._fallbackEvaluate(String(args.expression || ""));
+      if (fallback != null) {
+        return this._respond(req, { result: fallback, variablesReference: 0 });
+      }
       if (isHover) return this._respond(req, { result: "", variablesReference: 0 });
       // 把引擎的 EvalError 前缀剥掉，只留诊断本身（调试控制台里更好读）
       const short = msg.replace(/^EvalError: /, "").replace(/<expr>:\d+:\d+: /, "");

@@ -8,15 +8,30 @@
 ## 快速开始
 
 ```bash
-npm install            # 只需 @vscode/test-web（用于起官方预构建的 VS Code Web）
-./run-wasm-web.sh      # 默认 http://127.0.0.1:8083
+npm install          # 只装 @vscode/test-web（依赖都在本仓库 node_modules）
+npm run web          # 启动本地 VS Code Web（固定 8083，中文，空工作区）
 ```
 
-- 打开 `main.cpp`（`oi-cpp-wasm/sample/` 是默认工作区）
-- `Ctrl+Shift+B`：编译并在终端运行（可交互 stdin；每个 `.cpp` 一个独立终端）
-- 首次启动会加载 24MB 的 clangd.wasm；状态栏显示「clangd 就绪」后补全/悬浮可用
+打开 <http://127.0.0.1:8083/>。首次运行会自动补齐：扩展打包产物、中文 NLS、test-web 补丁。
 
-环境变量：`PORT=9000`、`SAMPLE=/path/to/dir`、`HOST=0.0.0.0`。
+### 打包（部署到 Cloudflare Pages）
+
+```bash
+npm run pack         # 生成 dist-cf/ 与 oi-web-cf.zip
+```
+
+- 产物带 `_headers`（COOP/COEP）与 `coi-serviceworker.js`（自动补响应头，最多刷新 3 次）
+- 到 CF Pages → Create → Pages → Upload assets，上传 zip 即可
+- 详见产物里的 `README-deploy.md`
+
+### 其它脚本
+
+```bash
+npm run build          # 只打包扩展（esbuild）
+npm run nls            # 用官方中文语言包重新生成中文 NLS
+npm run patch:test-web # 给 test-web 页面注入中文自愈脚本（幂等）
+npm run test:all       # 扩展的自动化测试
+```
 
 ## 仓库结构
 
