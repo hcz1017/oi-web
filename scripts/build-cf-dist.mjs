@@ -32,6 +32,25 @@ mkdirSync(path.join(OUT, "static"), { recursive: true });
 console.log("[1/4] 复制 vscode-web …");
 cpSync(W, path.join(OUT, "static/build"), { recursive: true });
 
+// CF Pages / wrangler 上传静态资产时会跳过 node_modules 目录
+// → 打包时改名为 vendor，并把产物 JS 里的引用一并重写
+const nmSrc = path.join(OUT, "static/build/node_modules");
+const nmDst = path.join(OUT, "static/build/vendor");
+if (existsSync(nmSrc)) {
+  cpSync(nmSrc, nmDst, { recursive: true });
+  rmSync(nmSrc, { recursive: true, force: true });
+  const outDir = path.join(OUT, "static/build/out");
+  for (const f of readdirSync(outDir)) {
+    if (!f.endsWith(".js")) continue;
+    const p = path.join(outDir, f);
+    const text = readFileSync(p, "utf8");
+    if (text.includes("node_modules")) {
+      writeFileSync(p, text.split("node_modules").join("vendor"));
+      console.log("    重写引用: out/" + f);
+    }
+  }
+}
+
 // ---------- 2) 扩展（只带运行所需） ----------
 console.log("[2/4] 复制扩展 …");
 const extOut = path.join(OUT, "static/devextensions");
