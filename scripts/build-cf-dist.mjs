@@ -40,15 +40,19 @@ if (existsSync(nmSrc)) {
   cpSync(nmSrc, nmDst, { recursive: true });
   rmSync(nmSrc, { recursive: true, force: true });
   const outDir = path.join(OUT, "static/build/out");
-  for (const f of readdirSync(outDir)) {
-    if (!f.endsWith(".js")) continue;
-    const p = path.join(outDir, f);
-    const text = readFileSync(p, "utf8");
-    if (text.includes("node_modules")) {
-      writeFileSync(p, text.split("node_modules").join("vendor"));
-      console.log("    重写引用: out/" + f);
+  const rewrite = (dir) => {
+    for (const f of readdirSync(dir)) {
+      const p = path.join(dir, f);
+      if (statSync(p).isDirectory()) { rewrite(p); continue; }
+      if (!f.endsWith(".js")) continue;
+      const text = readFileSync(p, "utf8");
+      if (text.includes("node_modules")) {
+        writeFileSync(p, text.split("node_modules").join("vendor"));
+        console.log("    重写引用: " + path.relative(OUT, p));
+      }
     }
-  }
+  };
+  rewrite(outDir);
 }
 
 // ---------- 2) 扩展（只带运行所需） ----------
