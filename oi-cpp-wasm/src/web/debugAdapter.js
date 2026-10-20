@@ -8,7 +8,6 @@
 import * as vscode from "vscode";
 import { instrumentWasm, firstInstrOffset, parseWasm } from "../core/wasm-bin.mjs";
 
-let MOD_ID = "oi-debug";
 
 /** 引擎 evaluate 的返回格式 → 给人看的字符串 */
 function formatValue(vi) {
@@ -57,6 +56,7 @@ export class WasmDebugAdapter {
     this.memory = null;         // 暂停时的内存快照
     this._configured = false;
     this._status = null;
+    this.modId = null;             // 本次会话的 DWARF module id（必须在实例上：同时开两个会话时不能共用）
     this._objRefs = new Map();     // variablesReference -> engine objectId（结构体/STL 展开用）
     this._nextObjRef = 100;
     this.stats = { t0: 0, pauses: 0, sites: 0, files: 0, exit: null };
@@ -131,6 +131,22 @@ export class WasmDebugAdapter {
 
   async on_launch(req) {
     this.stats.t0 = Date.now();
+    try {
+      return await this._launch(req);
+    } catch (e) {
+      this._cleanupModule();
+      throw e;
+    }
+  }
+
+  _cleanupModule() {
+    try {
+      const engine = this._engine || (this.session && this.session.engine);
+      if (engine && this.modId) engine.removeRawModule(this.modId).catch(() => {});
+    } catch {}
+  }
+
+  async _launch(req) {
     this._statusMsg("$(sync~spin) OI C++ 调试：准备中…");
     this._term("\x1b[36m== OI C++ 调试（WASM）==\x1b[0m\r\n");
     this._term(`源文件: ${this.target.fileName}\r\n`);
@@ -187,12 +203,12 @@ export class WasmDebugAdapter {
           // 用函数体第一个语句定位（比 V8 的 offset 基准更稳）
           const orig = firstInstrOffset(s.orig, body);
           const locs = await engine.rawLocationToSourceLocation({
-            rawModuleId: MOD_ID, codeOffset: orig - s.codeBase, inlineFrameIndex: 0,
+            rawModuleId: this.modId, codeOffset: orig - s.codeBase, inlineFrameIndex: 0,
           }).catch(() => null);
           const l0 = (locs || [])[0];
           if (l0) { file = l0.sourceFileURL; line = l0.lineNumber + 1; }
           try {
-            const info = await engine.getFunctionInfo({ rawModuleId: MOD_ID, codeOffset: orig - s.codeBase, inlineFrameIndex: 0 });
+            const info = await engine.getFunctionInfo({ rawModuleId: this.modId, codeOffset: orig - s.codeBase, inlineFrameIndex: 0 });
             const fname = info && info.frames && info.frames[0] && info.frames[0].name;
             if (fname) name = fname;
           } catch {}
@@ -329,9 +345,14 @@ export class WasmDebugAdapter {
     this._respond(req, { allThreadsContinued: true });
   }
 
+  _assertAlive() {
+    if (this.terminated) throw new Error("调试会话已结束（准备过程被中止）");
+  }
+
   async _prepare() {
     const t0 = Date.now();
-    MOD_ID = "oi-debug-" + Date.now();
+    // 唯一 ID：同一毫秒内重复点击调试也不能撞（引擎对重复 module id 会报 InternalError）
+    this.modId = `oi-debug-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.log("① 开始编译调试版本…");
     this._term("[1/4] 编译调试版本（-O0 -g + 插桩桩）…\r\n");
     const tCompile = Date.now();
@@ -342,11 +363,14 @@ export class WasmDebugAdapter {
       throw new Error("调试构建失败: " + String((r && r.log) || "").split("\n").slice(0, 6).join(" | "));
     }
     this._term(`      \x1b[32m✓\x1b[0m ${(r.wasm.byteLength / 1024).toFixed(0)}KB，${Date.now() - tCompile}ms\r\n`);
+    this._assertAlive();
     const orig = new Uint8Array(r.wasm);
     this.log("② 取 DWARF 引擎…");
     this._term("[2/4] 启动 DWARF 符号引擎（首次约 12.7MB）…\r\n");
     const tEngine = Date.now();
     const engine = await this.getEngine();
+    this._engine = engine;
+    this._assertAlive();
     this.log("② 引擎就绪");
     this._term(`      \x1b[32m✓\x1b[0m 就绪，${Date.now() - tEngine}ms\r\n`);
     const info = parseWasm(orig);
@@ -360,11 +384,12 @@ export class WasmDebugAdapter {
     this._term("[3/4] 解析 DWARF 符号…\r\n");
     let sources;
     try {
-      sources = await engine.addRawModule(MOD_ID, wasmUrl, r.wasm);
+      sources = await engine.addRawModule(this.modId, wasmUrl, r.wasm);
     } catch (e) {
       // 引擎内部错误的可见性：把上下文拼进错误消息（URL 相关的异常尤其需要）
       throw new Error(`addRawModule 失败（url=${wasmUrl}）: ${(e && e.message) || e}`);
     }
+    this._assertAlive();
     this.log("③ 源文件 " + ((sources && sources.length) || 0) + " 个");
     this._term(`      \x1b[32m✓\x1b[0m 源文件 ${(sources || []).length} 个\r\n`);
     const userFiles = (sources || []).filter((u) => /^file:\/\/\/workspace\//.test(u));
@@ -373,12 +398,12 @@ export class WasmDebugAdapter {
     let nextId = 1;
     for (const file of userFiles) {
       let lines = [];
-      try { lines = (await engine.getMappedLines(MOD_ID, file)) || []; } catch { lines = []; }
+      try { lines = (await engine.getMappedLines(this.modId, file)) || []; } catch { lines = []; }
       for (const line0 of lines) {
         let rangeStart = null;
         for (let col = 0; col <= 200 && rangeStart == null; col++) {
           const rs = await engine.sourceLocationToRawLocation({
-            rawModuleId: MOD_ID, sourceFileURL: file, lineNumber: line0, columnNumber: col,
+            rawModuleId: this.modId, sourceFileURL: file, lineNumber: line0, columnNumber: col,
           }).catch(() => null);
           if (rs && rs.length) rangeStart = rs[0].startOffset;
         }
@@ -409,6 +434,7 @@ export class WasmDebugAdapter {
       bodyLocals: instr.bodyLocals || [],
       globalTypes: instr.globalTypes || [],
     };
+    this._assertAlive();
     this.stats.sites = sites.length;
     this.stats.files = userFiles.length;
     this.log(`调试准备完成：${sites.length} 个语句站点 / ${userFiles.length} 个用户文件 / ${Date.now() - t0}ms`);
@@ -436,7 +462,7 @@ export class WasmDebugAdapter {
     const s = this.session, p = this.paused;
     const site = p && s && s.siteById.get(p.siteId);
     const origOffset = site ? site.origOffset : 0;
-    return { rawModuleId: MOD_ID, codeOffset: origOffset - (s ? s.codeBase : 0), inlineFrameIndex: 0 };
+    return { rawModuleId: this.modId, codeOffset: origOffset - (s ? s.codeBase : 0), inlineFrameIndex: 0 };
   }
 
   _syncBreakpointsToWorker() {
@@ -591,7 +617,7 @@ export class WasmDebugAdapter {
         for (const objectId of this._objRefs.values()) {
           try { this.session.engine.releaseObject(objectId).catch(() => {}); } catch {}
         }
-        this.session.engine.removeRawModule(MOD_ID).catch(() => {});
+        this.session.engine.removeRawModule(this.modId).catch(() => {});
       }
     } catch {}
     this._objRefs.clear();
@@ -600,8 +626,7 @@ export class WasmDebugAdapter {
     this.memory = null;
     try { this._status?.dispose(); } catch {}
     this._status = null;
-    this._objRefs = new Map();     // variablesReference -> engine objectId（结构体/STL 展开用）
-    this._nextObjRef = 100;
+    this.modId = null;
   }
 
   // ---- 供宿主（extension.js）注入：DWARF 引擎的宿主 getter 需要读暂停快照 ----

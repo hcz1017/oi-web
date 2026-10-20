@@ -74,9 +74,14 @@ const host = {
 const spawned = spawn(host);
 const rpc = spawned.rpc;
 await rpc.sendMessage("hello", [], false);
+const usedModuleIds = new Set();
 const engine = {
   // 与 DwarfEngine.addRawModule 等价：upstream 期望 rawModule = { url, code }
   addRawModule: (id, url, bytes) => {
+    if (usedModuleIds.has(id)) {
+      return Promise.reject(new Error(`InternalError: Duplicate module with ID '${id}'`));
+    }
+    usedModuleIds.add(id);
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     const code = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
     return rpc.sendMessage("addRawModule", id, undefined, { url, code });
@@ -170,6 +175,43 @@ must(/3/.test(out), `输出事件里能看到程序输出（${JSON.stringify(out
 
 send("disconnect", {}, 7);
 await waitFor((m) => m.type === "response" && m.command === "disconnect");
+
+// ---------- 并发两个调试会话（连点两次调试）----------
+{
+  // 真实扩展里编译走单例 compile worker（消息串行），这里用 promise 链模拟，避免测试里并发写 FS
+  let compileChain = Promise.resolve();
+  const serializedCompile = (args) => {
+    compileChain = compileChain.then(() => tc.compile(args));
+    return compileChain;
+  };
+  const mk = () => {
+    const a = new WasmDebugAdapter({
+      target, getEngine: async () => engine,
+      compile: serializedCompile,
+      workerUrl: path.join(EXT, "dist/web/debugWorker.js"),
+      log: () => {},
+    });
+    const m = [];
+    a.onDidSendMessage((x) => m.push(x));
+    return { a, m };
+  };
+  const one = mk(), two = mk();
+  one.a.handleMessage({ type: "request", seq: 100, command: "launch", arguments: {} });
+  two.a.handleMessage({ type: "request", seq: 200, command: "launch", arguments: {} });
+  const waitResp = async (m, ms = 60000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const r = m.find((x) => x.type === "response" && x.command === "launch");
+      if (r) return r;
+      await sleep(20);
+    }
+    return null;
+  };
+  const [r1, r2] = await Promise.all([waitResp(one.m), waitResp(two.m)]);
+  must(!!r1 && r1.success && !!r2 && r2.success,
+    `两个会话并发 launch 都成功（module id 不冲突）${r1 && !r1.success ? " / " + r1.message : ""}${r2 && !r2.success ? " / " + r2.message : ""}`);
+  one.a.dispose(); two.a.dispose();
+}
 try { await spawned.dispose(); } catch {}
 console.log(pass ? "\n全部通过" : "\n存在失败项");
 process.exit(pass ? 0 : 1);
