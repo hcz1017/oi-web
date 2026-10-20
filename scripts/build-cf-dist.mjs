@@ -53,6 +53,20 @@ if (existsSync(nmSrc)) {
     }
   };
   rewrite(outDir);
+
+  // vscode-web 的 pickFolder() 把 showDirectoryPicker 的异常整个吞掉，
+  // 只在上一层抛 "Can't open folders..."，看不出真实原因 → 这里改成把原始异常打到控制台
+  const pickFile = path.join(OUT, "static/build/out/vs/workbench/workbench.web.main.internal.js");
+  let pickText = readFileSync(pickFile, "utf8");
+  const swallow = "registerDirectoryHandle(r)}}catch{}return i?[i]:void 0}";
+  if (pickText.includes(swallow)) {
+    pickText = pickText.replace(
+      swallow,
+      'registerDirectoryHandle(r)}}catch(e){console.error("[oi pickFolder]",e&&e.name,e&&e.message||e)}return i?[i]:void 0}',
+    );
+    writeFileSync(pickFile, pickText);
+    console.log("    pickFolder 错误透传 ✓");
+  }
 }
 
 // ---------- 2) 扩展（只带运行所需） ----------
