@@ -69,6 +69,11 @@ export function parseWasm(bytes) {
   const importedGlobalTypes = [];
   let funcImportCount = 0;
   let definedGlobalTypes = [];
+  const typeSignatures = [];    // 类型段：每个 func 类型的参数类型数组
+  const typeResults = [];       // 类型段：每个 func 类型的返回值个数
+  const funcTypeIndices = [];   // 函数段：每个定义函数对应的类型索引
+  let importedFuncCount = 0;    // import 函数个数（函数索引空间前缀）
+  const importFuncTypeIndices = []; // import 段：每个 import 函数的类型索引
 
   while (pos < bytes.length) {
     const id = bytes[pos];
@@ -115,14 +120,38 @@ export function parseWasm(bytes) {
         const kind = bytes[p++];
         const isFunc = kind === 0;
         allImports.push({ module, name, kind, index: isFunc ? funcImportCount : -1 });
-        if (isFunc) funcImportCount++;
+        if (isFunc) {
+          funcImportCount++; importedFuncCount++;
+          let it; [it, p] = readU32(bytes, p);                        // import func 的 type 索引
+          importFuncTypeIndices.push(it);
+        }
         if (kind === 3) importedGlobalTypes.push(bytes[p]);
-        // 跳过 type/table/memory/global 的描述
-        if (kind === 0) { let _t; [_t, p] = readU32(bytes, p); }
-        else if (kind === 1) { p++; const fl = bytes[p - 1]; if (fl & 1) { let _m; [_m, p] = readU32(bytes, p); } let _l; [_l, p] = readU32(bytes, p); }
+        // 跳过 table/memory/global 的描述（func 的 type 索引已在上面读过）
+        if (kind === 1) { p++; const fl = bytes[p - 1]; if (fl & 1) { let _m; [_m, p] = readU32(bytes, p); } let _l; [_l, p] = readU32(bytes, p); }
         else if (kind === 2) { const fl = bytes[p++]; if (fl & 1) { let _m; [_m, p] = readU32(bytes, p); } let _l; [_l, p] = readU32(bytes, p); }
         else if (kind === 3) { p += 2; }
-        else throw new Error("未知 import kind " + kind);
+        else if (kind !== 0) throw new Error("未知 import kind " + kind);
+      }
+    } else if (id === 1) {                      // type 段：函数签名
+      let p = contentStart, count;
+      [count, p] = readU32(bytes, p);
+      for (let i = 0; i < count; i++) {
+        const form = bytes[p++];                // 0x60 func
+        if (form !== 0x60) throw new Error("type 段出现非 func 类型 " + form);
+        let nParams; [nParams, p] = readU32(bytes, p);
+        const params = [];
+        for (let k = 0; k < nParams; k++) params.push(bytes[p++]);
+        let nResults; [nResults, p] = readU32(bytes, p);
+        p += nResults;
+        typeSignatures.push(params);
+        typeResults.push(nResults);
+      }
+    } else if (id === 3) {                      // function 段：函数 → 类型索引
+      let p = contentStart, count;
+      [count, p] = readU32(bytes, p);
+      for (let i = 0; i < count; i++) {
+        let t; [t, p] = readU32(bytes, p);
+        funcTypeIndices.push(t);
       }
     } else if (id === 10) {                     // code 段
       let p = contentStart, count;
@@ -136,18 +165,24 @@ export function parseWasm(bytes) {
         // 解析 locals 声明（插桩要在函数末尾追加一个临时 i32 local）
         let lp = bodyStart, groups;
         [groups, lp] = readU32(bytes, lp);
-        const localTypes = [];
         const groupList = [];
         for (let g = 0; g < groups; g++) {
           let n;
           [n, lp] = readU32(bytes, lp);
           const type = bytes[lp++];
           groupList.push({ n, type });
-          for (let k = 0; k < n; k++) localTypes.push(type);
         }
+        // local 0..n-1 是函数参数（wasm 规范），快照必须连同参数一起保存，
+        // 否则带参函数（如 lambda 的 operator() 隐含 this）会让类型表整体错位
+        const params = typeSignatures[funcTypeIndices[i]] || [];
+        // 完整 local 索引表 = 参数 + 各 group 展开（缺一不可：追加临时 local 的
+        // 索引 = 该表长度，漏了会覆盖函数自己的局部变量，直接破坏程序语义）
+        const localTypes = [...params];
+        for (const g of groupList) for (let k = 0; k < g.n; k++) localTypes.push(g.type);
         bodies.push({
           index: i, sizeStart, bodyStart, end: bodyStart + size, size,
           localsEnd: lp, groups: groupList, locals: localTypes,
+          paramCount: params.length,
         });
         p = bodyStart + size;
       }
@@ -164,6 +199,7 @@ export function parseWasm(bytes) {
     probeImportIndex: probe ? probe.index : -1,
     pauseImportIndex: pause ? pause.index : -1,
     globalTypes: [...importedGlobalTypes, ...definedGlobalTypes],
+    typeSignatures, typeResults, funcTypeIndices, importFuncTypeIndices,
   };
 }
 
@@ -191,6 +227,135 @@ export function firstInstrOffset(bytes, body) {
 const STORE_OPS = { 0x7f: [0x36, 2], 0x7e: [0x37, 3], 0x7d: [0x38, 2], 0x7c: [0x39, 3] };
 
 /**
+ * 线性扫描函数体，算出"操作数栈为空"的指令偏移集合（相对模块，即绝对偏移）。
+ * 只处理结构化控制流的常规形态（-O0 的 clang 输出）：
+ *   · 每条指令按 push/pop 数更新栈深，块入口记录高度、end 恢复
+ *   · br/br_if 落到最近未闭合块（保守：视为栈清空到块入口）
+ *   · unreachable / br_table 等复杂情况 → 抛错（调用方放弃整个函数体）
+ * 候选插桩点必须命中这个集合，否则会截断中间操作数、破坏程序语义。
+ */
+function computeEmptyStackOffsets(bytes, body, sigCtx) {
+  const empty = new Set();
+  const blockStack = [];          // 每层块进入时的栈深
+  let depth = 0;                  // 当前操作数栈深
+  let poisoned = false;           // return/br 之后线性不可达：不再记 empty，只推进位置
+  let p = body.localsEnd;
+  // call 的栈效应：funcIdx → {pop, push}。函数索引空间 = import 函数在前。
+  const callSignature = (fidx) => {
+    const tidx = fidx < sigCtx.importedFuncCount
+      ? (sigCtx.importFuncTypeIndices[fidx] ?? -1)
+      : (sigCtx.funcTypeIndices[fidx - sigCtx.importedFuncCount] ?? -1);
+    const params = tidx >= 0 ? (sigCtx.typeSignatures[tidx] || []) : [];
+    const results = tidx >= 0 ? (sigCtx.typeResults[tidx] ?? 0) : 0;
+    return { pop: params.length, push: results };
+  };
+  while (p < body.end) {
+    if (!poisoned && depth === 0) empty.add(p);   // 只记录"可达且栈空"的指令边界
+    const op = bytes[p++];
+    const pop = (n) => { depth = Math.max(0, depth - n); };
+    const push = (n) => { depth += n; };
+    switch (op) {
+      case 0x01: break;                                               // nop
+      case 0x00:                                                      // unreachable：清栈且后文线性不可达
+        depth = 0; poisoned = true; break;
+      case 0x02: case 0x03: case 0x04:                                // block / loop / if
+        blockStack.push(depth); p++; break;                           // blocktype 立即数
+      case 0x05:                                                      // else
+        depth = blockStack[blockStack.length - 1] ?? depth; poisoned = false; break;
+      case 0x0b:                                                      // end
+        depth = blockStack.pop() ?? 0; poisoned = false; break;
+      case 0x0c: case 0x0d: {                                         // br / br_if
+        let label = 0, sh = 0;
+        for (;;) { const b = bytes[p++]; label |= (b & 0x7f) << sh; sh += 7; if (!(b & 0x80)) break; }
+        if (op === 0x0c) { poisoned = true; }                         // 无条件跳转后线性不可达
+        else depth = Math.max(0, depth - 1);                          // br_if 弹条件
+        break;
+      }
+      case 0x0e: throw new Error("br_table");
+      case 0x0f:                                                      // return：之后线性不可达
+        poisoned = true;
+        break;
+      // —— load/store：align + offset 两个立即数 ——
+      case 0x28: case 0x29: case 0x2a: case 0x2b: case 0x2c: case 0x2d:
+      case 0x2e: case 0x2f: case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35:
+      case 0x36: case 0x37: case 0x38: case 0x39: case 0x3a: case 0x3b:
+      case 0x3c: case 0x3d: case 0x3e: case 0x3f: case 0x40:
+        depth = Math.max(0, depth - (OP_STACK_EFFECT[op] ? OP_STACK_EFFECT[op][0] : 0));
+        if (OP_STACK_EFFECT[op]) depth += OP_STACK_EFFECT[op][1];
+        // align(ULEB) + offset(ULEB)：offset 可能 >127（如 0xcc 0x04 = 524），必须按 LEB 读
+        while (bytes[p++] & 0x80) {}
+        while (bytes[p++] & 0x80) {}
+        break;
+      // —— call：效应由函数签名决定（类型段已解析）——
+      case 0x10: {
+        let fidx = 0, sh = 0;
+        for (;;) { const b = bytes[p++]; fidx |= (b & 0x7f) << sh; sh += 7; if (!(b & 0x80)) break; }
+        const sig = callSignature(fidx);
+        depth = Math.max(0, depth - sig.pop) + sig.push;
+        break;
+      }
+      // —— call_indirect：type 索引 + table 索引两个 ULEB ——
+      case 0x11: {
+        let tidx = 0, sh = 0;
+        for (;;) { const b = bytes[p++]; tidx |= (b & 0x7f) << sh; sh += 7; if (!(b & 0x80)) break; }
+        while (bytes[p++] & 0x80) {}                                  // table index
+        const params = sigCtx.typeSignatures[tidx] || [];
+        depth = Math.max(0, depth - params.length - 1) + 1;           // 参数 + table idx，压返回
+        break;
+      }
+      // —— 带一个 ULEB 立即数 ——
+      case 0x20: case 0x21: case 0x22: case 0x23: case 0x24:
+      case 0x25: case 0x26:
+        depth = Math.max(0, depth - (OP_STACK_EFFECT[op] ? OP_STACK_EFFECT[op][0] : 0));
+        if (OP_STACK_EFFECT[op]) depth += OP_STACK_EFFECT[op][1];
+        while (bytes[p++] & 0x80) {}
+        break;
+      // —— 带一个 SLEB 立即数 ——
+      case 0x41: case 0x42: case 0x43: case 0x44:
+        depth += OP_STACK_EFFECT[op][1];
+        while (bytes[p++] & 0x80) {}
+        break;
+      default: {
+        const io = OP_STACK_EFFECT[op];
+        if (io == null) throw new Error("未建模的 opcode 0x" + op.toString(16) + " @0x" + (p - 1).toString(16) + " (body " + body.index + ")");
+        depth = Math.max(0, depth - io[0]) + io[1];
+        break;
+      }
+    }
+  }
+  return empty;
+}
+// 栈效应表：op -> [pop, push]；只建 -O0 clang 常见的子集，遇到未知的放弃该函数
+const OP_STACK_EFFECT = {
+  0x41: [0, 1], 0x42: [0, 1], 0x43: [0, 1], 0x44: [0, 1],           // *.const
+  0x20: [0, 1], 0x21: [1, 0], 0x22: [1, 1], 0x23: [0, 1], 0x24: [1, 0], // local/global
+  0x6a: [2, 1], 0x6b: [2, 1], 0x6c: [2, 1], 0x6d: [2, 1], 0x6e: [2, 1], 0x6f: [2, 1],
+  0x70: [2, 1], 0x71: [2, 1], 0x72: [2, 1], 0x73: [2, 1], 0x74: [2, 1], 0x75: [2, 1],
+  0x76: [2, 1], 0x77: [2, 1], 0x78: [2, 1], 0x79: [2, 1], 0x7a: [2, 1],
+  0x45: [1, 1], 0x46: [2, 1], 0x47: [2, 1], 0x48: [2, 1], 0x49: [2, 1], 0x4a: [2, 1],
+  0x4b: [2, 1], 0x4c: [2, 1], 0x4d: [2, 1], 0x4e: [2, 1], 0x4f: [2, 1], 0x50: [2, 1],
+  0x51: [2, 1], 0x52: [2, 1], 0x53: [2, 1], 0x54: [2, 1], 0x55: [2, 1], 0x56: [2, 1],
+  0x57: [2, 1], 0x58: [2, 1], 0x59: [2, 1], 0x5a: [2, 1], 0x5b: [2, 1], 0x5c: [2, 1],
+  0x5d: [2, 1], 0x5e: [2, 1], 0x5f: [2, 1], 0x60: [2, 1], 0x61: [2, 1], 0x62: [2, 1],
+  0x63: [2, 1], 0x64: [2, 1], 0x65: [2, 1], 0x66: [2, 1], 0x67: [2, 1], 0x68: [2, 1],
+  0x69: [2, 1],
+  0x28: [1, 1], 0x29: [1, 1], 0x2a: [1, 1], 0x2b: [1, 1], 0x2c: [1, 1], 0x2d: [1, 1],
+  0x2e: [1, 1], 0x2f: [1, 1], 0x30: [1, 1], 0x31: [1, 1], 0x32: [1, 1], 0x33: [1, 1],
+  0x34: [1, 1], 0x35: [1, 1],
+  0x36: [2, 0], 0x37: [2, 0], 0x38: [2, 0], 0x39: [2, 0], 0x3a: [2, 0], 0x3b: [2, 0],
+  0x3c: [2, 0], 0x3d: [2, 0], 0x3e: [2, 0], 0x3f: [2, 0], 0x40: [2, 0],
+  0x1a: [1, 0],                                                       // drop
+  0x7c: [2, 1], 0x7d: [2, 1], 0x7e: [2, 1], 0x7f: [2, 1], 0x80: [2, 1], 0x81: [2, 1],
+  0x82: [2, 1], 0x83: [2, 1], 0x84: [2, 1], 0x85: [2, 1], 0x86: [2, 1], 0x87: [2, 1],
+  0x88: [2, 1], 0x89: [2, 1], 0x8a: [2, 1], 0x8b: [2, 1], 0x8c: [2, 1], 0x8d: [2, 1],
+  0x8e: [2, 1], 0x8f: [2, 1], 0x90: [2, 1], 0x91: [2, 1],
+  0xa7: [1, 1], 0xa8: [1, 1], 0xa9: [1, 1], 0xaa: [1, 1], 0xab: [1, 1], 0xac: [1, 1],
+  0xad: [1, 1], 0xae: [1, 1], 0xaf: [1, 1], 0xb0: [1, 1], 0xb1: [1, 1], 0xb2: [1, 1],
+  0xb3: [1, 1], 0xb4: [1, 1], 0xb5: [1, 1], 0xb6: [1, 1],
+};
+
+
+/**
  * 在给定模块偏移处插入探针（带 locals 快照）。
  * @param {Uint8Array} bytes 原始（未插桩）wasm
  * @param {Array<{id:number, offset:number}>} sites  offset 为**模块内绝对偏移**，且必须是语句起点
@@ -212,10 +377,46 @@ export function instrumentWasm(bytes, sites) {
   const perBody = new Map();
   const dropped = [];
   const sortedSites = [...sites].sort((a, b) => a.offset - b.offset);
+  // 栈深缓存：body.index -> Set<函数体相对偏移>（操作数栈为空的合法插桩点）
+  const emptyStackCache = new Map();
+  const emptyStackErr = new Map();
+  // import 函数个数 = probe/pause 等 import 总数（函数索引空间前缀），由 parseWasm 返回
+  const importedFuncCountLocal = info.funcImports.length;
+  const stackEmptyAt = (body) => {
+    if (!emptyStackCache.has(body.index)) {
+      try { emptyStackCache.set(body.index, computeEmptyStackOffsets(bytes, body, {
+        typeSignatures: info.typeSignatures, typeResults: info.typeResults,
+        funcTypeIndices: info.funcTypeIndices, importFuncTypeIndices: info.importFuncTypeIndices,
+        importedFuncCount: importedFuncCountLocal,
+      })); }
+      catch (e) { emptyStackCache.set(body.index, null); emptyStackErr.set(body.index, (e && e.message) || String(e)); }   // 模拟失败 → 该函数全部放弃插桩
+    }
+    return emptyStackCache.get(body.index);
+  };
   for (const s of sortedSites) {
     const body = code.bodies.find((b) => s.offset >= b.bodyStart && s.offset < b.end);
     if (!body) { dropped.push({ ...s, why: "不在任何函数体内" }); continue; }
     if (s.offset < body.localsEnd) { dropped.push({ ...s, why: "落在 locals 声明区" }); continue; }
+    // 插桩序列是 block…end 结构：落在"操作数栈非空"的位置会截断中间值、改变语义
+    // （表现为输出错乱甚至 wasm 校验失败）。只允许栈空的真·语句起点。
+    const empty = stackEmptyAt(body);
+    if (empty === null) { dropped.push({ ...s, why: "栈模拟失败，保守放弃（" + (emptyStackErr.get(body.index) || "?") + "）" }); continue; }
+    if (!empty.has(s.offset)) {
+      // DWARF 行首 offset 可能落在表达式中间（-O0 下前置指令已垫高栈）。
+      // 回退到本函数体内最近的栈空点（即这条语句真正的第一条"自足"指令，
+      // 语义等价、行号不变）。多个站点撞到同一回退点是正常的——同一位置
+      // 只插一份探针，站点间以别名共享（见下方 byRel 分组）。
+      let fallback = null;
+      for (const off of empty) {
+        if (off >= s.offset) continue;                     // 只向前回退
+        if (off <= body.localsEnd) continue;               // locals 区不可插
+        if (fallback == null || off > fallback) fallback = off;
+      }
+      if (fallback == null) { dropped.push({ ...s, why: "附近没有栈空的插桩点" }); continue; }
+      if (!perBody.has(body.index)) perBody.set(body.index, []);
+      perBody.get(body.index).push({ rel: fallback - body.bodyStart, id: s.id, requested: s.offset });
+      continue;
+    }
     if (!perBody.has(body.index)) perBody.set(body.index, []);
     perBody.get(body.index).push({ rel: s.offset - body.bodyStart, id: s.id });
   }
@@ -263,7 +464,16 @@ export function instrumentWasm(bytes, sites) {
       out.push(0x10, ...writeU32(pauseIdx), 0x0b);      // call pause ; end
       return out;
     };
-    const seqs = (perBody.get(body.index) || []).map((s) => ({ ...s, seq: seqFor(s.id) }));
+    // 同一 rel 可能被多个站点共享（相邻语句的"栈空回退点"撞在一起）：
+    // 位置只插一份探针序列，组内第一个 id 是宿主 id，其余记为别名
+    const raw = perBody.get(body.index) || [];
+    const byRel = new Map();
+    for (const s of raw) {
+      if (!byRel.has(s.rel)) byRel.set(s.rel, { rel: s.rel, id: s.id, aliases: [], requested: s.requested });
+      else byRel.get(s.rel).aliases.push(s.id);
+    }
+    const seqs = [...byRel.values()].map((g) => ({ ...g, seq: seqFor(g.id) }));
+    seqs.sort((a, b) => a.rel - b.rel);
     const parts = [Uint8Array.from(localsBytes)];
     let cursor = body.localsEnd;
     for (const s of seqs) {
@@ -306,12 +516,17 @@ export function instrumentWasm(bytes, sites) {
     let added = blob.localsLen - (blob.body.localsEnd - blob.body.bodyStart);
     for (const s of blob.seqs) {
       const newRel = (s.rel - (blob.body.localsEnd - blob.body.bodyStart)) + blob.localsLen + (added - (blob.localsLen - (blob.body.localsEnd - blob.body.bodyStart)));
-      outSites.push({
-        id: s.id,
+      const base = {
+        // 实际插桩的原始模块偏移（回退后 = 栈空回退点，而非引擎给的行首请求点）
         origOffset: blob.body.bodyStart + s.rel,
+        // 引擎原始请求点（仅用于诊断/日志；反查行号请用 origOffset）
+        requestedOffset: s.requested ?? blob.body.bodyStart + s.rel,
         newOffset: bodyNew.bodyStart + newRel,
         body: blob.body.index,
-      });
+      };
+      outSites.push({ ...base, id: s.id, aliases: s.aliases });
+      // 别名站点与宿主站点同位置，adapter/worker 据此把断点命中合并处理
+      for (const alias of s.aliases) outSites.push({ ...base, id: alias, aliasOf: s.id });
       added += s.seq.length;
     }
   }

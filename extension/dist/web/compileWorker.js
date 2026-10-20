@@ -14,7 +14,7 @@ __attribute__((used, visibility("default")))
 void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
 `;
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
   var CLOCKID_REALTIME = 0;
   var CLOCKID_MONOTONIC = 1;
   var ERRNO_SUCCESS = 0;
@@ -223,7 +223,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     }
   };
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
   var Debug = class Debug2 {
     enable(enabled) {
       this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -249,7 +249,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
   }
   var debug = new Debug(false);
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
   var WASIProcExit = class extends Error {
     constructor(code) {
       super("exit with exit code " + code);
@@ -813,7 +813,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     }
   };
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
   var Fd = class {
     fd_allocate(offset, len) {
       return ERRNO_NOTSUP;
@@ -913,7 +913,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
   };
   Inode.next_ino = 1n;
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
   var OpenFile = class extends Fd {
     fd_allocate(offset, len) {
       if (this.file.size > offset + len) {
@@ -1677,8 +1677,10 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
       }
       const link = [
         "--export-dynamic",
+        // 调试构建每层递归会经过插桩 probe（暂停时还要走 pause/Atomics.wait），
+        // 栈消耗比平时大得多 → 调试栈开 8MB，普通构建 1MB
         "-z",
-        "stack-size=1048576",
+        stubObj ? "stack-size=8388608" : "stack-size=1048576",
         `-L${LIBDIR}/noeh`,
         `-L${LIBDIR}`,
         `${LIBDIR}/crt1.o`,

@@ -746,22 +746,31 @@ export class WasmDebugAdapter {
       let lines = [];
       try { lines = (await engine.getMappedLines(this.modId, file)) || []; } catch { lines = []; }
       for (const line0 of lines) {
-        let rangeStart = null;
-        for (let col = 0; col <= 200 && rangeStart == null; col++) {
+        // 同一行可能有多条语句（DWARF 行表按语句切分），每个命中列都是一个独立站点，
+        // 这样"下一行(步进)"落点是逻辑上的下一条语句，而不是下一个物理行
+        const offsets = [];
+        for (let col = 0; col <= 200; col++) {
           const rs = await engine.sourceLocationToRawLocation({
             rawModuleId: this.modId, sourceFileURL: file, lineNumber: line0, columnNumber: col,
           }).catch(() => null);
-          if (rs && rs.length) rangeStart = rs[0].startOffset;
+          if (!rs || !rs.length) continue;
+          for (const r of rs) {
+            if (r && typeof r.startOffset === "number" && !offsets.includes(r.startOffset)) {
+              offsets.push(r.startOffset);
+            }
+          }
         }
-        if (rangeStart == null) continue;
-        const origOffset = codeBase + rangeStart;
-        const bodyIdx = info.code.bodies.findIndex((b) => origOffset >= b.bodyStart && origOffset < b.end);
-        if (bodyIdx < 0) continue;
-        const id = nextId++;
-        sites.push({ id, line: line0 + 1, file, body: bodyIdx, origOffset });
-        const key = `${file}:${line0}`;
-        if (!siteByLine.has(key)) siteByLine.set(key, []);
-        siteByLine.get(key).push(id);
+        offsets.sort((a, b) => a - b);
+        for (const rangeStart of offsets) {
+          const origOffset = codeBase + rangeStart;
+          const bodyIdx = info.code.bodies.findIndex((b) => origOffset >= b.bodyStart && origOffset < b.end);
+          if (bodyIdx < 0) continue;
+          const id = nextId++;
+          sites.push({ id, line: line0 + 1, file, body: bodyIdx, origOffset });
+          const key = `${file}:${line0}`;
+          if (!siteByLine.has(key)) siteByLine.set(key, []);
+          siteByLine.get(key).push(id);
+        }
       }
     }
     this.log(`④ 语句站点 ${sites.length} 个`);

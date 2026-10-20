@@ -83,7 +83,10 @@ function captureStack() {
 function probe(siteId) {
   const site = siteById.get(siteId);
   if (!site) return 0;
-  const isBreakpoint = !!bp && (Atomics.load(bp, siteId >>> 5) & (1 << (siteId & 31))) !== 0;
+  // 别名组：多个源码语句的栈空回退点可能撞到同一插桩位置，
+  // 任意一个别名 id 命中断点都算命中
+  const ids = [siteId, ...(site.aliases || [])];
+  const isBreakpoint = !!bp && ids.some((id) => (Atomics.load(bp, id >>> 5) & (1 << (id & 31))) !== 0);
   const sameLine = resumeMode !== 1 && site.line === stopLine;
   const hit =
     resumeMode === 2 ? !sameLine :

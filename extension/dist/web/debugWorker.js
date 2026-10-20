@@ -1,5 +1,5 @@
 (() => {
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
   var CLOCKID_REALTIME = 0;
   var CLOCKID_MONOTONIC = 1;
   var ERRNO_SUCCESS = 0;
@@ -156,7 +156,7 @@
   var SDFLAGS_RD = 1 << 0;
   var SDFLAGS_WR = 1 << 1;
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
   var Debug = class Debug2 {
     enable(enabled) {
       this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -181,7 +181,7 @@
   }
   var debug = new Debug(false);
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
   var WASIProcExit = class extends Error {
     constructor(code) {
       super("exit with exit code " + code);
@@ -745,7 +745,7 @@
     }
   };
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
   var Fd = class {
     fd_allocate(offset, len) {
       return ERRNO_NOTSUP;
@@ -845,7 +845,7 @@
   };
   Inode.next_ino = 1n;
 
-  // ../node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
   var OpenFile = class extends Fd {
     fd_allocate(offset, len) {
       if (this.file.size > offset + len) {
@@ -1067,7 +1067,8 @@
   function probe(siteId) {
     const site = siteById.get(siteId);
     if (!site) return 0;
-    const isBreakpoint = !!bp && (Atomics.load(bp, siteId >>> 5) & 1 << (siteId & 31)) !== 0;
+    const ids = [siteId, ...site.aliases || []];
+    const isBreakpoint = !!bp && ids.some((id) => (Atomics.load(bp, id >>> 5) & 1 << (id & 31)) !== 0);
     const sameLine = resumeMode !== 1 && site.line === stopLine;
     const hit = resumeMode === 2 ? !sameLine : resumeMode === 3 ? !sameLine && site.body === stopBody : resumeMode === 4 ? !sameLine && site.body !== stopBody : isBreakpoint;
     if (!hit) return 0;

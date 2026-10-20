@@ -124,7 +124,10 @@ export class Toolchain {
     }
 
     const link = [
-      "--export-dynamic", "-z", "stack-size=1048576",
+      "--export-dynamic",
+      // 调试构建每层递归会经过插桩 probe（暂停时还要走 pause/Atomics.wait），
+      // 栈消耗比平时大得多 → 调试栈开 8MB，普通构建 1MB
+      "-z", stubObj ? "stack-size=8388608" : "stack-size=1048576",
       `-L${LIBDIR}/noeh`, `-L${LIBDIR}`, `${LIBDIR}/crt1.o`,
       ...(stubObj ? ["/workspace/dbgstub.o"] : []),
       "/workspace/out.o",
