@@ -531,9 +531,11 @@ function showDebugLog() {
 async function ensureBreakpointsEnabled() {
   try {
     const cfg = vscode.workspace.getConfiguration("debug");
-    if (cfg.get("allowBreakpointsEverywhere") === true) return;
-    await cfg.update("allowBreakpointsEverywhere", true, vscode.ConfigurationTarget.Global);
-    debugLog("已开启 debug.allowBreakpointsEverywhere（否则 Web 版里行号左侧点不出断点）");
+    if (cfg.get("allowBreakpointsEverywhere") !== true) {
+      await cfg.update("allowBreakpointsEverywhere", true, vscode.ConfigurationTarget.Global);
+    }
+    const now = vscode.workspace.getConfiguration("debug").get("allowBreakpointsEverywhere");
+    debugLog(`断点凹槽: allowBreakpointsEverywhere=${now}，contributes.breakpoints=cpp/c`);
   } catch (e) {
     debugLog("开启 allowBreakpointsEverywhere 失败: " + ((e && e.message) || e));
   }
@@ -758,6 +760,9 @@ export async function activate(c) {
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.debug", startDebugging));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.toggleBreakpoint", toggleBreakpoint));
     registerDebugAdapter(c);
+    // 双保险：contributes.breakpoints 让行号凹槽可用；再把 allowBreakpointsEverywhere 也打开，
+    // 即使某个 Web 构建忽略贡献点，行号左侧也一定能点出断点。
+    ensureBreakpointsEnabled();
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.restartLsp", async () => {
       stopClangd();
       lspPromise = null;

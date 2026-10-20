@@ -478,7 +478,7 @@ export class WasmDebugAdapter {
     }
     if (m.type === "paused") {
       this.paused = {
-        siteId: m.siteId, frames: m.frames || [], memory: m.memory, stopId: { siteId: m.siteId },
+        siteId: m.siteId, site: m.site, frames: m.frames || [], memory: m.memory, stopId: { siteId: m.siteId },
         localsBase: m.localsBase || 0, bodyLocals: m.bodyLocals || [],
       };
       this.memory = m.memory || null;
