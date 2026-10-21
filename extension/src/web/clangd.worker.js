@@ -217,7 +217,34 @@ async function loadGlueModule(glueUrl) {
   // ⚠️ pthread 预建池大小：默认 8，每个 worker 都会实例化一份 wasm（几十 MB 级），
   //    而 clangd 稳态只用 -j(=2) 个线程。按用户要求降到 4：既覆盖"线程退出/新任务进来"
   //    的交接，又比 8 少一半空闲内存。极端突发时 emscripten 会现场再建（慢一次，不会死锁）。
-  const patched = text.replace(/var pthreadPoolSize\s*=\s*8/, "var pthreadPoolSize=4");
+  let patched = text.replace(/var pthreadPoolSize\s*=\s*8/, "var pthreadPoolSize=4");
+
+  // ⚠️⚠️ 方案②：阻止"池子见底 → 无限新建 worker"。
+  //
+  // emscripten 原逻辑：
+  //   getNewWorker(){ if(unusedWorkers.length==0){ err(...); allocateUnusedWorker();
+  //                   loadWasmModuleToWorker(unusedWorkers[0]) } return unusedWorkers.pop() }
+  // 新建的 worker 立刻被 pop 走 → 它**不在** unusedWorkers 里 →
+  // 后续请求又看到"池子空" → 继续新建。打字突发时就无限膨胀（实测 68+ 个）。
+  //
+  // 改法：池空时先把"正在加载中"的 worker 复用掉（子 worker 在 loaded 之前收到的消息
+  //       会排队、startWorker 后重放，所以安全，只是线程晚几十~几百毫秒启动）。
+  //       只有连"加载中"的都没有，才真正新建一个。
+  //       另外复用前会校验它没回到 unusedWorkers，避免同一 worker 被派两次。
+  const POOL_FIX_FROM = "PThread.allocateUnusedWorker();PThread.loadWasmModuleToWorker(PThread.unusedWorkers[0])";
+  const POOL_FIX_TO =
+    "var _g=(PThread.__oiLoading||(PThread.__oiLoading=[]));" +
+    "while(_g.length){var _c=_g.shift();if(PThread.unusedWorkers.indexOf(_c)>=0)continue;return _c}" +
+    "PThread.allocateUnusedWorker();var _w=PThread.unusedWorkers.pop();_g.push(_w);" +
+    "PThread.loadWasmModuleToWorker(_w);return _w";
+  if (patched.includes(POOL_FIX_FROM)) {
+    patched = patched.replace(POOL_FIX_FROM, POOL_FIX_TO);
+    stage("已启用 worker 复用补丁（池空时复用加载中的 worker，总量封顶）");
+  } else {
+    stage("⚠ 未找到 getNewWorker 片段，worker 复用补丁未生效（版本变了？）");
+  }
+
+  if (patched === text) stage("⚠ glue 里没找到 pthreadPoolSize=8（版本变了？池大小保持默认）");
   if (patched === text) stage("⚠ glue 里没找到 pthreadPoolSize=8（版本变了？池大小保持默认）");
   const blobUrl = URL.createObjectURL(new Blob([patched], { type: "text/javascript" }));
   stage("import() glue blob");
