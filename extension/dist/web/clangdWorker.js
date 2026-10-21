@@ -209,14 +209,6 @@
     })();
     if (!text) throw new Error("glue \u4E3A\u7A7A");
     let patched = text.replace(/var pthreadPoolSize\s*=\s*8/, "var pthreadPoolSize=4");
-    const POOL_FIX_FROM = "PThread.allocateUnusedWorker();PThread.loadWasmModuleToWorker(PThread.unusedWorkers[0])";
-    const POOL_FIX_TO = "var _g=(PThread.__oiLoading||(PThread.__oiLoading=[]));while(_g.length){var _c=_g.shift();if(PThread.unusedWorkers.indexOf(_c)>=0)continue;return _c}PThread.allocateUnusedWorker();var _w=PThread.unusedWorkers.pop();_g.push(_w);PThread.loadWasmModuleToWorker(_w);return _w";
-    if (patched.includes(POOL_FIX_FROM)) {
-      patched = patched.replace(POOL_FIX_FROM, POOL_FIX_TO);
-      stage("\u5DF2\u542F\u7528 worker \u590D\u7528\u8865\u4E01\uFF08\u6C60\u7A7A\u65F6\u590D\u7528\u52A0\u8F7D\u4E2D\u7684 worker\uFF0C\u603B\u91CF\u5C01\u9876\uFF09");
-    } else {
-      stage("\u26A0 \u672A\u627E\u5230 getNewWorker \u7247\u6BB5\uFF0Cworker \u590D\u7528\u8865\u4E01\u672A\u751F\u6548\uFF08\u7248\u672C\u53D8\u4E86\uFF1F\uFF09");
-    }
     if (patched === text) stage("\u26A0 glue \u91CC\u6CA1\u627E\u5230 pthreadPoolSize=8\uFF08\u7248\u672C\u53D8\u4E86\uFF1F\u6C60\u5927\u5C0F\u4FDD\u6301\u9ED8\u8BA4\uFF09");
     if (patched === text) stage("\u26A0 glue \u91CC\u6CA1\u627E\u5230 pthreadPoolSize=8\uFF08\u7248\u672C\u53D8\u4E86\uFF1F\u6C60\u5927\u5C0F\u4FDD\u6301\u9ED8\u8BA4\uFF09");
     const blobUrl = URL.createObjectURL(new Blob([patched], { type: "text/javascript" }));
@@ -284,6 +276,13 @@
         const u = String(url);
         if (id <= 10) oiWorkerLog(`#${id} \u521B\u5EFA type=${opts && opts.type || "-"}`);
         else if (id % 32 === 0) oiWorkerLog(`pthread worker \u7D2F\u8BA1\u5DF2\u521B\u5EFA ${id} \u4E2A\uFF08\u7EBF\u7A0Bchurn\uFF0Cclangd \u6BCF\u5F00\u4E00\u4E2A std::thread \u5C31\u4F1A\u65B0\u5EFA\uFF09`);
+        if (id === 8) {
+          try {
+            self.postMessage({ __oiRestart: { workers: id } });
+          } catch {
+          }
+          oiWorkerLog("worker \u6570\u8FBE 8\uFF0C\u8BF7\u6C42\u9759\u9ED8\u91CD\u542F clangd");
+        }
         if (id === 64 || id === 128 || id === 256) {
           oiWorkerLog(`\u26A0 pthread worker \u5DF2\u8FBE ${id} \u4E2A\uFF0C\u82E5\u7EE7\u7EED\u589E\u957F\u5EFA\u8BAE\u91CD\u542F clangd\uFF08\u547D\u4EE4\uFF1AOI C++: \u91CD\u542F clangd\uFF09`);
         }

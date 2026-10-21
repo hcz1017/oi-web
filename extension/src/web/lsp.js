@@ -259,14 +259,14 @@ let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自�
 export function resetClangdFatal() { fatal = false; }
 
 export async function startClangd(ctx, opts = {}) {
-  const merged = { files: ["main.cpp"], flags: "-std=c++20", opt: 2, debug: true, base: "", verbose: false, log: undefined, ...opts };
+  const merged = { files: ["main.cpp"], flags: "-std=c++20", opt: 2, debug: true, base: "", verbose: false, log: undefined, onRestart: undefined, ...opts };
   // ⚠️ 只用 module worker（ESM glue 要求）。不再"降级经典 worker"：
   //    经典 worker + ESM glue 会抛 "Module scripts don't support importScripts()"，
   //    降级只会把错误变成另一种错误，掩盖真正原因。
   return await startOnce(ctx, merged);
 }
 
-async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, verbose, log }) {
+async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, verbose, log, onRestart }) {
   const out = typeof log === "function" ? log : (line) => console.warn("[oi clangd]", line);
   if (client) return client;
   if (fatal) throw new Error("clangd 已被停用（pthread 线程池不足）。重启扩展或运行「OI C++: 重启 clangd(WASM)」可再试");
@@ -306,6 +306,10 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
     if (d.__oiError) {
       console.error("[oi clangd] 失败:", d.__oiError);
       vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
+    }
+    if (d.__oiRestart) {
+      out(`[restart] worker 数 ${d.__oiRestart.workers}，静默重启 clangd`);
+      try { onRestart && onRestart(d.__oiRestart); } catch (e) { out("[restart] 处理失败 " + (e && e.message)); }
     }
     if (d.__oiWarnOnce && !warnedOnce.has(d.__oiWarnOnce)) {
       warnedOnce.add(d.__oiWarnOnce);
