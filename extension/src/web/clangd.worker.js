@@ -337,18 +337,27 @@ if (!isPthreadWorker) {
   // ⚠️ emscripten 线程池耗尽会**每几毫秒**打印一次警告，主线程在 asyncify 里空转，
   //    表现为"控制台刷屏 + CPU 拉满 + clangd 永久卡住"。
   //    这里拦截该警告：去重 + 累计到阈值后直接上报致命错误，让扩展停掉 clangd。
+  // ⚠️ 线程池耗尽的处理策略（用户要求）：**只静音，不杀进程**。
+  //    emscripten 在池子暂时用满时会打这条警告并稍后自行恢复；
+  //    以前一检测到就 stopClangd()，把本来能救回来的情况直接弄死。
+  //    现在：吞掉刷屏 + 每 10 秒上报一次"仍在等待"（顺带重置扩展侧的空闲超时）。
   (function guardThreadPoolFlood() {
     const origWarn = console.warn.bind(console);
     const origErr = console.error.bind(console);
-    let hits = 0, reported = false;
+    let hits = 0, lastBeat = 0;
     const check = (args) => {
-      const s = String(args && args[0] || "");
-      if (!s.includes("thread pool is exhausted")) return false;
+      const str = String((args && args[0]) || "");
+      if (!str.includes("thread pool is exhausted")) return false;
       hits++;
-      if (!reported && hits >= 6) {
-        reported = true;
-        try { self.postMessage({ __oiLog: `pthread 线程池耗尽（命中 ${hits} 次）；已创建子 worker 数见上几条` }); } catch {}
-        try { self.postMessage({ __oiFatal: "pthread-exhausted" }); } catch {}
+      const now = Date.now();
+      if (hits === 1) {
+        // 只弹一次用户可见警告（扩展侧去重），之后彻底静默
+        try { self.postMessage({ __oiWarnOnce: "clangd 线程池暂时耗尽，代码提示/诊断可能较缓慢" }); } catch {}
+      }
+      if (now - lastBeat > 10000) {
+        lastBeat = now;
+        // 只发进度心跳（重置扩展侧空闲超时），不写日志，避免刷屏
+        try { self.postMessage({ __oiProgress: 1 }); } catch {}
       }
       return true;   // 吞掉后续刷屏
     };

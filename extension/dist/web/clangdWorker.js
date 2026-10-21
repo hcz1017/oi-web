@@ -299,19 +299,22 @@
     (function guardThreadPoolFlood() {
       const origWarn = console.warn.bind(console);
       const origErr = console.error.bind(console);
-      let hits = 0, reported = false;
+      let hits = 0, lastBeat = 0;
       const check = (args) => {
-        const s = String(args && args[0] || "");
-        if (!s.includes("thread pool is exhausted")) return false;
+        const str = String(args && args[0] || "");
+        if (!str.includes("thread pool is exhausted")) return false;
         hits++;
-        if (!reported && hits >= 6) {
-          reported = true;
+        const now = Date.now();
+        if (hits === 1) {
           try {
-            self.postMessage({ __oiLog: `pthread \u7EBF\u7A0B\u6C60\u8017\u5C3D\uFF08\u547D\u4E2D ${hits} \u6B21\uFF09\uFF1B\u5DF2\u521B\u5EFA\u5B50 worker \u6570\u89C1\u4E0A\u51E0\u6761` });
+            self.postMessage({ __oiWarnOnce: "clangd \u7EBF\u7A0B\u6C60\u6682\u65F6\u8017\u5C3D\uFF0C\u4EE3\u7801\u63D0\u793A/\u8BCA\u65AD\u53EF\u80FD\u8F83\u7F13\u6162" });
           } catch {
           }
+        }
+        if (now - lastBeat > 1e4) {
+          lastBeat = now;
           try {
-            self.postMessage({ __oiFatal: "pthread-exhausted" });
+            self.postMessage({ __oiProgress: 1 });
           } catch {
           }
         }

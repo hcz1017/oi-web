@@ -203,6 +203,7 @@ class Writer {
 
 let client = null;
 let current = null;
+const warnedOnce = new Set();   // 同一类警告只弹一次（例如线程池耗尽）
 // ⚠️ clangd 每个实例都会加载 121MB wasm + 预建 8 个 pthread worker（各自 instantiating），
 //    所以**必须**保证全局只有一个实例：反复开关文件夹/反复启动会叠加到 5G+ 内存，
 //    且线程池耗尽后再也起不来。stopClangd() 里 terminate + dispose 缺一不可。
@@ -260,15 +261,9 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
       console.error("[oi clangd] 失败:", d.__oiError);
       vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
     }
-    if (d.__oiFatal) {
-      // 线程池耗尽：clangd 主线程已在 asyncify 里空转，继续留着只会烧 CPU / 卡编辑器
-      console.error("[oi clangd] 致命：pthread 线程池耗尽，自动停用本次会话");
-      fatal = true;
-      vscode.window.showWarningMessage(
-        "clangd(WASM) 在这个环境下线程池不足，已自动停用（补全/诊断暂时不可用；真编译与调试不受影响）。" +
-        "可运行「OI C++: 重启 clangd(WASM)」再试，或在设置里关闭 oiCpp.lsp。",
-      );
-      setTimeout(() => { stopClangd().catch(() => {}); }, 0);
+    if (d.__oiWarnOnce && !warnedOnce.has(d.__oiWarnOnce)) {
+      warnedOnce.add(d.__oiWarnOnce);
+      vscode.window.showWarningMessage(String(d.__oiWarnOnce));   // 每类只弹一次
     }
   });
   worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose } });
