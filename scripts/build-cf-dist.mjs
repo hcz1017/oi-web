@@ -102,6 +102,20 @@ for (const item of ["package.json", "package.nls.json", "LICENSE", "README.md", 
     pkg.browser = `./dist/web/extension.${h}.js`;
     writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
     console.log(`    主 bundle: extension.${h}.js（package.json 已同步）`);
+
+    // worker 脚本同样按内容哈希重命名，并把 bundle 里的文件名常量一起改写：
+    // 否则浏览器缓存 4h 的旧 worker（如 clangdWorker.js）会让"新逻辑'根本没跑。
+    let bundleText = readFileSync(hashed, "utf8");
+    for (const name of ["clangdWorker.js", "compileWorker.js", "runWorker.js", "debugWorker.js", "dwarfWorker.js"]) {
+      const src = path.join(webDir, name);
+      if (!existsSync(src)) continue;
+      const wh = createHash("sha1").update(readFileSync(src)).digest("hex").slice(0, 10);
+      const target = `${name.replace(/\.js$/, "")}.${wh}.js`;
+      renameSync(src, path.join(webDir, target));
+      bundleText = bundleText.split(`"${name}"`).join(`"${target}"`).split(`'${name}'`).join(`'${target}'`);
+      console.log(`    worker: ${target}`);
+    }
+    writeFileSync(hashed, bundleText);
   }
 }
 
