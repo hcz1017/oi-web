@@ -67,6 +67,14 @@ if (existsSync(nmSrc)) {
     writeFileSync(pickFile, pickText);
     console.log("    pickFolder 错误透传 ✓");
   }
+
+  // 让 vscode-web 自带的「打开文件夹」按钮/菜单可用：把硬编码 throw 换成
+  // 调用扩展注册的 globalThis.__oiOpenFolder（File System Access API 流程）
+  try {
+    execFileSync("node", [path.join(ROOT, "scripts/patch-open-folder.mjs"), pickFile], { stdio: "inherit" });
+  } catch (e) {
+    console.warn("⚠ 自带打开文件夹补丁失败：" + (e && e.message));
+  }
 }
 
 // ---------- 2) 扩展（只带运行所需） ----------

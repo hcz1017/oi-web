@@ -35,8 +35,12 @@ if [ -n "$WEB_DIR" ] && [ ! -f "$WEB_DIR/out/nls.messages.zh-cn.js" ]; then
   node "$ROOT/scripts/build-zh-nls.mjs" >/dev/null || exit 1
 fi
 
-echo "== [4/4] 注入中文自愈脚本 =="
+echo "== [4/4] 注入中文自愈脚本 + 打开文件夹补丁 =="
 node "$ROOT/scripts/patch-test-web.mjs" >/dev/null 2>&1 || true
+if [ -n "$WEB_DIR" ]; then
+  node "$ROOT/scripts/patch-open-folder.mjs" \
+    "$WEB_DIR/out/vs/workbench/workbench.web.main.internal.js" >/dev/null 2>&1 || true
+fi
 
 echo
 echo "扩展:     $EXT"

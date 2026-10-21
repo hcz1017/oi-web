@@ -235,6 +235,21 @@ export function registerLocalFolder(context) {
     return handle;
   };
 
+  // 让 vscode-web 自带的「打开文件夹」按钮/菜单直接复用**原生可用的**「添加文件夹到工作区」：
+  // 本构建里 pickFolderAndOpen 对 file 协议是硬编码 throw，而 addRootFolder 走的是另一条
+  // 路径（FileDialogService.pickFolder → showDirectoryPicker），实际能用。
+  // 构建产物里的补丁会调用这个全局钩子（见 scripts/patch-open-folder.mjs）。
+  const openFolder = async () => {
+    try {
+      await vscode.commands.executeCommand("workbench.action.addRootFolder");
+      return;
+    } catch (e) {
+      console.warn("[oi] 原生添加文件夹失败，回退到自己选目录:", e && (e.message || e));
+    }
+    await pickAndMount();
+  };
+  globalThis.__oiOpenFolder = openFolder;
+
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(SCHEME, provider, {
       isCaseSensitive: true,
@@ -243,7 +258,7 @@ export function registerLocalFolder(context) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("oiCpp.openFolder", pickAndMount),
+    vscode.commands.registerCommand("oiCpp.openFolder", openFolder),
   );
 
   context.subscriptions.push(
