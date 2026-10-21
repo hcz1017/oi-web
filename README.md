@@ -45,15 +45,6 @@ npm run test:all       # 扩展的自动化测试
 ```
 
 
-## 踩坑记录
-
-改代码前请先读：
-
-- [extension/docs/CLANGD-WASM-PITFALLS.md](extension/docs/CLANGD-WASM-PITFALLS.md)
-  —— clangd(WASM) 的 pthread/ESM/线程池/缓存等 8 个大坑
-- 调试插桩的两个致命坑（局部变量表要含参数、插桩点必须栈空）写在
-  `extension/src/core/wasm-bin.mjs` 顶部注释里
-
 ## 仓库结构
 
 ```
