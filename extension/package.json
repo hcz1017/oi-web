@@ -19,6 +19,7 @@
     "onStartupFinished",
     "onCommand:oiCpp.runInTerminal",
     "onCommand:oiCpp.debug",
+    "onCommand:oiCpp.openFolder",
     "onDebugResolve:oi-cpp-wasm"
   ],
   "capabilities": {
@@ -51,6 +52,15 @@
         "command": "oiCpp.toggleBreakpoint",
         "title": "OI C++: 切换断点（当前行）",
         "icon": "$(circle-filled)"
+      },
+      {
+        "command": "oiCpp.openFolder",
+        "title": "OI C++: 打开本地文件夹（浏览器）",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "oiCpp.refreshFolder",
+        "title": "OI C++: 刷新本地文件夹"
       }
     ],
     "menus": {
@@ -78,6 +88,10 @@
         {
           "command": "oiCpp.toggleBreakpoint",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "oiCpp.openFolder",
+          "when": "true"
         }
       ],
       "editor/context": [

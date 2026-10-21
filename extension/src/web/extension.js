@@ -12,6 +12,7 @@
 import * as vscode from "vscode";
 import { startClangd, stopClangd } from "./lsp.js";
 import { registerHeaderFs } from "./headerfs.js";
+import { registerLocalFolder } from "./fsa-folder.js";
 import { DwarfEngine } from "./dwarf.js";
 import { WasmDebugAdapter } from "./debugAdapter.js";
 import { createLineEditor } from "./lineedit.mjs";
@@ -789,6 +790,10 @@ export async function activate(c) {
     // 只读虚拟 FS：让 clangd 虚拟路径（bits/stdc++.h 等）可点击/可跳转
     try { c.subscriptions.push(registerHeaderFs(assetsBase)); }
     catch (e) { console.warn("[oi-cpp-wasm] 注册头文件虚拟 FS 失败:", e && e.message); }
+
+    // 浏览器本地文件夹（File System Access API）：vscode-web 自带的"打开文件夹"在空窗口下是坏的
+    try { registerLocalFolder(c); }
+    catch (e) { console.warn("[oi-cpp-wasm] 注册本地文件夹失败:", e && e.message); }
 
     const maybeLsp = () => {
       const doc = vscode.window.activeTextEditor?.document;

@@ -24,6 +24,17 @@ npm run pack         # 生成 dist-cf/ 与 oi-web-cf.zip
 - 到 CF Pages → Create → Pages → Upload assets，上传 zip 即可
 - 详见产物里的 `README-deploy.md`
 
+
+### 打开本地文件夹（浏览器文件系统）
+
+vscode-web 自带的「打开文件夹」在空窗口下是坏的（`FileDialogService.pickFolderAndOpen` 直接抛错），
+本扩展用 File System Access API 自己实现了：
+
+- 命令面板运行 **`OI C++: 打开本地文件夹（浏览器）`** → 选一个磁盘目录
+- 该目录以 `oi-fs:` 协议挂进工作区 → 左侧文件树、编译、clangd、调试全部读写真实文件
+- 目录句柄存 IndexedDB，刷新后仍在（Chrome 保留授权；未授权会提示重新选择）
+- 需要 Chrome/Edge 桌面版 + https 或 localhost
+
 ### 其它脚本
 
 ```bash
