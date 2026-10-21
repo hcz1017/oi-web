@@ -202,10 +202,15 @@ class Writer {
 }
 
 let client = null;
-let current = null;   // { worker, proxy, reader, writer }
+let current = null;
+let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自动启动 clangd
+// current = { worker, proxy, lc }
+
+export function resetClangdFatal() { fatal = false; }
 
 export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++20", opt = 2, debug = true, base: baseOverride = "", verbose = false } = {}) {
   if (client) return client;
+  if (fatal) throw new Error("clangd 已被停用（pthread 线程池不足）。重启扩展或运行「OI C++: 重启 clangd(WASM)」可再试");
   // 资产 base 支持外置（oiCpp.assetsBaseUrl）：传进来就用，否则用扩展自带 assets/
   const base = (baseOverride || vscode.Uri.joinPath(ctx.extensionUri, "assets").toString()).replace(/\/+$/, "");
   const workerUrl = vscode.Uri.joinPath(ctx.extensionUri, "dist", "web", "clangdWorker.js").toString();
@@ -229,6 +234,16 @@ export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++
     if (d.__oiError) {
       console.error("[oi clangd] 失败:", d.__oiError);
       vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
+    }
+    if (d.__oiFatal) {
+      // 线程池耗尽：clangd 主线程已在 asyncify 里空转，继续留着只会烧 CPU / 卡编辑器
+      console.error("[oi clangd] 致命：pthread 线程池耗尽，自动停用本次会话");
+      fatal = true;
+      vscode.window.showWarningMessage(
+        "clangd(WASM) 在这个环境下线程池不足，已自动停用（补全/诊断暂时不可用；真编译与调试不受影响）。" +
+        "可运行「OI C++: 重启 clangd(WASM)」再试，或在设置里关闭 oiCpp.lsp。",
+      );
+      setTimeout(() => { stopClangd().catch(() => {}); }, 0);
     }
   });
   worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose } });

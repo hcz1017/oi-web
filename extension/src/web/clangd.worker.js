@@ -161,10 +161,9 @@ async function loadClassicGlue(glueUrl) {
     .replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)")
     // pthread worker 用经典方式创建
     .replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"')
-    // 线程池预建 worker 数量：默认 8，每个都要加载 121MB wasm（内存杀手）。
-    // 改成 0 = 完全按需创建（emscripten 在池空时会当场 new Worker）。
-    .replace(/var pthreadPoolSize\s*=\s*\d+/, "var pthreadPoolSize=0")
-    .replace(/let pthreadPoolSize\s*=\s*\d+/, "let pthreadPoolSize=0")
+    // ⚠️ 不要把 pthreadPoolSize 改成 0：预创建的 worker 必须在 callMain 之前就 ready，
+    //    否则"按需创建"需要主线程处理消息，而主线程正卡在 asyncify 睡眠/checkMailbox 里 → 死锁。
+    //    默认 8 个保留；内存由"只允许一个 clangd 实例 + 关闭即释放"控制。
     // ESM 导出 → 挂到全局
     .replace(/export default Module;?/g, "self.Module=Module;");
   src = "self.__oiGlueUrl=self.__oiGlueUrl||self.location.href;\n" + src;
@@ -296,6 +295,28 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
 if (!isPthreadWorker) {
   self.addEventListener("error", (e) => reportError(e.message || e));
   self.addEventListener("unhandledrejection", (e) => reportError(e.reason));
+
+  // ⚠️ emscripten 线程池耗尽会**每几毫秒**打印一次警告，主线程在 asyncify 里空转，
+  //    表现为"控制台刷屏 + CPU 拉满 + clangd 永久卡住"。
+  //    这里拦截该警告：去重 + 累计到阈值后直接上报致命错误，让扩展停掉 clangd。
+  (function guardThreadPoolFlood() {
+    const origWarn = console.warn.bind(console);
+    const origErr = console.error.bind(console);
+    let hits = 0, reported = false;
+    const check = (args) => {
+      const s = String(args && args[0] || "");
+      if (!s.includes("thread pool is exhausted")) return false;
+      hits++;
+      if (!reported && hits >= 6) {
+        reported = true;
+        try { self.postMessage({ __oiFatal: "pthread-exhausted" }); } catch {}
+      }
+      return true;   // 吞掉后续刷屏
+    };
+    console.warn = (...a) => { if (check(a)) return; origWarn(...a); };
+    console.error = (...a) => { if (check(a)) return; origErr(...a); };
+  })();
+
   let cfg = null;
 
   const notifyError = (msg) => {

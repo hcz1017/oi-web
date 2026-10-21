@@ -10,7 +10,7 @@
 //   3) stdin 走 SharedArrayBuffer 单槽 + 宿主队列 + consumed 握手（主线程不能 Atomics.wait）。
 //   4) 终端必须自己做行编辑与 \r\n 规范化（VS Code 的 Pseudoterminal 不做这些）。
 import * as vscode from "vscode";
-import { startClangd, stopClangd } from "./lsp.js";
+import { startClangd, stopClangd, resetClangdFatal } from "./lsp.js";
 import { registerHeaderFs } from "./headerfs.js";
 import { registerLocalFolder } from "./fsa-folder.js";
 import { DwarfEngine } from "./dwarf.js";
@@ -808,7 +808,8 @@ export async function activate(c) {
     // 即使某个 Web 构建忽略贡献点，行号左侧也一定能点出断点。
     ensureBreakpointsEnabled();
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.restartLsp", async () => {
-      stopClangd();
+      resetClangdFatal();          // 手动重启时清掉"已停用"标记
+      await stopClangd().catch(() => {});
       lspPromise = null;
       await ensureLsp();
     }));

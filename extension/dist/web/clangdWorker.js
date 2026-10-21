@@ -169,7 +169,7 @@
     if (!r.ok) throw new Error(`\u53D6\u4E0D\u5230 clangd.js: HTTP ${r.status}`);
     const text = await r.text();
     stage(`glue \u6587\u672C ${text.length}B`);
-    let src = text.replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)").replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"').replace(/var pthreadPoolSize\s*=\s*\d+/, "var pthreadPoolSize=0").replace(/let pthreadPoolSize\s*=\s*\d+/, "let pthreadPoolSize=0").replace(/export default Module;?/g, "self.Module=Module;");
+    let src = text.replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)").replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"').replace(/export default Module;?/g, "self.Module=Module;");
     src = "self.__oiGlueUrl=self.__oiGlueUrl||self.location.href;\n" + src;
     const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
     self.__oiGlueUrl = url;
@@ -279,6 +279,32 @@
   if (!isPthreadWorker) {
     self.addEventListener("error", (e) => reportError(e.message || e));
     self.addEventListener("unhandledrejection", (e) => reportError(e.reason));
+    (function guardThreadPoolFlood() {
+      const origWarn = console.warn.bind(console);
+      const origErr = console.error.bind(console);
+      let hits = 0, reported = false;
+      const check = (args) => {
+        const s = String(args && args[0] || "");
+        if (!s.includes("thread pool is exhausted")) return false;
+        hits++;
+        if (!reported && hits >= 6) {
+          reported = true;
+          try {
+            self.postMessage({ __oiFatal: "pthread-exhausted" });
+          } catch {
+          }
+        }
+        return true;
+      };
+      console.warn = (...a) => {
+        if (check(a)) return;
+        origWarn(...a);
+      };
+      console.error = (...a) => {
+        if (check(a)) return;
+        origErr(...a);
+      };
+    })();
     let cfg = null;
     const notifyError = (msg) => {
       try {
