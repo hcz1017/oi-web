@@ -190,41 +190,17 @@ class Writer {
     this.onError = makeEvent();
     this.onClose = makeEvent();
   }
-  // ⚠️ 关键优化：**didChange 合并 + 去抖**。
-  //    之前每敲一个字符就发一条 didChange，clangd 每次都重建 preamble 并新开线程；
-  //    实测随手敲一个 `#include <iostream>` 就创建了 68 个 pthread worker、
-  //    内存暴涨、还以为是线程池 bug。重开文件时只有一次 didOpen，所以"重开就正常"。
-  //    这里把 didChange 合并成"最后一次全量文本"，最多每 300ms 发一次；
-  //    发送其它任何消息前先把待发的 didChange 冲出去，保证顺序不乱。
+  // ⚠️ vscode-jsonrpc 的 MessageWriter 契约：write() 必须返回 Promise。
+  //    注意：曾经在这里对 textDocument/didChange 做"合并去抖"，但实测根因不是它
+  //    （重开文件后高速打字完全正常），去抖反而增加了补全/诊断的延迟 → 已改回直发。
   write(msg) {
-    try {
-      const method = msg && msg.method;
-      if (method === "textDocument/didChange") {
-        this.opts.didChangeCount = (this.opts.didChangeCount || 0) + 1;
-        if (this.opts.didChangeCount % 25 === 0) {
-          try { this.proxy.postMessage({ __oiStat: { didChange: this.opts.didChangeCount } }); } catch {}
-        }
-        this._pendingChange = msg;              // 只保留最新一条（全量同步，丢掉中间的没影响）
-        if (!this._flushTimer) {
-          this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushChange(); }, 300);
-        }
-        return Promise.resolve();
-      }
-      this._flushChange();                      // 其它消息前先冲掉待发变更
-      this.proxy.postMessage(msg);
-    } catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
+    try { this.proxy.postMessage(msg); }
+    catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
 
     return Promise.resolve();
   }
-  _flushChange() {
-    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
-    const m = this._pendingChange;
-    if (!m) return;
-    this._pendingChange = null;
-    try { this.proxy.postMessage(m); } catch (e) { try { this.onError.fire([e, m, 1]); } catch {} }
-  }
-  end() { this._flushChange(); }
-  dispose() { this._flushChange(); }
+  end() {}
+  dispose() {}
 }
 
 let client = null;
@@ -287,7 +263,6 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
       console.error("[oi clangd] 失败:", d.__oiError);
       vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
     }
-    if (d.__oiStat) out("[stat] " + JSON.stringify(d.__oiStat));
     if (d.__oiWarnOnce && !warnedOnce.has(d.__oiWarnOnce)) {
       warnedOnce.add(d.__oiWarnOnce);
       vscode.window.showWarningMessage(String(d.__oiWarnOnce));   // 每类只弹一次
