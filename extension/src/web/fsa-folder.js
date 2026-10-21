@@ -235,32 +235,38 @@ export function registerLocalFolder(context) {
     return handle;
   };
 
-  // vscode-web 自带的「打开文件夹」按钮/菜单会通过构建产物里的补丁调用这个钩子
-  // （见 scripts/patch-open-folder.mjs）。策略：
-  //   1) 先转调原生的「添加文件夹到工作区」（它就是能用的那条路径）
-  //   2) 它失败/未生效 → 用 File System Access API 自己选目录并挂到 oi-fs:
+  // 「打开文件夹」：扩展宿主在 Web Worker 里，没有 window.showDirectoryPicker，
+  // 所以真正的目录选择必须由**页面侧**完成（构建产物补丁 scripts/patch-open-folder.mjs
+  // 已把 FileDialogService 的 throw 换成页面侧 FSA 实现）。
+  // 这里只是把命令转发给那个已被修好的入口。
   const openFolder = async () => {
+    try {
+      await vscode.commands.executeCommand("workbench.action.files.openFolder");
+      return;
+    } catch (e) {
+      console.warn("[oi] 打开文件夹失败:", e && (e.message || e));
+    }
+    // 兜底：本扩展自己的 oi-fs 挂载（页面侧方案不可用时）
     const before = (vscode.workspace.workspaceFolders || []).length;
     try {
       await vscode.commands.executeCommand("workbench.action.addRootFolder");
-      const after = (vscode.workspace.workspaceFolders || []).length;
-      if (after > before) return;                       // 原生流程成功
+      if ((vscode.workspace.workspaceFolders || []).length > before) return;
     } catch (e) {
-      console.warn("[oi] 原生添加文件夹失败:", e && (e.message || e));
+      console.warn("[oi] 原生添加文件夹也失败:", e && (e.message || e));
     }
     await pickAndMount();
   };
-  globalThis.__oiOpenFolder = openFolder;
+
+  // 命令先注册，保证命令面板里始终可用（provider 注册失败也不影响）
+  context.subscriptions.push(
+    vscode.commands.registerCommand("oiCpp.openFolder", openFolder),
+  );
 
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(SCHEME, provider, {
       isCaseSensitive: true,
       isReadonly: false,
     }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("oiCpp.openFolder", openFolder),
   );
 
   context.subscriptions.push(

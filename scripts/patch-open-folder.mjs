@@ -1,61 +1,77 @@
-// 让 vscode-web 自带的「打开文件夹」按钮/菜单真正可用
+// 让 vscode-web 自带的「打开文件夹」真正可用（在页面里用 File System Access API）
 //
-// 这份 vscode-web 构建里，凡是"打开文件夹"相关的文件对话框入口在 file 协议下都是
-// 硬编码 throw 的：
-//   FileDialogService.pickFileFolderAndOpen   ← 「打开文件/文件夹」实际走这里
-//   FileDialogService.pickFolderAndOpen       ← 「打开文件夹」
-// 我们把这些 throw 换成调用扩展注册的全局钩子 globalThis.__oiOpenFolder
-// （由 src/web/fsa-folder.js 在激活时挂上：优先转调原生的「添加文件夹到工作区」，
-//   失败则用 File System Access API 自己选目录并挂载）。
+// 背景：这份构建里 FileDialogService 的
+//   pickFileFolderAndOpen / pickFolderAndOpen
+// 在 file 协议下是硬编码 throw 的；而扩展宿主跑在 **Web Worker** 里，
+// 那里没有 window.showDirectoryPicker，所以只能把实现写在**页面侧**（本补丁）。
 //
-// 用法：node scripts/patch-open-folder.mjs <workbench.web.main.internal.js>
-//       node scripts/patch-open-folder.mjs --restore <file>   # 从 .oi-bak 还原
+// 做法：把 throw 换成
+//   1) window.showDirectoryPicker() 选目录（页面上下文，用户手势有效）
+//   2) this.fileSystemProvider.registerDirectoryHandle(handle) 注册成内置 html 文件系统
+//   3) this.commandService.executeCommand("vscode.openFolder", uri) 作为文件夹打开
+//
+// 用法：node scripts/patch-open-folder.mjs <bundle.js>
+//       node scripts/patch-open-folder.mjs --restore <bundle.js>
 import { readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 
-const MARK = "__oiOpenFolder";
-// 目标：这两函数体里的 throw new Error(d(<nls>,null))（该 nls 只被它们使用）
-const THROW_RE = /throw new Error\(d\((\d+),null\)\)/g;
+const MARK = "__oiPickFolder";
+const NLS_FOLDER = "24557";        // "Can't open folders, try adding a folder to the workspace instead."
 
 const args = process.argv.slice(2);
 const restore = args.includes("--restore");
 const file = args.find((a) => !a.startsWith("--"));
 if (!file) {
-  console.error("用法: node scripts/patch-open-folder.mjs <workbench.web.main.internal.js>");
+  console.error("用法: node scripts/patch-open-folder.mjs <bundle.js>");
   process.exit(2);
 }
 const bak = file + ".oi-bak";
-if (!existsSync(file)) {
-  console.error("找不到文件: " + file);
-  process.exit(2);
-}
-
+if (!existsSync(file)) { console.error("找不到文件: " + file); process.exit(2); }
 if (restore) {
-  if (!existsSync(bak)) { console.error("没有备份可还原: " + bak); process.exit(2); }
+  if (!existsSync(bak)) { console.error("没有备份: " + bak); process.exit(2); }
   copyFileSync(bak, file);
   console.log("✓ 已还原 " + file);
   process.exit(0);
 }
 
-const src = readFileSync(file, "utf8");
-const already = (src.match(new RegExp(MARK, "g")) || []).length;
-// 只替换"打开文件夹"两处的 nls（24557）；其它 nls 索引不动
-const HOOK = (nls) =>
-  `if(typeof globalThis.${MARK}==="function"){try{await globalThis.${MARK}();return}catch(e){console.error("[oi openFolder]",e)}}` +
-  `throw new Error(d(${nls},null))`;
+let src = readFileSync(file, "utf8");
+if (src.includes(MARK)) { console.log("✓ 已打过补丁"); process.exit(0); }
 
+// 目标：这两处 throw（同一句报错文案，仅"打开文件夹"相关入口使用）
+const TARGET = 'throw new Error(d(24557,null))';
+
+// oi: 页面侧 FSA 实现（挂在 globalThis，避免严格模式隐式全局）
+const IMPL =
+  `if(typeof globalThis.${MARK}!=="function"){globalThis.${MARK}=async function(svc){` +
+  `const w=typeof window!=="undefined"?window:null;` +
+  `if(!w||typeof w.showDirectoryPicker!=="function")throw new Error("当前浏览器不支持 File System Access API（需 Chrome/Edge + https）");` +
+  `const h=await w.showDirectoryPicker({mode:"readwrite"});` +
+  `const uri=await svc.fileSystemProvider.registerDirectoryHandle(h);` +
+  `if(!uri)throw new Error("注册目录句柄失败");` +
+  `await svc.commandService.executeCommand("vscode.openFolder",uri,{forceReuseWindow:false});` +
+  `return true}}` +
+  `try{await globalThis.${MARK}(this);return}catch(e){console.error("[oi openFolder]",e&&(e.name||""),e&&(e.message||e))}`;
+
+let out = "";
 let count = 0;
-let patched = src.replace(THROW_RE, (all, nls) => {
-  if (all.includes(MARK)) return all;                 // 已打过
-  if (nls !== "24557") return all;                    // 只处理"打不开文件夹"这条
-  count++;
-  return HOOK(nls);
-});
+let idx = 0;
+while (true) {
+  const at = src.indexOf(TARGET, idx);
+  if (at < 0) { out += src.slice(idx); break; }
+  const before = src.slice(Math.max(0, at - 400), at);
+  out += src.slice(idx, at);
+  if (before.includes(MARK)) {
+    out += TARGET;                        // 已经打过，保持原样
+  } else {
+    out += IMPL + ";" + TARGET;
+    count++;
+  }
+  idx = at + TARGET.length;
+}
 
-if (count === 0) {
-  if (already > 0) { console.log(`✓ 已打过补丁（${already} 处钩子）`); process.exit(0); }
-  console.error("✗ 找不到 24557 的 throw 片段（vscode-web 版本变了？）");
+if (count === 0 && !src.includes(MARK)) {
+  console.error("✗ 找不到目标 throw（vscode-web 版本变了？）");
   process.exit(1);
 }
 if (!existsSync(bak)) copyFileSync(file, bak);
-writeFileSync(file, patched);
-console.log(`✓ 已给 ${count} 处「打开文件夹」入口接上扩展钩子（含 pickFileFolderAndOpen / pickFolderAndOpen）`);
+writeFileSync(file, out);
+console.log(`✓ 已给 ${count} 处「打开文件夹」入口接上页面侧 FSA 实现${count === 0 ? "（此前已打过）" : ""}`);
