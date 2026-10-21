@@ -24,3 +24,4 @@ Thumbs.db
 dist-cf/
 oi-web-cf.zip
 .wrangler/
+.ref/

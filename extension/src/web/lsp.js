@@ -219,7 +219,9 @@ export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++
   // 这个 worker 是【经典 worker】（IIFE）：扩展宿主 iframe 里 module worker 加载不可靠
   let worker;
   try {
-    worker = new Worker(workerUrl);
+    // module worker：clangd glue 是 ESM，worker 里要能用动态 import()，
+    // 且 emscripten 的 pthread 子 worker 也是 type:"module"
+    worker = new Worker(workerUrl, { type: "module" });
   } catch (e) {
     // 跨源部署时的兜底：fetch 源码再 blob 化
     const resp = await fetch(workerUrl);

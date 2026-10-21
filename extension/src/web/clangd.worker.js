@@ -155,29 +155,29 @@ function drainPending() {
 //   · 所以必须【动态 import】glue 的原始 URL，让 glue 拿到自己的地址去建线程池
 //   · 经典 worker 里允许动态 import()（Chrome 63+/FF 108+）
 /** 把 ESM 版 clangd glue 转成经典脚本（只做字符串级替换，已在 Node 里验证语法合法） */
-async function loadClassicGlue(glueUrl) {
-  const r = await fetch(glueUrl);
-  if (!r.ok) throw new Error(`取不到 clangd.js: HTTP ${r.status}`);
-  const text = await r.text();
-  stage(`glue 文本 ${text.length}B`);
-  let src = text
-    // import.meta.url → 由我们注入的全局变量（主 worker 与 pthread worker 都成立）
-    .replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)")
-    // pthread worker 用经典方式创建
-    .replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"')
-    // ⚠️ 不要把 pthreadPoolSize 改成 0：预创建的 worker 必须在 callMain 之前就 ready，
-    //    否则"按需创建"需要主线程处理消息，而主线程正卡在 asyncify 睡眠/checkMailbox 里 → 死锁。
-    //    默认 8 个保留；内存由"只允许一个 clangd 实例 + 关闭即释放"控制。
-    // ESM 导出 → 挂到全局
-    .replace(/export default Module;?/g, "self.Module=Module;");
-  src = "self.__oiGlueUrl=self.__oiGlueUrl||self.location.href;\n" + src;
-  const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
-  self.__oiGlueUrl = url;          // 先设好，glue 内部 new URL(...) 才有正确 base
-  stage("importScripts(blob) 调用");
-  importScripts(url);
-  stage("importScripts 返回, self.Module=" + typeof self.Module);
-  if (typeof self.Module !== "function") throw new Error("glue 转经典脚本后没有暴露 Module");
-  return { Module: self.Module, scriptUrl: url };
+/**
+ * 加载 emscripten glue（ESM）并返回 Module 工厂。
+ *
+ * 参考实现（yqloss.cpp-studio-web）的做法：**动态 import() 原始 ESM glue**，
+ * 不做任何"转经典脚本"的改造，并保留 emscripten 自己创建 pthread worker 时的
+ * `{type:"module"}`。我们之前把 glue 转成经典脚本 + importScripts，同时删掉了
+ * 子 worker 的 type:"module"，导致子 worker 变成经典 worker 去 importScripts
+ * 一个 ESM 文件 —— 直接失败，主线程永远等（刷屏 + 卡死）。
+ */
+async function loadGlueModule(glueUrl) {
+  stage("动态 import() glue（ESM）");
+  let mod;
+  try {
+    mod = await import(glueUrl);
+  } catch (e) {
+    stage("直接 import 失败，改用 blob: " + ((e && e.message) || e));
+    const text = await (await fetch(glueUrl)).text();
+    const url = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+    mod = await import(url);
+  }
+  const factory = mod && (mod.default || mod.Module);
+  if (typeof factory !== "function") throw new Error("glue 没有导出 Module 工厂");
+  return { Module: factory, scriptUrl: glueUrl };
 }
 
 async function start({ base, files, flags, opt = 2, debug = true }) {
@@ -235,8 +235,8 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
   };
 
   stage("准备加载 glue");
-  const { Module, scriptUrl } = await loadClassicGlue(`${b}/clangd/clangd.js`);
-  stage("glue 已转经典脚本并 importScripts 完成");
+  const { Module, scriptUrl } = await loadGlueModule(`${b}/clangd/clangd.js`);
+  stage("glue 已通过 import() 加载完成");
   // ⚠️ pthread 子 worker 需要**自己加载** wasm：我们只发布了 clangd.wasm.gz，
   //    解压后的 wasm 从来没有对应的 URL，于是子 worker 请求 `clangd.wasm` 得到 404，
   //    clangd 就永远等着（表现为"一敲 #include 就卡死"+ 刷屏 thread pool exhausted）。
@@ -247,7 +247,7 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
   M = await Module({
     thisProgram: "/usr/bin/clangd",
     wasmBinary: wasm,
-    mainScriptUrlOrBlob: scriptUrl,        // pthread 线程池加载同一个经典脚本 blob
+    mainScriptUrlOrBlob: scriptUrl,        // pthread 子 worker 用同一个 ESM glue（type:"module"）
     locateFile: (f) => (/\.wasm$/.test(f) ? wasmBlobUrl : `${b}/clangd/${f}`),
     stdinReady,
     stdin: stdinByte,
@@ -300,7 +300,7 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
     "--clang-tidy=false",
     "--completion-parse=always",
     "--pch-storage=memory",
-    "-j=1",
+    "-j=2",
     "--log=error",
   ]);
   stage("callMain 返回（clangd 已在运行）");
