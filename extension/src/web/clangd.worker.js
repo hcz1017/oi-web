@@ -18,9 +18,11 @@ const enc = new TextEncoder();
 
 // 阶段日志 / 错误直传：LSP 握手前 window/showMessage 会被客户端丢掉，
 // 所以调试信息单独用 {__oiLog}/{__oiError} 直接发给扩展侧。
+// ⚠️ 日志不要往浏览器控制台刷：devtools 会保留所有 console 参数，
+//    以前每次启动 + clangd stderr 全量转发，实测把 devtools 撑到 6GB。
+//    这里只 postMessage 给扩展（写进「OI C++」输出面板），控制台仅错误才打。
 const stage = (msg) => {
-  console.log("[oi clangd] stage:", msg);
-  try { self.postMessage({ __oiLog: msg }); } catch {}
+  try { self.postMessage({ __oiLog: msg, __oiProgress: 1 }); } catch {}
 };
 const reportError = (e) => {
   const text = (e && (e.stack || e.message)) || String(e);
@@ -125,6 +127,8 @@ function onStdout(b) {
 
 // stderr 打出来（排查阶段非常有用，clangd 的错误都在这里）
 let errBytes = [];
+const stderrSeen = new Set();   // 去重（避免同一行刷屏）
+let stderrDup = 0;
 function onStderr(b) {
   if (typeof b === "number") errBytes.push(b & 0xff);
   else for (const x of b) errBytes.push(x & 0xff);
@@ -134,8 +138,10 @@ function onStderr(b) {
     const line = ascii(errBytes.slice(0, nl + 1)).trimEnd();
     errBytes = errBytes.slice(nl + 1);
     if (line) {
-      console.warn("[oi clangd stderr]", line);
-      // 同时回传给扩展宿主 → 写入"OI C++"输出面板（浏览器控制台不好翻）
+      // 去重 + 限流：clangd 会重复刷同样的诊断行，全量转发会让 devtools 爆炸
+      if (stderrSeen.has(line)) { stderrDup++; return; }
+      stderrSeen.add(line);
+      if (stderrSeen.size > 500) stderrSeen.clear();      // 防止无限增长
       try { self.postMessage({ __oiStderr: line }); } catch {}
     }
   }
@@ -229,7 +235,7 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
   // 失败时 glue 只会"永远等待"，不打任何错。这里包一层把真实原因暴露出来。
   const OrigWorker = self.Worker;
   const oiWorkerLog = (msg) => {
-    console.warn("[oi clangd pthread]", msg);
+    // 只回传扩展（输出面板），不刷控制台
     try { self.postMessage({ __oiLog: "pthread " + msg }); } catch {}
   };
   let oiWorkerSeq = 0;          // 本模块创建了多少个 pthread 子 worker（诊断用）

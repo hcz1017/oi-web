@@ -47,7 +47,7 @@ function logLine(line) {
   logRing.push(text);
   if (logRing.length > 2000) logRing.splice(0, logRing.length - 2000);
   try { logChannel?.appendLine(text); } catch {}
-  console.log("[oi]", text);
+  // 不再 console.log：devtools 会保留所有参数，长跑会把内存吃光
 }
 
 /** 当前打开的 C/C++ 文档数（clangd 只在这些文件存在时活着） */

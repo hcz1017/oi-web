@@ -45,9 +45,8 @@
   // src/web/clangd.worker.js
   var enc = new TextEncoder();
   var stage = (msg) => {
-    console.log("[oi clangd] stage:", msg);
     try {
-      self.postMessage({ __oiLog: msg });
+      self.postMessage({ __oiLog: msg, __oiProgress: 1 });
     } catch {
     }
   };
@@ -146,6 +145,8 @@
     }
   }
   var errBytes = [];
+  var stderrSeen = /* @__PURE__ */ new Set();
+  var stderrDup = 0;
   function onStderr(b) {
     if (typeof b === "number") errBytes.push(b & 255);
     else for (const x of b) errBytes.push(x & 255);
@@ -155,7 +156,12 @@
       const line = ascii(errBytes.slice(0, nl + 1)).trimEnd();
       errBytes = errBytes.slice(nl + 1);
       if (line) {
-        console.warn("[oi clangd stderr]", line);
+        if (stderrSeen.has(line)) {
+          stderrDup++;
+          return;
+        }
+        stderrSeen.add(line);
+        if (stderrSeen.size > 500) stderrSeen.clear();
         try {
           self.postMessage({ __oiStderr: line });
         } catch {
@@ -201,7 +207,6 @@
     stage("wasm \u89E3\u538B\u5B8C\u6210");
     const OrigWorker = self.Worker;
     const oiWorkerLog = (msg) => {
-      console.warn("[oi clangd pthread]", msg);
       try {
         self.postMessage({ __oiLog: "pthread " + msg });
       } catch {

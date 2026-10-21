@@ -253,8 +253,9 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   worker.addEventListener("message", (ev) => {
     const d = ev.data;
     if (!d || typeof d !== "object") return;
-    if (d.__oiLog) { console.warn("[oi clangd]", d.__oiLog); out("[stage] " + d.__oiLog); }
-    if (d.__oiStderr) out("[stderr] " + String(d.__oiStderr).slice(0, 800));
+    // 日志只进输出面板（不 console.warn，避免 devtools 保留巨量日志）
+    if (d.__oiLog) { out("[stage] " + d.__oiLog); if (d.__oiProgress) bumpInitDeadline(); }
+    if (d.__oiStderr) out("[stderr] " + String(d.__oiStderr).slice(0, 400));
     if (d.__oiError) {
       console.error("[oi clangd] 失败:", d.__oiError);
       vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
@@ -305,7 +306,19 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   );
   clientRef = lc;
   // 启动失败要让上层能感知（以前 worker 静默挂掉 → start() 永远不 resolve）
-  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("clangd initialize 超时（30s）")), 30000));
+  // ⚠️ 首次启动要下载 24MB clangd + 1.3k 头文件，原来 30s 固定超时会被误杀。
+  //    改成"**空闲**超时"：只要 worker 还在推进（stage 带 __oiProgress），就重置计时；
+  //    真正的死锁（没有任何进展）45s 后仍然会失败。
+  let initTimer = null, initReject = null;
+  const timeout = new Promise((_, rej) => {
+    initReject = rej;
+    initTimer = setTimeout(() => rej(new Error("clangd 初始化超时（45s 无进展）")), 45000);
+  });
+  const bumpInitDeadline = () => {
+    if (!initTimer) return;
+    clearTimeout(initTimer);
+    initTimer = setTimeout(() => initReject?.(new Error("clangd 初始化超时（45s 无进展）")), 45000);
+  };
   // worker 自身报错（例如 module worker 里 importScripts 不被支持）要**立刻**失败，
   // 不能等 30s 超时——否则降级重试要等半分钟以上，用户体感就是"起不动"。
   const workerFailed = new Promise((_, rej) => {
