@@ -149,6 +149,14 @@ writeFileSync(path.join(OUT, "_headers"), `/*
 
 /static/build/out/nls.messages.js
   Cache-Control: no-cache
+
+# 扩展本体必须每次校验：否则 CF 缓存旧 bundle，而 manifest 是新的，
+# 会出现"命令面板里有命令、点了却说 command not found"
+/static/devextensions/*
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
 `);
 
 writeFileSync(path.join(OUT, "README-deploy.md"), `# 部署到 Cloudflare Pages

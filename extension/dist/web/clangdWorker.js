@@ -242,6 +242,18 @@
     FS.mkdirTree("/workspace");
     FS.writeFile("/workspace/main.cpp", "");
     const mainFile = "/workspace/main.cpp";
+    FS.writeFile("/workspace/.clangd", new TextEncoder().encode([
+      "Diagnostics:",
+      "  UnusedIncludes: None",
+      "  MissingIncludes: None",
+      "Index:",
+      "  Background: Skip",
+      "InlayHints:",
+      "  Enabled: No",
+      "Tidy:",
+      "  Enabled: No",
+      ""
+    ].join("\n")));
     FS.writeFile(
       "/workspace/compile_commands.json",
       new TextEncoder().encode(JSON.stringify([

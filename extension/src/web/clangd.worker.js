@@ -245,6 +245,20 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
   // compile_commands 里只放 main.cpp 一条（原版就是这么做的，5s 启动）。
   FS.writeFile("/workspace/main.cpp", "");
   const mainFile = "/workspace/main.cpp";
+  // .clangd：关掉最拖性能的诊断。include-cleaner / missing-includes 会为每个 #include
+  // 反复解析头文件，wasm 版里表现为"一写 #include 就卡死"；顺带禁用后台索引与 inlay hints。
+  FS.writeFile("/workspace/.clangd", new TextEncoder().encode([
+    "Diagnostics:",
+    "  UnusedIncludes: None",
+    "  MissingIncludes: None",
+    "Index:",
+    "  Background: Skip",
+    "InlayHints:",
+    "  Enabled: No",
+    "Tidy:",
+    "  Enabled: No",
+    "",
+  ].join("\n")));
   FS.writeFile("/workspace/compile_commands.json",
     new TextEncoder().encode(JSON.stringify([
       { directory: "/workspace", file: mainFile, arguments: clangdArgs(flags, mainFile, { opt, debug }) },

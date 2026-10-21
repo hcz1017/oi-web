@@ -39,6 +39,30 @@ function setStatus(kind) {
 
 // ---------------------------------------------------------------- 语言服务
 let lspPromise = null;
+
+/** 当前打开的 C/C++ 文档数（clangd 只在这些文件存在时活着） */
+function openCppCount() {
+  return vscode.workspace.textDocuments.filter(
+    (d) => (d.languageId === "cpp" || d.languageId === "c") && !d.isClosed,
+  ).length;
+}
+
+/** 没有 cpp 文件打开时释放 clangd（worker + wasm 内存一起回收） */
+async function releaseLspIfIdle() {
+  if (openCppCount() > 0) return;
+  if (!lspPromise && !vscode.workspace.getConfiguration("oiCpp").get("lsp", true)) return;
+  lspPromise = null;
+  try { await stopClangd(); } catch { /* ignore */ }
+  vscode.window.setStatusBarMessage("$(circle-slash) OI C++: clangd 已释放（无打开的 C++ 文件）", 4000);
+}
+
+/** 工作区变了（切换/关闭文件夹）→ 彻底重启，避免旧实例泄漏 */
+async function restartLspClean() {
+  lspPromise = null;
+  try { await stopClangd(); } catch { /* ignore */ }
+  if (openCppCount() > 0) ensureLsp();
+}
+
 async function listCppFiles() {
   try {
     const uris = await vscode.workspace.findFiles("**/*.{cpp,cc,cxx,c}", null, 50);
@@ -49,6 +73,8 @@ function ensureLsp() {
   if (lspPromise) return lspPromise;
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   if (!cfg.get("lsp", true)) return null;
+  // 只给"真正打开着的 cpp 文件"启语言服务：没有打开就不启动，省内存/CPU
+  if (openCppCount() === 0) return null;
   lspPromise = (async () => {
     // ⚠️ setStatusBarMessage 返回的 Disposable 必须手动 dispose，
     //    否则"启动中…"会一直挂在下边栏（之前给了 600s 超时，等于 10 分钟内都显示加载中）
@@ -793,16 +819,25 @@ export async function activate(c) {
 
     // 浏览器本地文件夹（File System Access API）：vscode-web 自带的"打开文件夹"在空窗口下是坏的
     try { registerLocalFolder(c); }
-    catch (e) { console.warn("[oi-cpp-wasm] 注册本地文件夹失败:", e && e.message); }
+    catch (e) {
+      console.error("[oi-cpp-wasm] 注册本地文件夹失败:", e);
+      vscode.window.showErrorMessage("OI C++: 本地文件夹功能注册失败（打开文件夹命令不可用）: " + ((e && e.message) || e));
+    }
 
     const maybeLsp = () => {
       const doc = vscode.window.activeTextEditor?.document;
       if (doc && doc.languageId === "cpp") ensureLsp();
     };
     c.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(maybeLsp));
-    c.subscriptions.push(vscode.workspace.onDidOpenTextDocument((d) => { if (d.languageId === "cpp") ensureLsp(); }));
+    c.subscriptions.push(vscode.workspace.onDidOpenTextDocument((d) => {
+      if (d.languageId === "cpp" || d.languageId === "c") ensureLsp();
+    }));
+    // 关闭文件后若已经没有 cpp 文档 → 释放 clangd（worker + 121MB wasm 内存一起回收）
+    c.subscriptions.push(vscode.workspace.onDidCloseTextDocument(() => { releaseLspIfIdle(); }));
+    // 切换/关闭工作区文件夹 → 彻底重启，避免旧实例残留（内存 5G+ 的根因之一）
+    c.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { restartLspClean(); }));
     maybeLsp();
-    console.log("[oi-cpp-wasm] activate 完成");
+    console.log(`[oi-cpp-wasm] activate 完成 v${(c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?"}（命令: runInTerminal/debug/openFolder/restartLsp 已注册）`);
   } catch (e) {
     console.error("[oi-cpp-wasm] activate 失败", e);
     vscode.window.showErrorMessage("oi-cpp-wasm 激活失败: " + ((e && e.message) || e));
