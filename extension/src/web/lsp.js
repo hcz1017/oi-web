@@ -203,6 +203,7 @@ class Writer {
 
 let client = null;
 let current = null;
+let preferClassic = null;      // null=未知；true=已确认这台环境不支持嵌套 module worker
 // ⚠️ clangd 每个实例都会加载 121MB wasm + 预建 8 个 pthread worker（各自 instantiating），
 //    所以**必须**保证全局只有一个实例：反复开关文件夹/反复启动会叠加到 5G+ 内存，
 //    且线程池耗尽后再也起不来。stopClangd() 里 terminate + dispose 缺一不可。
@@ -211,7 +212,26 @@ let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自�
 
 export function resetClangdFatal() { fatal = false; }
 
-export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++20", opt = 2, debug = true, base: baseOverride = "", verbose = false, log } = {}) {
+export async function startClangd(ctx, opts = {}) {
+  const merged = { files: ["main.cpp"], flags: "-std=c++20", opt: 2, debug: true, base: "", verbose: false, log: undefined, ...opts };
+  // 已知不支持 module worker → 直接走经典
+  if (preferClassic !== false) {
+    try {
+      if (preferClassic === true) return await startOnce(ctx, { ...merged, useClassic: true });
+      const c = await startOnce(ctx, { ...merged, useClassic: false });
+      preferClassic = false;
+      return c;
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      console.warn("[oi clangd] ESM/module-worker 路径失败，降级为经典 worker：", msg.split("\n")[0]);
+      preferClassic = true;
+      await Promise.resolve(stopClangd()).catch(() => {});
+    }
+  }
+  return await startOnce(ctx, { ...merged, useClassic: true });
+}
+
+async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, verbose, log, useClassic }) {
   const out = typeof log === "function" ? log : (line) => console.warn("[oi clangd]", line);
   if (client) return client;
   if (fatal) throw new Error("clangd 已被停用（pthread 线程池不足）。重启扩展或运行「OI C++: 重启 clangd(WASM)」可再试");
@@ -227,13 +247,15 @@ export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++
   try {
     // module worker：clangd glue 是 ESM，worker 里要能用动态 import()，
     // 且 emscripten 的 pthread 子 worker 也是 type:"module"
-    worker = new Worker(workerUrl, { type: "module" });
+    worker = useClassic ? new Worker(workerUrl) : new Worker(workerUrl, { type: "module" });
+    console.warn(`[oi clangd] worker(${useClassic ? "classic" : "module"}) ←`, workerUrl);
   } catch (e) {
     // 跨源部署时的兜底：fetch 源码再 blob 化
     const resp = await fetch(workerUrl);
     if (!resp.ok) throw new Error(`取不到 clangdWorker.js: HTTP ${resp.status}`);
     const code = await resp.text();
     worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+    console.warn("[oi clangd] worker(blob fallback) ←", workerUrl, "err=", (e && e.message) || e);
   }
   // 调试通道：worker 的阶段日志/错误直接进控制台，避免被 LSP 握手前的丢弃规则吞掉
   worker.addEventListener("message", (ev) => {
@@ -256,7 +278,7 @@ export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++
       setTimeout(() => { stopClangd().catch(() => {}); }, 0);
     }
   });
-  worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose } });
+  worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose, classic: !!useClassic } });
 
   const map = new UriMap();
   const proxy = new LspWorkerProxy(worker, map);
@@ -291,11 +313,18 @@ export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++
   );
   clientRef = lc;
   // 启动失败要让上层能感知（以前 worker 静默挂掉 → start() 永远不 resolve）
-  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("clangd initialize 超时（90s）")), 90000));
+  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("clangd initialize 超时（30s）")), 30000));
+  // worker 自身报错（例如 module worker 里 importScripts 不被支持）要**立刻**失败，
+  // 不能等 30s 超时——否则降级重试要等半分钟以上，用户体感就是"起不动"。
+  const workerFailed = new Promise((_, rej) => {
+    worker.addEventListener("error", (e) => {
+      rej(new Error("worker error: " + String((e && (e.message || e.type)) || e)));
+    });
+  });
   const started = lc.start();
   started.catch(() => {});          // race 输掉的一方也要有人接，避免 unhandledrejection
   try {
-    await Promise.race([started, timeout]);
+    await Promise.race([started, timeout, workerFailed]);
   } catch (e) {
     // lc 可能已处于 startFailed/starting，stop() 会同步抛，必须吞掉
     try { await Promise.resolve(lc.stop()).catch(() => {}); } catch {}
