@@ -293,8 +293,8 @@
       "--clang-tidy=false",
       "--completion-parse=always",
       "--pch-storage=memory",
-      "-j=1",
-      // 线程越少越好：wasm 里每个 std::thread 都会新建一个 worker（121MB wasm 实例）
+      "-j=2",
+      // 2 个后台线程：1 个太慢（用户实测），线程数带来的 worker 增长已由 didChange 去抖压住
       "--log=error"
     ]);
     stage("callMain \u8FD4\u56DE\uFF08clangd \u5DF2\u5728\u8FD0\u884C\uFF09");
