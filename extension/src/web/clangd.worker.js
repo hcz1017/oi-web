@@ -393,7 +393,7 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
     "InlayHints:",
     "  Enabled: Yes",
     "  ParameterNames: Yes",
-    "  DeducedTypes: No",
+    "  DeducedTypes: Yes",
     "Tidy:",
     "  Enabled: No",
     "",

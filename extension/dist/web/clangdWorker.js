@@ -356,7 +356,7 @@
       "InlayHints:",
       "  Enabled: Yes",
       "  ParameterNames: Yes",
-      "  DeducedTypes: No",
+      "  DeducedTypes: Yes",
       "Tidy:",
       "  Enabled: No",
       ""
