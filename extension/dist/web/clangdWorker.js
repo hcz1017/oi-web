@@ -204,22 +204,32 @@
     console.log(`[oi clangd] wasm ${(wasm.length / 1048576).toFixed(0)}MB, headers ${Object.keys(headers).length}`);
     stage("wasm \u89E3\u538B\u5B8C\u6210");
     const OrigWorker = self.Worker;
+    const oiWorkerLog = (msg) => {
+      console.warn("[oi clangd pthread]", msg);
+      try {
+        self.postMessage({ __oiLog: "pthread " + msg });
+      } catch {
+      }
+    };
+    let oiWorkerSeq = 0;
     self.Worker = class extends OrigWorker {
       constructor(url, opts) {
         super(url, opts);
+        const id = ++oiWorkerSeq;
+        const u = String(url);
+        oiWorkerLog(`#${id} \u521B\u5EFA url=${u.slice(0, 48)}${u.length > 48 ? "\u2026" : ""} type=${opts && opts.type || "-"} \u7D2F\u8BA1=${id}`);
+        this.addEventListener("message", (ev) => {
+          const d = ev.data;
+          if (d && typeof d === "object" && d.cmd) oiWorkerLog(`#${id} \u6536\u5230 cmd=${d.cmd}`);
+        });
         this.addEventListener("error", (e) => {
-          console.error(
-            "[oi clangd] pthread worker \u52A0\u8F7D\u5931\u8D25:",
-            String(url).slice(0, 120),
-            "type=" + (opts && opts.type),
-            "msg=" + (e && e.message)
-          );
+          oiWorkerLog(`#${id} \u9519\u8BEF: ${e && (e.message || e.type) || e} @${e && e.filename || "?"}:${e && e.lineno || "?"}`);
           try {
             self.postMessage({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 1, message: "pthread worker \u5931\u8D25: " + (e && e.message) } });
           } catch {
           }
         });
-        this.addEventListener("messageerror", () => console.error("[oi clangd] pthread worker messageerror"));
+        this.addEventListener("messageerror", () => oiWorkerLog(`#${id} messageerror`));
       }
     };
     stage("\u51C6\u5907\u52A0\u8F7D glue");
@@ -295,6 +305,10 @@
         hits++;
         if (!reported && hits >= 6) {
           reported = true;
+          try {
+            self.postMessage({ __oiLog: `pthread \u7EBF\u7A0B\u6C60\u8017\u5C3D\uFF08\u547D\u4E2D ${hits} \u6B21\uFF09\uFF1B\u5DF2\u521B\u5EFA\u5B50 worker \u6570\u89C1\u4E0A\u51E0\u6761` });
+          } catch {
+          }
           try {
             self.postMessage({ __oiFatal: "pthread-exhausted" });
           } catch {

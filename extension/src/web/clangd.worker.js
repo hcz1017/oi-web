@@ -211,15 +211,26 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
   // 探针：emscripten 的 pthread 线程池用 new Worker 建子 worker，
   // 失败时 glue 只会"永远等待"，不打任何错。这里包一层把真实原因暴露出来。
   const OrigWorker = self.Worker;
+  const oiWorkerLog = (msg) => {
+    console.warn("[oi clangd pthread]", msg);
+    try { self.postMessage({ __oiLog: "pthread " + msg }); } catch {}
+  };
+  let oiWorkerSeq = 0;          // 本模块创建了多少个 pthread 子 worker（诊断用）
   self.Worker = class extends OrigWorker {
     constructor(url, opts) {
       super(url, opts);
+      const id = ++oiWorkerSeq;
+      const u = String(url);
+      oiWorkerLog(`#${id} 创建 url=${u.slice(0, 48)}${u.length > 48 ? "…" : ""} type=${(opts && opts.type) || "-"} 累计=${id}`);
+      this.addEventListener("message", (ev) => {
+        const d = ev.data;
+        if (d && typeof d === "object" && d.cmd) oiWorkerLog(`#${id} 收到 cmd=${d.cmd}`);
+      });
       this.addEventListener("error", (e) => {
-        console.error("[oi clangd] pthread worker 加载失败:", String(url).slice(0, 120),
-          "type=" + (opts && opts.type), "msg=" + (e && e.message));
+        oiWorkerLog(`#${id} 错误: ${(e && (e.message || e.type)) || e} @${(e && e.filename) || "?"}:${(e && e.lineno) || "?"}`);
         try { self.postMessage({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 1, message: "pthread worker 失败: " + (e && e.message) } }); } catch {}
       });
-      this.addEventListener("messageerror", () => console.error("[oi clangd] pthread worker messageerror"));
+      this.addEventListener("messageerror", () => oiWorkerLog(`#${id} messageerror`));
     }
   };
 
@@ -313,6 +324,7 @@ if (!isPthreadWorker) {
       hits++;
       if (!reported && hits >= 6) {
         reported = true;
+        try { self.postMessage({ __oiLog: `pthread 线程池耗尽（命中 ${hits} 次）；已创建子 worker 数见上几条` }); } catch {}
         try { self.postMessage({ __oiFatal: "pthread-exhausted" }); } catch {}
       }
       return true;   // 吞掉后续刷屏
