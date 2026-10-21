@@ -352,8 +352,11 @@
       "  MissingIncludes: None",
       "Index:",
       "  Background: Skip",
+      // 参数名提示（inlay hints）：用户喜欢，保留开启；只关掉推导类型提示省点开销
       "InlayHints:",
-      "  Enabled: No",
+      "  Enabled: Yes",
+      "  ParameterNames: Yes",
+      "  DeducedTypes: No",
       "Tidy:",
       "  Enabled: No",
       ""
