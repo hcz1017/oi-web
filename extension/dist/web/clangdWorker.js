@@ -169,7 +169,7 @@
     if (!r.ok) throw new Error(`\u53D6\u4E0D\u5230 clangd.js: HTTP ${r.status}`);
     const text = await r.text();
     stage(`glue \u6587\u672C ${text.length}B`);
-    let src = text.replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)").replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"').replace(/export default Module;?/g, "self.Module=Module;");
+    let src = text.replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)").replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"').replace(/var pthreadPoolSize\s*=\s*\d+/, "var pthreadPoolSize=0").replace(/let pthreadPoolSize\s*=\s*\d+/, "let pthreadPoolSize=0").replace(/export default Module;?/g, "self.Module=Module;");
     src = "self.__oiGlueUrl=self.__oiGlueUrl||self.location.href;\n" + src;
     const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
     self.__oiGlueUrl = url;
@@ -219,13 +219,15 @@
     stage("\u51C6\u5907\u52A0\u8F7D glue");
     const { Module, scriptUrl } = await loadClassicGlue(`${b}/clangd/clangd.js`);
     stage("glue \u5DF2\u8F6C\u7ECF\u5178\u811A\u672C\u5E76 importScripts \u5B8C\u6210");
+    const wasmBlobUrl = URL.createObjectURL(new Blob([wasm], { type: "application/wasm" }));
+    stage("wasm blob URL \u5C31\u7EEA\uFF08\u4F9B pthread \u5B50 worker \u52A0\u8F7D\uFF09");
     stage("\u8C03\u7528 Module()");
     M = await Module({
       thisProgram: "/usr/bin/clangd",
       wasmBinary: wasm,
       mainScriptUrlOrBlob: scriptUrl,
       // pthread 线程池加载同一个经典脚本 blob
-      locateFile: (f) => `${b}/clangd/${f}`,
+      locateFile: (f) => /\.wasm$/.test(f) ? wasmBlobUrl : `${b}/clangd/${f}`,
       stdinReady,
       stdin: stdinByte,
       stdout: onStdout,

@@ -161,6 +161,10 @@ async function loadClassicGlue(glueUrl) {
     .replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)")
     // pthread worker 用经典方式创建
     .replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"')
+    // 线程池预建 worker 数量：默认 8，每个都要加载 121MB wasm（内存杀手）。
+    // 改成 0 = 完全按需创建（emscripten 在池空时会当场 new Worker）。
+    .replace(/var pthreadPoolSize\s*=\s*\d+/, "var pthreadPoolSize=0")
+    .replace(/let pthreadPoolSize\s*=\s*\d+/, "let pthreadPoolSize=0")
     // ESM 导出 → 挂到全局
     .replace(/export default Module;?/g, "self.Module=Module;");
   src = "self.__oiGlueUrl=self.__oiGlueUrl||self.location.href;\n" + src;
@@ -219,12 +223,18 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
   stage("准备加载 glue");
   const { Module, scriptUrl } = await loadClassicGlue(`${b}/clangd/clangd.js`);
   stage("glue 已转经典脚本并 importScripts 完成");
+  // ⚠️ pthread 子 worker 需要**自己加载** wasm：我们只发布了 clangd.wasm.gz，
+  //    解压后的 wasm 从来没有对应的 URL，于是子 worker 请求 `clangd.wasm` 得到 404，
+  //    clangd 就永远等着（表现为"一敲 #include 就卡死"+ 刷屏 thread pool exhausted）。
+  //    这里给 wasm 建一个 blob URL，让线程池 worker 也能取到。
+  const wasmBlobUrl = URL.createObjectURL(new Blob([wasm], { type: "application/wasm" }));
+  stage("wasm blob URL 就绪（供 pthread 子 worker 加载）");
   stage("调用 Module()");
   M = await Module({
     thisProgram: "/usr/bin/clangd",
     wasmBinary: wasm,
     mainScriptUrlOrBlob: scriptUrl,        // pthread 线程池加载同一个经典脚本 blob
-    locateFile: (f) => `${b}/clangd/${f}`,
+    locateFile: (f) => (/\.wasm$/.test(f) ? wasmBlobUrl : `${b}/clangd/${f}`),
     stdinReady,
     stdin: stdinByte,
     stdout: onStdout,
