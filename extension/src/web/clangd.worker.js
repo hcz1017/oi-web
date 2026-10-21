@@ -156,6 +156,15 @@ function drainPending() {
 //   · 经典 worker 里允许动态 import()（Chrome 63+/FF 108+）
 /** 把 ESM 版 clangd glue 转成经典脚本（只做字符串级替换，已在 Node 里验证语法合法） */
 /**
+ * ⚠️⚠️ 本文件踩过大坑，改动前务必读 docs/CLANGD-WASM-PITFALLS.md
+ *
+ *  1) glue 是 ESM，必须 import() 加载；emscripten 创建 pthread 子 worker 时用
+ *     `{type:"module"}`。一旦把它"转经典脚本"或删掉 type:"module"，子 worker
+ *     会 importScripts 一个 ESM 文件 → 失败 → 主线程在 asyncify 里死等
+ *     （症状：一敲 #include 就卡死 + 刷屏 thread pool exhausted）。
+ *  2) 别把 pthreadPoolSize 改成 0：预建 worker 必须在 callMain 之前 ready。
+ *  3) 子 worker 需要 wasm，而我们只发布 .gz → locateFile 要给 blob URL。
+ *
  * 加载 emscripten glue（ESM）并返回 Module 工厂。
  *
  * 参考实现（yqloss.cpp-studio-web）的做法：**动态 import() 原始 ESM glue**，

@@ -203,6 +203,9 @@ class Writer {
 
 let client = null;
 let current = null;
+// ⚠️ clangd 每个实例都会加载 121MB wasm + 预建 8 个 pthread worker（各自 instantiating），
+//    所以**必须**保证全局只有一个实例：反复开关文件夹/反复启动会叠加到 5G+ 内存，
+//    且线程池耗尽后再也起不来。stopClangd() 里 terminate + dispose 缺一不可。
 let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自动启动 clangd
 // current = { worker, proxy, lc }
 
@@ -216,7 +219,10 @@ export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++
   const base = (baseOverride || vscode.Uri.joinPath(ctx.extensionUri, "assets").toString()).replace(/\/+$/, "");
   const workerUrl = vscode.Uri.joinPath(ctx.extensionUri, "dist", "web", "clangdWorker.js").toString();
 
-  // 这个 worker 是【经典 worker】（IIFE）：扩展宿主 iframe 里 module worker 加载不可靠
+  // ⚠️ 必须用 module worker：clangd 的 glue 是 ESM，worker 里要动态 import()，
+  //    且 emscripten 的 pthread 子 worker 也是 {type:"module"}。
+  //    （早期为了"兼容"改成经典 worker + importScripts，直接导致 #include 卡死，
+  //     细节见 docs/CLANGD-WASM-PITFALLS.md）
   let worker;
   try {
     // module worker：clangd glue 是 ESM，worker 里要能用动态 import()，

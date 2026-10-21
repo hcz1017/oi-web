@@ -748,6 +748,10 @@ export class WasmDebugAdapter {
       let lines = [];
       try { lines = (await engine.getMappedLines(this.modId, file)) || []; } catch { lines = []; }
       for (const line0 of lines) {
+        // ⚠️ 踩坑：不要为了"按语句切分"把每行的列全扫一遍。
+        //    每列一次引擎 RPC，几十行的文件就是几千次往返，准备阶段被拖死
+        //    → 断点来不及设上 → 表现为"断点基本不管用"。
+        //    正确做法：每行只取第一个命中列（上面这行 break 就是关键）。
         // 每行只取**第一个**能映射到 wasm 的偏移（列扫描命中即停）。
         // ⚠️ 不要扫完所有列：那会让每行产生几十次引擎 RPC，几十行的文件就要
         //    几千次往返，准备阶段被拖死 → 断点设不上、调试感觉"废了"。

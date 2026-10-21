@@ -13,7 +13,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 EXT="$ROOT/extension"
 TW="$ROOT/node_modules/@vscode/test-web/out/server/index.js"
 HOST="${HOST:-127.0.0.1}"
-PORT="${PORT:-8083}"          # 固定端口，不再变
+PORT="${PORT:-8083}"          # 固定端口（用户明确要求：不要再换端口）
 QUALITY="${QUALITY:-stable}"
 
 [ -f "$TW" ] || { echo "缺少依赖: $TW（先在仓库根执行 npm install）"; exit 1; }
@@ -35,6 +35,10 @@ if [ -n "$WEB_DIR" ] && [ ! -f "$WEB_DIR/out/nls.messages.zh-cn.js" ]; then
   node "$ROOT/scripts/build-zh-nls.mjs" >/dev/null || exit 1
 fi
 
+# ⚠️ 这两个补丁都是"每次启动重新打"的：
+#    中文自愈脚本注入 test-web 生成的页面；打开文件夹补丁改 vscode-web 的 bundle
+#    （FileDialogService 里对自己的 throw 换成页面侧 FSA 实现）。
+#    都是幂等的，重复执行安全。
 echo "== [4/4] 注入中文自愈脚本 + 打开文件夹补丁 =="
 node "$ROOT/scripts/patch-test-web.mjs" >/dev/null 2>&1 || true
 if [ -n "$WEB_DIR" ]; then

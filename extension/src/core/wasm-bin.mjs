@@ -217,6 +217,15 @@ export function firstInstrOffset(bytes, body) {
 }
 
 // ---------------------------------------------------------------- 插桩
+// ⚠️ 插桩踩过的两个致命坑（改动前必读）：
+//   1) local 索引表必须包含**函数参数**（wasm 规范：local 0..n-1 是参数）。
+//      漏了参数 → 类型表整体错位 → i64.store 配 i32 → "插桩后的 wasm 无法编译"。
+//      典型触发：#define int long long 的 i64 变量、lambda 的 operator()（隐含 this）。
+//   2) 插桩点必须落在**操作数栈为空**的指令边界。插入的是 block…br_if…end 结构，
+//      若落在表达式中间（栈上有中间值），block 的 end/br 会截断这些值，
+//      导致程序结果错乱（曾出现输出 6 变 0）。computeEmptyStackOffsets 负责筛选，
+//      行首 offset 栈非空时回退/前找到最近栈空点；多个语句共用同一回退点则用别名合并。
+//
 // 每个语句起点的插桩序列（含 locals 快照，供 DWARF 引擎读变量）：
 //   block
 //     i32.const siteId ; call probe            → ptr（0 表示这次不暂停）

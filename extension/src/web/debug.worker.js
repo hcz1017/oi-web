@@ -117,6 +117,9 @@ function pause() {
 
   const frames = captureStack();
   // ---- 分段内存快照 ----
+  // ⚠️ 必须分段：调试栈 512MB，整块拷贝会让每次暂停卡死（详见 mem-view.mjs 注释）。
+  //    栈区起点用 __stack_pointer（wasi-sdk 输出里是全局 0）反推，
+  //    拿不到 sp 时退化为"最后 8MB"，宁可少拷也别炸。
   // 调试栈开得很大（512MB），整块拷贝会让每次暂停卡死；这里只拷贝真正有用的区域：
   //   低区：静态数据 + 堆（__heap_base 起向上分配，最多 LOW_CAP）
   //   栈区：当前 __stack_pointer 到内存末尾（= 实际用掉的栈 + 极小的顶部余量）

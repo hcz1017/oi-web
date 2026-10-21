@@ -1,5 +1,10 @@
 // 让 vscode-web 自带的「打开文件夹」真正可用（在页面里用 File System Access API）
 //
+// ⚠️ 踩坑：vscode-web 的扩展宿主跑在 **Web Worker** 里，那里没有
+//    window.showDirectoryPicker，而且它的 globalThis 与页面是两个 JS 上下文——
+//    所以"在扩展里挂个钩子让页面调用"永远不可能生效。
+//    目录选择必须在**页面侧**完成（就是本补丁做的事）。
+//
 // 背景：这份构建里 FileDialogService 的
 //   pickFileFolderAndOpen / pickFolderAndOpen
 // 在 file 协议下是硬编码 throw 的；而扩展宿主跑在 **Web Worker** 里，

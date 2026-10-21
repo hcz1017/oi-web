@@ -33,7 +33,9 @@ mkdirSync(path.join(OUT, "static"), { recursive: true });
 console.log("[1/4] 复制 vscode-web …");
 cpSync(W, path.join(OUT, "static/build"), { recursive: true });
 
-// CF Pages / wrangler 上传静态资产时会跳过 node_modules 目录
+// ⚠️ 踩坑：CF Pages / wrangler 上传静态资产时会**跳过 node_modules 目录**，
+//    而 vscode-web 的 tas-client / vscode-oniguruma / vscode-textmate 都在里面，
+//    线上 404 会被 SPA 兜底成 index.html（MIME text/html）→ 代码高亮整体失效。
 // → 打包时改名为 vendor，并把产物 JS 里的引用一并重写
 const nmSrc = path.join(OUT, "static/build/node_modules");
 const nmDst = path.join(OUT, "static/build/vendor");
