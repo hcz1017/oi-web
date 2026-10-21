@@ -87,6 +87,18 @@ class LspWorkerProxy {
         try { msg = this.map.rewriteDeep(msg, (u) => this.map.fromClangd(u)); }
         catch (e) { console.warn("[oi clangd] 入站 URI 改写失败，按原样投递:", e && e.message); }
       }
+      // ⚠️ 抑制噪音错误：VS Code 会对"已关闭/未同步"的文档发 semanticTokens delta 请求，
+      //    clangd 回 -32602 "trying to get AST for non-added document"，VS Code 每次弹提示。
+      //    这类响应改成"空结果"，既不弹窗也不影响其它功能。
+      // 同时丢弃 clangd 主动发的同类提示（window/showMessage），否则也会弹窗
+      if (msg && typeof msg === "object" && msg.method === "window/showMessage"
+          && String((msg.params && msg.params.message) || "").includes("non-added document")) {
+        return;                                   // 直接丢，不投递给 LanguageClient
+      }
+      if (msg && typeof msg === "object" && msg.error
+          && String(msg.error.message || "").includes("non-added document")) {
+        msg = { jsonrpc: "2.0", id: msg.id, result: { data: [] } };
+      }
       if (this.verbose && msg && typeof msg === "object") {
         if (msg.method) console.log("[lsp←]", msg.method, msg.id != null ? "#" + msg.id : "");
         else if (msg.id != null) {
@@ -202,6 +214,16 @@ class Writer {
     try {
       const method = msg && msg.method;
       if (method === "textDocument/didChange") {
+        // ⚠️ 只能合并**全量**同步（contentChanges 里没有 range）。
+        //    VS Code 可能发增量更改（带 range），丢掉中间态会让两侧文档不一致，
+        //    clangd 就会报 "utf-16 offset N is invalid for line 1"。增量一律直发。
+        const changes = (msg.params && msg.params.contentChanges) || [];
+        const isFull = changes.length > 0 && changes.every((c) => !c || c.range === undefined);
+        if (!isFull) {
+          this._flushChange();
+          this.proxy.postMessage(msg);
+          return Promise.resolve();
+        }
         this._pendingChange = msg;
         if (!this._flushTimer) {
           this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushChange(); }, 150);
@@ -287,7 +309,7 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
     }
     if (d.__oiWarnOnce && !warnedOnce.has(d.__oiWarnOnce)) {
       warnedOnce.add(d.__oiWarnOnce);
-      vscode.window.showWarningMessage(String(d.__oiWarnOnce));   // 每类只弹一次
+      out("[warn] " + String(d.__oiWarnOnce));   // 只写日志，不再弹窗（用户要求）
     }
   });
   worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose } });
