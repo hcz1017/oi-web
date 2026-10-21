@@ -233,17 +233,20 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   //     细节见 docs/CLANGD-WASM-PITFALLS.md）
   let worker;
   try {
-    // module worker：clangd glue 是 ESM，worker 里要能用动态 import()，
-    // 且 emscripten 的 pthread 子 worker 也是 type:"module"
-    worker = new Worker(workerUrl, { type: "module" });
-    console.warn("[oi clangd] worker(module) ←", workerUrl);
+    // ⚠️ 必须是**经典 worker**（与参考实现一致）：`new Worker(url)` 不带 type。
+    //    worker 脚本内部用**动态 import()** 加载 ESM glue —— 动态 import 在经典
+    //    worker 里是允许的；而如果这里传 {type:"module"}，worker 就成了 module
+    //    scope，一旦有任何 importScripts（包括 emscripten 老路径）就会抛
+    //    "Module scripts don't support importScripts()"。
+    worker = new Worker(workerUrl);
+    console.warn("[oi clangd] worker(classic) ←", workerUrl);
   } catch (e) {
     // 跨源部署时的兜底：fetch 源码再 blob 化
     const resp = await fetch(workerUrl);
     if (!resp.ok) throw new Error(`取不到 clangdWorker.js: HTTP ${resp.status}`);
     const code = await resp.text();
-    // 兜底也要 module（worker 里要动态 import() ESM glue）
-    worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })), { type: "module" });
+    // 兜底也是经典 worker（同上面原因：动态 import 在经典 worker 里可用）
+    worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
     console.warn("[oi clangd] worker(blob fallback) ←", workerUrl, "err=", (e && e.message) || e);
   }
   // 调试通道：worker 的阶段日志/错误直接进控制台，避免被 LSP 握手前的丢弃规则吞掉

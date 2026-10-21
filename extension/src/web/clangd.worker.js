@@ -167,7 +167,10 @@ function drainPending() {
  *
  * 加载 emscripten glue（ESM）并返回 Module 工厂。
  *
- * ⚠️ 本文件在 module worker 里运行，**绝对不允许出现 importScripts**：
+ * ⚠️ 本文件运行在**经典 worker**里（由 lsp.js 用 new Worker(url) 创建，不带 type），
+ *    靠**动态 import()** 加载 ESM glue —— 动态 import 在经典 worker 里是允许的。
+ *    因此本文件里**绝对不能有 importScripts**（一旦有，若被当作 module 执行就会报错；
+ *    而且经典 glue 路径本身也是死路，见 docs/CLANGD-WASM-PITFALLS.md）。
  *    一旦有（哪怕在没走到的分支里被 esbuild 打包进来），只要那条路径被执行到，
  *    就会抛 "Module scripts don't support importScripts()" 直接起不来。
  *
@@ -178,19 +181,20 @@ function drainPending() {
  * 一个 ESM 文件 —— 直接失败，主线程永远等（刷屏 + 卡死）。
  */
 async function loadGlueModule(glueUrl) {
-  stage("动态 import() glue（ESM）");
-  let mod;
-  try {
-    mod = await import(glueUrl);
-  } catch (e) {
-    stage("直接 import 失败，改用 blob: " + ((e && e.message) || e));
-    const text = await (await fetch(glueUrl)).text();
-    const url = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
-    mod = await import(url);
-  }
+  stage("抓取 glue 文本并转 blob");
+  const text = await (await fetch(glueUrl)).text();
+  if (!text) throw new Error("glue 为空");
+  // ⚠️ 关键（对照参考实现）：pthread 子 worker 用 Module.mainScriptUrlOrBlob 创建，
+  //    传字符串 URL 时子 worker 直接去加载该 URL；传 **blob** 时 emscripten 会
+  //    URL.createObjectURL 后再 new Worker(..., {type:"module"})。
+  //    参考实现默认就走 blob（useBlobModule），我们跟随它，避免子 worker 的
+  //    加载路径受部署/缓存/MIME 影响。
+  const blobUrl = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+  stage("import() glue blob");
+  const mod = await import(blobUrl);
   const factory = mod && (mod.default || mod.Module);
   if (typeof factory !== "function") throw new Error("glue 没有导出 Module 工厂");
-  return { Module: factory, scriptUrl: glueUrl };
+  return { Module: factory, scriptUrl: blobUrl };
 }
 
 async function start({ base, files, flags, opt = 2, debug = true }) {

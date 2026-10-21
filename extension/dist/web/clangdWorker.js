@@ -171,19 +171,15 @@
     for (const m of list) feed(m);
   }
   async function loadGlueModule(glueUrl) {
-    stage("\u52A8\u6001 import() glue\uFF08ESM\uFF09");
-    let mod;
-    try {
-      mod = await import(glueUrl);
-    } catch (e) {
-      stage("\u76F4\u63A5 import \u5931\u8D25\uFF0C\u6539\u7528 blob: " + (e && e.message || e));
-      const text = await (await fetch(glueUrl)).text();
-      const url = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
-      mod = await import(url);
-    }
+    stage("\u6293\u53D6 glue \u6587\u672C\u5E76\u8F6C blob");
+    const text = await (await fetch(glueUrl)).text();
+    if (!text) throw new Error("glue \u4E3A\u7A7A");
+    const blobUrl = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+    stage("import() glue blob");
+    const mod = await import(blobUrl);
     const factory = mod && (mod.default || mod.Module);
     if (typeof factory !== "function") throw new Error("glue \u6CA1\u6709\u5BFC\u51FA Module \u5DE5\u5382");
-    return { Module: factory, scriptUrl: glueUrl };
+    return { Module: factory, scriptUrl: blobUrl };
   }
   async function start({ base, files, flags, opt = 2, debug = true }) {
     if (!self.crossOriginIsolated) throw new Error("clangd \u9700\u8981 COOP/COEP \u8DE8\u6E90\u9694\u79BB");
