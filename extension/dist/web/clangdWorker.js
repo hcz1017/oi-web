@@ -170,17 +170,6 @@
     const list = pendingMessages.splice(0);
     for (const m of list) feed(m);
   }
-  async function loadClassicGlue(glueUrl) {
-    const r = await fetch(glueUrl);
-    if (!r.ok) throw new Error(`\u53D6\u4E0D\u5230 clangd.js: HTTP ${r.status}`);
-    const text = await r.text();
-    const src = text.replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)").replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"').replace(/export default Module;?/g, "self.Module=Module;");
-    const url = URL.createObjectURL(new Blob(["self.__oiGlueUrl=self.__oiGlueUrl||self.location.href;\n" + src], { type: "text/javascript" }));
-    self.__oiGlueUrl = url;
-    importScripts(url);
-    if (typeof self.Module !== "function") throw new Error("glue \u8F6C\u7ECF\u5178\u811A\u672C\u540E\u6CA1\u6709\u66B4\u9732 Module");
-    return { Module: self.Module, scriptUrl: url };
-  }
   async function loadGlueModule(glueUrl) {
     stage("\u52A8\u6001 import() glue\uFF08ESM\uFF09");
     let mod;
@@ -196,8 +185,7 @@
     if (typeof factory !== "function") throw new Error("glue \u6CA1\u6709\u5BFC\u51FA Module \u5DE5\u5382");
     return { Module: factory, scriptUrl: glueUrl };
   }
-  async function start({ base, files, flags, opt = 2, debug = true, classic = false }) {
-    const classicMode = !!classic;
+  async function start({ base, files, flags, opt = 2, debug = true }) {
     if (!self.crossOriginIsolated) throw new Error("clangd \u9700\u8981 COOP/COEP \u8DE8\u6E90\u9694\u79BB");
     const b = String(base).replace(/\/+$/, "");
     const get = async (url) => {
@@ -244,9 +232,9 @@
         this.addEventListener("messageerror", () => oiWorkerLog(`#${id} messageerror`));
       }
     };
-    stage("\u51C6\u5907\u52A0\u8F7D glue" + (classicMode ? "\uFF08\u7ECF\u5178\u964D\u7EA7\u6A21\u5F0F\uFF09" : "\uFF08ESM \u6A21\u5F0F\uFF09"));
-    const { Module, scriptUrl } = classicMode ? await loadClassicGlue(`${b}/clangd/clangd.js`) : await loadGlueModule(`${b}/clangd/clangd.js`);
-    stage("glue \u52A0\u8F7D\u5B8C\u6210" + (classicMode ? "\uFF08\u7ECF\u5178\uFF09" : "\uFF08ESM\uFF09"));
+    stage("\u51C6\u5907\u52A0\u8F7D glue\uFF08ESM \u6A21\u5F0F\uFF09");
+    const { Module, scriptUrl } = await loadGlueModule(`${b}/clangd/clangd.js`);
+    stage("glue \u52A0\u8F7D\u5B8C\u6210\uFF08ESM\uFF09");
     const wasmBlobUrl = URL.createObjectURL(new Blob([wasm], { type: "application/wasm" }));
     stage("wasm blob URL \u5C31\u7EEA\uFF08\u4F9B pthread \u5B50 worker \u52A0\u8F7D\uFF09");
     stage("\u8C03\u7528 Module()");
@@ -354,8 +342,7 @@
           files: cfg.files || ["main.cpp"],
           flags: cfg.flags || "-std=c++20",
           opt: cfg.opt ?? 2,
-          debug: cfg.debug !== false,
-          classic: !!cfg.classic
+          debug: cfg.debug !== false
         });
       } catch (e) {
         dead = true;

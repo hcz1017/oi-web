@@ -156,28 +156,6 @@ function drainPending() {
 //   · 经典 worker 里允许动态 import()（Chrome 63+/FF 108+）
 /** 把 ESM 版 clangd glue 转成经典脚本（只做字符串级替换，已在 Node 里验证语法合法） */
 /**
- * 经典脚本加载器（**降级路径**）：把 ESM glue 字符串改造成经典脚本 + importScripts。
- * 只有在 module worker 路径失败时才用（这时 worker 本身是经典 worker）。
- * 注意：这条路径下 emscripten 的 pthread 子 worker 也会是经典 worker，
- * 子 worker 去 importScripts 一个 ESM 文件会失败 —— 所以 pthread 依然不工作，
- * 只是让 clangd 能起来（无 include 时可用）。
- */
-async function loadClassicGlue(glueUrl) {
-  const r = await fetch(glueUrl);
-  if (!r.ok) throw new Error(`取不到 clangd.js: HTTP ${r.status}`);
-  const text = await r.text();
-  const src = text
-    .replace(/import\.meta\.url/g, "(self.__oiGlueUrl||self.location.href)")
-    .replace(/,\{type:"module",name:"em-pthread-"/g, ',{name:"em-pthread-"')
-    .replace(/export default Module;?/g, "self.Module=Module;");
-  const url = URL.createObjectURL(new Blob(["self.__oiGlueUrl=self.__oiGlueUrl||self.location.href;\n" + src], { type: "text/javascript" }));
-  self.__oiGlueUrl = url;
-  importScripts(url);
-  if (typeof self.Module !== "function") throw new Error("glue 转经典脚本后没有暴露 Module");
-  return { Module: self.Module, scriptUrl: url };
-}
-
-/**
  * ⚠️⚠️ 本文件踩过大坑，改动前务必读 docs/CLANGD-WASM-PITFALLS.md
  *
  *  1) glue 是 ESM，必须 import() 加载；emscripten 创建 pthread 子 worker 时用
@@ -188,6 +166,10 @@ async function loadClassicGlue(glueUrl) {
  *  3) 子 worker 需要 wasm，而我们只发布 .gz → locateFile 要给 blob URL。
  *
  * 加载 emscripten glue（ESM）并返回 Module 工厂。
+ *
+ * ⚠️ 本文件在 module worker 里运行，**绝对不允许出现 importScripts**：
+ *    一旦有（哪怕在没走到的分支里被 esbuild 打包进来），只要那条路径被执行到，
+ *    就会抛 "Module scripts don't support importScripts()" 直接起不来。
  *
  * 参考实现（yqloss.cpp-studio-web）的做法：**动态 import() 原始 ESM glue**，
  * 不做任何"转经典脚本"的改造，并保留 emscripten 自己创建 pthread worker 时的
@@ -211,8 +193,7 @@ async function loadGlueModule(glueUrl) {
   return { Module: factory, scriptUrl: glueUrl };
 }
 
-async function start({ base, files, flags, opt = 2, debug = true, classic = false }) {
-  const classicMode = !!classic;
+async function start({ base, files, flags, opt = 2, debug = true }) {
   if (!self.crossOriginIsolated) throw new Error("clangd 需要 COOP/COEP 跨源隔离");
   const b = String(base).replace(/\/+$/, "");
   const get = async (url) => {
@@ -266,11 +247,9 @@ async function start({ base, files, flags, opt = 2, debug = true, classic = fals
     }
   };
 
-  stage("准备加载 glue" + (classicMode ? "（经典降级模式）" : "（ESM 模式）"));
-  const { Module, scriptUrl } = classicMode
-    ? await loadClassicGlue(`${b}/clangd/clangd.js`)
-    : await loadGlueModule(`${b}/clangd/clangd.js`);
-  stage("glue 加载完成" + (classicMode ? "（经典）" : "（ESM）"));
+  stage("准备加载 glue（ESM 模式）");
+  const { Module, scriptUrl } = await loadGlueModule(`${b}/clangd/clangd.js`);
+  stage("glue 加载完成（ESM）");
   // ⚠️ pthread 子 worker 需要**自己加载** wasm：我们只发布了 clangd.wasm.gz，
   //    解压后的 wasm 从来没有对应的 URL，于是子 worker 请求 `clangd.wasm` 得到 404，
   //    clangd 就永远等着（表现为"一敲 #include 就卡死"+ 刷屏 thread pool exhausted）。
@@ -384,7 +363,7 @@ if (!isPthreadWorker) {
       // 注意：start() 因 callMain 阻塞而不会 resolve，这里不能依赖它返回后的逻辑
       await start({
         base: cfg.base, files: cfg.files || ["main.cpp"], flags: cfg.flags || "-std=c++20",
-        opt: cfg.opt ?? 2, debug: cfg.debug !== false, classic: !!cfg.classic,
+        opt: cfg.opt ?? 2, debug: cfg.debug !== false,
       });
     } catch (e) {
       dead = true;
