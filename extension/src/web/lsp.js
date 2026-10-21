@@ -190,15 +190,37 @@ class Writer {
     this.onError = makeEvent();
     this.onClose = makeEvent();
   }
-  // ⚠️ vscode-jsonrpc 的 MessageWriter 契约：write() 必须返回 Promise（内部会 write(...).catch(...)）
+  // ⚠️ 关键优化：**didChange 合并 + 去抖**。
+  //    之前每敲一个字符就发一条 didChange，clangd 每次都重建 preamble 并新开线程；
+  //    实测随手敲一个 `#include <iostream>` 就创建了 68 个 pthread worker、
+  //    内存暴涨、还以为是线程池 bug。重开文件时只有一次 didOpen，所以"重开就正常"。
+  //    这里把 didChange 合并成"最后一次全量文本"，最多每 300ms 发一次；
+  //    发送其它任何消息前先把待发的 didChange 冲出去，保证顺序不乱。
   write(msg) {
-    try { this.proxy.postMessage(msg); }
-    catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
+    try {
+      const method = msg && msg.method;
+      if (method === "textDocument/didChange") {
+        this._pendingChange = msg;              // 只保留最新一条（全量同步，丢掉中间的没影响）
+        if (!this._flushTimer) {
+          this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushChange(); }, 300);
+        }
+        return Promise.resolve();
+      }
+      this._flushChange();                      // 其它消息前先冲掉待发变更
+      this.proxy.postMessage(msg);
+    } catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
 
     return Promise.resolve();
   }
-  end() {}
-  dispose() {}
+  _flushChange() {
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    const m = this._pendingChange;
+    if (!m) return;
+    this._pendingChange = null;
+    try { this.proxy.postMessage(m); } catch (e) { try { this.onError.fire([e, m, 1]); } catch {} }
+  }
+  end() { this._flushChange(); }
+  dispose() { this._flushChange(); }
 }
 
 let client = null;

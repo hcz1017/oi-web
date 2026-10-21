@@ -218,10 +218,15 @@
         super(url, opts);
         const id = ++oiWorkerSeq;
         const u = String(url);
-        oiWorkerLog(`#${id} \u521B\u5EFA url=${u.slice(0, 48)}${u.length > 48 ? "\u2026" : ""} type=${opts && opts.type || "-"} \u7D2F\u8BA1=${id}`);
+        if (id <= 10) oiWorkerLog(`#${id} \u521B\u5EFA type=${opts && opts.type || "-"}`);
+        else if (id % 32 === 0) oiWorkerLog(`pthread worker \u7D2F\u8BA1\u5DF2\u521B\u5EFA ${id} \u4E2A\uFF08\u7EBF\u7A0Bchurn\uFF0Cclangd \u6BCF\u5F00\u4E00\u4E2A std::thread \u5C31\u4F1A\u65B0\u5EFA\uFF09`);
+        if (id === 64 || id === 128 || id === 256) {
+          oiWorkerLog(`\u26A0 pthread worker \u5DF2\u8FBE ${id} \u4E2A\uFF0C\u82E5\u7EE7\u7EED\u589E\u957F\u5EFA\u8BAE\u91CD\u542F clangd\uFF08\u547D\u4EE4\uFF1AOI C++: \u91CD\u542F clangd\uFF09`);
+        }
         this.addEventListener("message", (ev) => {
           const d = ev.data;
-          if (d && typeof d === "object" && d.cmd) oiWorkerLog(`#${id} \u6536\u5230 cmd=${d.cmd}`);
+          if (!d || typeof d !== "object" || !d.cmd) return;
+          if (d.cmd === "loaded" && id <= 10) oiWorkerLog(`#${id} loaded`);
         });
         this.addEventListener("error", (e) => {
           oiWorkerLog(`#${id} \u9519\u8BEF: ${e && (e.message || e.type) || e} @${e && e.filename || "?"}:${e && e.lineno || "?"}`);
@@ -288,7 +293,8 @@
       "--clang-tidy=false",
       "--completion-parse=always",
       "--pch-storage=memory",
-      "-j=2",
+      "-j=1",
+      // 线程越少越好：wasm 里每个 std::thread 都会新建一个 worker（121MB wasm 实例）
       "--log=error"
     ]);
     stage("callMain \u8FD4\u56DE\uFF08clangd \u5DF2\u5728\u8FD0\u884C\uFF09");

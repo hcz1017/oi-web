@@ -244,10 +244,19 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
       super(url, opts);
       const id = ++oiWorkerSeq;
       const u = String(url);
-      oiWorkerLog(`#${id} 创建 url=${u.slice(0, 48)}${u.length > 48 ? "…" : ""} type=${(opts && opts.type) || "-"} 累计=${id}`);
+      // ⚠️ 只记前 10 个创建 + 每满 32 个汇总一次；cleanupThread 之类的消息一律不记，
+      //    否则 clangd 的线程churn会把日志刷爆（实测可见 68+ 个 worker 创建记录）。
+      if (id <= 10) oiWorkerLog(`#${id} 创建 type=${(opts && opts.type) || "-"}`);
+      else if (id % 32 === 0) oiWorkerLog(`pthread worker 累计已创建 ${id} 个（线程churn，clangd 每开一个 std::thread 就会新建）`);
+      if (id === 64 || id === 128 || id === 256) {
+        // 提醒：worker 数持续增长说明线程 churn 严重，内存与响应都会变差
+        oiWorkerLog(`⚠ pthread worker 已达 ${id} 个，若继续增长建议重启 clangd（命令：OI C++: 重启 clangd）`);
+      }
       this.addEventListener("message", (ev) => {
         const d = ev.data;
-        if (d && typeof d === "object" && d.cmd) oiWorkerLog(`#${id} 收到 cmd=${d.cmd}`);
+        if (!d || typeof d !== "object" || !d.cmd) return;
+        if (d.cmd === "loaded" && id <= 10) oiWorkerLog(`#${id} loaded`);
+        // cleanupThread / 其它高频消息不记录
       });
       this.addEventListener("error", (e) => {
         oiWorkerLog(`#${id} 错误: ${(e && (e.message || e.type)) || e} @${(e && e.filename) || "?"}:${(e && e.lineno) || "?"}`);
@@ -323,7 +332,7 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
     "--clang-tidy=false",
     "--completion-parse=always",
     "--pch-storage=memory",
-    "-j=2",
+    "-j=1",   // 线程越少越好：wasm 里每个 std::thread 都会新建一个 worker（121MB wasm 实例）
     "--log=error",
   ]);
   stage("callMain 返回（clangd 已在运行）");
