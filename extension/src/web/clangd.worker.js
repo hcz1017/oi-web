@@ -303,12 +303,12 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
       //    否则 clangd 的线程churn会把日志刷爆（实测可见 68+ 个 worker 创建记录）。
       if (id <= 10) oiWorkerLog(`#${id} 创建 type=${(opts && opts.type) || "-"}`);
       else if (id % 32 === 0) oiWorkerLog(`pthread worker 累计已创建 ${id} 个（线程churn，clangd 每开一个 std::thread 就会新建）`);
-      // ⚠️ 野但有效：worker 数涨到阈值（默认 8，正常只需 4）就请求**静默重启**。
+      // ⚠️ 野但有效：worker 数涨到阈值（12，正常只需 4）就请求**静默重启**。
       //    重启能恢复（池子重建、线程清空），与其等它雪崩，不如主动重来。
       //    每个 worker 实例只请求一次，扩展侧还有 60s 防抖。
-      if (id === 8) {
+      if (id === 12) {
         try { self.postMessage({ __oiRestart: { workers: id } }); } catch {}
-        oiWorkerLog("worker 数达 8，请求静默重启 clangd");
+        oiWorkerLog("worker 数达 12，请求静默重启 clangd");
       }
       if (id === 64 || id === 128 || id === 256) {
         // 提醒：worker 数持续增长说明线程 churn 严重，内存与响应都会变差
