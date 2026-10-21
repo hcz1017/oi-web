@@ -266,7 +266,17 @@
     FS.mkdirTree("/workspace");
     FS.writeFile("/workspace/main.cpp", "");
     const mainFile = "/workspace/main.cpp";
+    const addFlags = [
+      `--target=${TRIPLE}`,
+      "-O2",
+      ...SHARED_FLAGS,
+      ...ISYS.flatMap((d) => ["-isystem", d])
+    ];
     FS.writeFile("/workspace/.clangd", new TextEncoder().encode([
+      "CompileFlags:",
+      "  Compiler: clang++",
+      "  Add: [" + addFlags.map((f) => JSON.stringify(f)).join(", ") + "]",
+      "  Remove: [-o, -x, -c]",
       "Diagnostics:",
       "  UnusedIncludes: None",
       "  MissingIncludes: None",
@@ -278,6 +288,7 @@
       "  Enabled: No",
       ""
     ].join("\n")));
+    stage("\u5199\u5165 /workspace/.clangd\uFF08\u542B sysroot \u6807\u5FD7\uFF0C\u8986\u76D6\u6240\u6709\u6587\u4EF6\uFF09");
     FS.writeFile(
       "/workspace/compile_commands.json",
       new TextEncoder().encode(JSON.stringify([

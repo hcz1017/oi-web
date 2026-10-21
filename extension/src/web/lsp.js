@@ -200,6 +200,10 @@ class Writer {
     try {
       const method = msg && msg.method;
       if (method === "textDocument/didChange") {
+        this.opts.didChangeCount = (this.opts.didChangeCount || 0) + 1;
+        if (this.opts.didChangeCount % 25 === 0) {
+          try { this.proxy.postMessage({ __oiStat: { didChange: this.opts.didChangeCount } }); } catch {}
+        }
         this._pendingChange = msg;              // 只保留最新一条（全量同步，丢掉中间的没影响）
         if (!this._flushTimer) {
           this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushChange(); }, 300);
@@ -283,6 +287,7 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
       console.error("[oi clangd] 失败:", d.__oiError);
       vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
     }
+    if (d.__oiStat) out("[stat] " + JSON.stringify(d.__oiStat));
     if (d.__oiWarnOnce && !warnedOnce.has(d.__oiWarnOnce)) {
       warnedOnce.add(d.__oiWarnOnce);
       vscode.window.showWarningMessage(String(d.__oiWarnOnce));   // 每类只弹一次

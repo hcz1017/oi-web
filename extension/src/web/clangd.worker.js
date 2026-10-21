@@ -10,7 +10,7 @@
 //     传了会让线程池的加载路径与 import() 不一致，卡在 emscripten 的 loading-workers
 //   · clangd 虚拟 FS 由 headers.json.gz（1338 个路径→内容）填充，无需 sysroot tar
 //   · stdin 是按字节拉的队列 + stdinReady 唤醒；stdout 是裸字节流，按 Content-Length 拆帧
-import { clangdArgs } from "../core/flags.mjs";
+import { clangdArgs, ISYS, SHARED_FLAGS, TRIPLE } from "../core/flags.mjs";
 import { sanitizeName } from "../core/names.mjs";
 
 const enc = new TextEncoder();
@@ -303,7 +303,19 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
   const mainFile = "/workspace/main.cpp";
   // .clangd：关掉最拖性能的诊断。include-cleaner / missing-includes 会为每个 #include
   // 反复解析头文件，wasm 版里表现为"一写 #include 就卡死"；顺带禁用后台索引与 inlay hints。
+  // ⚠️ 关键：compile_commands.json 里只有 /workspace/main.cpp，
+  //    用户打开的其它文件（如 a.cpp）**没有编译命令** → clangd 用默认参数 →
+  //    找不到 <iostream> → preamble 反复失败重试 → 每次重试新开线程（worker 暴涨）。
+  //    这里把完整 sysroot 标志写进 .clangd 的 CompileFlags.Add，对所有文件生效。
+  const addFlags = [
+    `--target=${TRIPLE}`, "-O2", ...SHARED_FLAGS,
+    ...ISYS.flatMap((d) => ["-isystem", d]),
+  ];
   FS.writeFile("/workspace/.clangd", new TextEncoder().encode([
+    "CompileFlags:",
+    "  Compiler: clang++",
+    "  Add: [" + addFlags.map((f) => JSON.stringify(f)).join(", ") + "]",
+    "  Remove: [-o, -x, -c]",
     "Diagnostics:",
     "  UnusedIncludes: None",
     "  MissingIncludes: None",
@@ -315,6 +327,7 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
     "  Enabled: No",
     "",
   ].join("\n")));
+  stage("写入 /workspace/.clangd（含 sysroot 标志，覆盖所有文件）");
   FS.writeFile("/workspace/compile_commands.json",
     new TextEncoder().encode(JSON.stringify([
       { directory: "/workspace", file: mainFile, arguments: clangdArgs(flags, mainFile, { opt, debug }) },
