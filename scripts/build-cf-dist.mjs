@@ -9,7 +9,8 @@
 //   README-deploy.md           部署说明
 //
 // 用法：node scripts/build-cf-dist.mjs
-import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync, readdirSync, statSync, renameSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -85,6 +86,25 @@ for (const item of ["package.json", "package.nls.json", "LICENSE", "README.md", 
   if (existsSync(src)) cpSync(src, path.join(extOut, item), { recursive: true });
 }
 
+// ---------- 2.5) 扩展主 bundle 加内容哈希 ----------
+// CF 的缓存按 4 小时计，manifest 是 no-cache 而 bundle 命中缓存时会出现
+// "命令面板有命令、点了 command not found"。文件名带 hash 后 URL 变化即可绕过。
+{
+  const webDir = path.join(extOut, "dist/web");
+  const bundle = path.join(webDir, "extension.js");
+  if (existsSync(bundle)) {
+    const bytes = readFileSync(bundle);
+    const h = createHash("sha1").update(bytes).digest("hex").slice(0, 10);
+    const hashed = path.join(webDir, `extension.${h}.js`);
+    renameSync(bundle, hashed);
+    const pkgPath = path.join(extOut, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    pkg.browser = `./dist/web/extension.${h}.js`;
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+    console.log(`    主 bundle: extension.${h}.js（package.json 已同步）`);
+  }
+}
+
 // ---------- 3) index.html（地址运行时修正 + SW 兜底） ----------
 console.log("[3/4] 生成 index.html …");
 let html = readFileSync(TEMPLATE, "utf8");
@@ -154,6 +174,15 @@ writeFileSync(path.join(OUT, "_headers"), `/*
 # 会出现"命令面板里有命令、点了却说 command not found"
 /static/devextensions/*
   Cache-Control: no-cache
+
+/static/devextensions/dist/*
+  Cache-Control: no-cache
+
+/static/devextensions/dist/web/*
+  Cache-Control: no-cache
+
+/static/devextensions/assets/*
+  Cache-Control: max-age=86400
 
 /index.html
   Cache-Control: no-cache
