@@ -61,6 +61,14 @@
       {
         "command": "oiCpp.refreshFolder",
         "title": "OI C++: 刷新本地文件夹"
+      },
+      {
+        "command": "oiCpp.showLogs",
+        "title": "OI C++: 显示日志"
+      },
+      {
+        "command": "oiCpp.copyLogs",
+        "title": "OI C++: 复制日志"
       }
     ],
     "menus": {

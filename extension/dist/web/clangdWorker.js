@@ -154,7 +154,13 @@
     if (nl >= 0) {
       const line = ascii(errBytes.slice(0, nl + 1)).trimEnd();
       errBytes = errBytes.slice(nl + 1);
-      if (line) console.warn("[oi clangd stderr]", line);
+      if (line) {
+        console.warn("[oi clangd stderr]", line);
+        try {
+          self.postMessage({ __oiStderr: line });
+        } catch {
+        }
+      }
     }
   }
   var started = false;

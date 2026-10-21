@@ -133,7 +133,11 @@ function onStderr(b) {
   if (nl >= 0) {
     const line = ascii(errBytes.slice(0, nl + 1)).trimEnd();
     errBytes = errBytes.slice(nl + 1);
-    if (line) console.warn("[oi clangd stderr]", line);
+    if (line) {
+      console.warn("[oi clangd stderr]", line);
+      // 同时回传给扩展宿主 → 写入"OI C++"输出面板（浏览器控制台不好翻）
+      try { self.postMessage({ __oiStderr: line }); } catch {}
+    }
   }
 }
 

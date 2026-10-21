@@ -39,6 +39,16 @@ function setStatus(kind) {
 
 // ---------------------------------------------------------------- 语言服务
 let lspPromise = null;
+/** 「OI C++」输出面板：clangd 阶段日志 / stderr / 生命周期都记这里（网页版控制台不好翻） */
+let logChannel = null;
+const logRing = [];
+function logLine(line) {
+  const text = String(line == null ? "" : line);
+  logRing.push(text);
+  if (logRing.length > 2000) logRing.splice(0, logRing.length - 2000);
+  try { logChannel?.appendLine(text); } catch {}
+  console.log("[oi]", text);
+}
 
 /** 当前打开的 C/C++ 文档数（clangd 只在这些文件存在时活着） */
 function openCppCount() {
@@ -89,6 +99,7 @@ function ensureLsp() {
         opt: cfg.get("opt", 2),
         debug: cfg.get("debugInfo", true),
         verbose: cfg.get("verbose", false),
+        log: (line) => logLine("[clangd] " + line),
       });
       busy?.dispose(); busy = null;
       vscode.window.setStatusBarMessage("$(check) OI C++: clangd 就绪", 5000);
@@ -791,6 +802,16 @@ export async function activate(c) {
     statusItem.command = "oiCpp.runInTerminal";
     c.subscriptions.push(statusItem);
     setStatus("idle");
+
+    logChannel = vscode.window.createOutputChannel("OI C++");
+    c.subscriptions.push(logChannel);
+    logLine(`activate 开始（v${(c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?"}）`);
+    c.subscriptions.push(vscode.commands.registerCommand("oiCpp.showLogs", () => logChannel.show(true)));
+    c.subscriptions.push(vscode.commands.registerCommand("oiCpp.copyLogs", async () => {
+      // 输出面板内容无法直接读，改为重放最近日志（保存在环形缓冲里）
+      await vscode.env.clipboard.writeText(logRing.join("\n"));
+      vscode.window.showInformationMessage("已复制 OI C++ 日志（最近 " + logRing.length + " 行）");
+    }));
 
     c.subscriptions.push(vscode.window.onDidCloseTerminal((t) => {
       for (const [name, s] of sessions) {

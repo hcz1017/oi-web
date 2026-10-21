@@ -208,7 +208,8 @@ let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自�
 
 export function resetClangdFatal() { fatal = false; }
 
-export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++20", opt = 2, debug = true, base: baseOverride = "", verbose = false } = {}) {
+export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++20", opt = 2, debug = true, base: baseOverride = "", verbose = false, log } = {}) {
+  const out = typeof log === "function" ? log : (line) => console.warn("[oi clangd]", line);
   if (client) return client;
   if (fatal) throw new Error("clangd 已被停用（pthread 线程池不足）。重启扩展或运行「OI C++: 重启 clangd(WASM)」可再试");
   // 资产 base 支持外置（oiCpp.assetsBaseUrl）：传进来就用，否则用扩展自带 assets/
@@ -230,7 +231,8 @@ export async function startClangd(ctx, { files = ["main.cpp"], flags = "-std=c++
   worker.addEventListener("message", (ev) => {
     const d = ev.data;
     if (!d || typeof d !== "object") return;
-    if (d.__oiLog) console.warn("[oi clangd]", d.__oiLog);
+    if (d.__oiLog) { console.warn("[oi clangd]", d.__oiLog); out("[stage] " + d.__oiLog); }
+    if (d.__oiStderr) out("[stderr] " + String(d.__oiStderr).slice(0, 800));
     if (d.__oiError) {
       console.error("[oi clangd] 失败:", d.__oiError);
       vscode.window.showErrorMessage("clangd 启动失败: " + String(d.__oiError).split("\n")[0]);
