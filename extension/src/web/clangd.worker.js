@@ -214,7 +214,12 @@ async function loadGlueModule(glueUrl) {
   //    URL.createObjectURL 后再 new Worker(..., {type:"module"})。
   //    参考实现默认就走 blob（useBlobModule），我们跟随它，避免子 worker 的
   //    加载路径受部署/缓存/MIME 影响。
-  const blobUrl = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+  // ⚠️ pthread 预建池大小：默认 8，每个 worker 都会实例化一份 wasm（几十 MB 级），
+  //    而 clangd 稳态只用 -j(=2) 个线程。按用户要求降到 4：既覆盖"线程退出/新任务进来"
+  //    的交接，又比 8 少一半空闲内存。极端突发时 emscripten 会现场再建（慢一次，不会死锁）。
+  const patched = text.replace(/var pthreadPoolSize\s*=\s*8/, "var pthreadPoolSize=4");
+  if (patched === text) stage("⚠ glue 里没找到 pthreadPoolSize=8（版本变了？池大小保持默认）");
+  const blobUrl = URL.createObjectURL(new Blob([patched], { type: "text/javascript" }));
   stage("import() glue blob");
   const mod = await import(blobUrl);
   const factory = mod && (mod.default || mod.Module);

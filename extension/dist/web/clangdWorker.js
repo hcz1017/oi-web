@@ -208,7 +208,9 @@
       return new TextDecoder().decode(bytes);
     })();
     if (!text) throw new Error("glue \u4E3A\u7A7A");
-    const blobUrl = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+    const patched = text.replace(/var pthreadPoolSize\s*=\s*8/, "var pthreadPoolSize=4");
+    if (patched === text) stage("\u26A0 glue \u91CC\u6CA1\u627E\u5230 pthreadPoolSize=8\uFF08\u7248\u672C\u53D8\u4E86\uFF1F\u6C60\u5927\u5C0F\u4FDD\u6301\u9ED8\u8BA4\uFF09");
+    const blobUrl = URL.createObjectURL(new Blob([patched], { type: "text/javascript" }));
     stage("import() glue blob");
     const mod = await import(blobUrl);
     const factory = mod && (mod.default || mod.Module);

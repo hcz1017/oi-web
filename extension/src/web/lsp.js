@@ -191,22 +191,44 @@ class Writer {
     this.onClose = makeEvent();
   }
   // ⚠️ vscode-jsonrpc 的 MessageWriter 契约：write() 必须返回 Promise。
-  //    注意：曾经在这里对 textDocument/didChange 做"合并去抖"，但实测根因不是它
-  //    （重开文件后高速打字完全正常），去抖反而增加了补全/诊断的延迟 → 已改回直发。
+  //
+  // 为什么要对 didChange 做**短**合并（150ms）：
+  //   实测现象——高速打字时 clangd 线程需求暴增，emscripten 线程池（我们设 4）瞬间不够，
+  //   emscripten 就为每个新线程**新建 worker**，而 worker 加载 wasm 要时间，
+  //   于是越积越多、界面卡住；一旦停止打字，需求消失，积压的 worker loaded 后自动恢复。
+  //   把突发按键合并成"最后一次全量文本"，能把线程需求压到 1~2 个/150ms，
+  //   既不损失功能（我们本来就是全量同步），也不会让人感觉到延迟。
   write(msg) {
-    try { this.proxy.postMessage(msg); }
-    catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
+    try {
+      const method = msg && msg.method;
+      if (method === "textDocument/didChange") {
+        this._pendingChange = msg;
+        if (!this._flushTimer) {
+          this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushChange(); }, 150);
+        }
+        return Promise.resolve();
+      }
+      this._flushChange();          // 其它消息前先冲掉待发变更，保证顺序
+      this.proxy.postMessage(msg);
+    } catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
 
     return Promise.resolve();
   }
-  end() {}
-  dispose() {}
+  _flushChange() {
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    const m = this._pendingChange;
+    if (!m) return;
+    this._pendingChange = null;
+    try { this.proxy.postMessage(m); } catch (e) { try { this.onError.fire([e, m, 1]); } catch {} }
+  }
+  end() { this._flushChange(); }
+  dispose() { this._flushChange(); }
 }
 
 let client = null;
 let current = null;
 const warnedOnce = new Set();   // 同一类警告只弹一次（例如线程池耗尽）
-// ⚠️ clangd 每个实例都会加载 121MB wasm + 预建 8 个 pthread worker（各自 instantiating），
+// ⚠️ clangd 每个实例都会加载 wasm + 预建 N 个 pthread worker（各自实例化一份模块），
 //    所以**必须**保证全局只有一个实例：反复开关文件夹/反复启动会叠加到 5G+ 内存，
 //    且线程池耗尽后再也起不来。stopClangd() 里 terminate + dispose 缺一不可。
 let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自动启动 clangd
