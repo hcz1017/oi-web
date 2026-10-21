@@ -66,11 +66,21 @@ async function releaseLspIfIdle() {
   vscode.window.setStatusBarMessage("$(circle-slash) OI C++: clangd 已释放（无打开的 C++ 文件）", 4000);
 }
 
-// ⚠️ 野但有效的兜底：clangd 的 pthread worker 数涨到 32（正常只需 4）说明线程池已被打爆，
-//    直接**强制重启**——重启能恢复（池子重建、线程清空）。
-//    用户明确要求：阈值 32、无冷却（不设防抖）。
+// ⚠️ 野但有效的兜底：clangd 的 pthread worker 数异常增长（正常只需 4 个）说明线程池被打爆，
+//    重启能恢复（池子重建、线程清空）。策略按用户要求分两档：
+//      · 12 个：**带冷却**的重启（60s 内只重启一次，可能只是短时突发）
+//      · 32 个：**强制**重启（已雪崩，无条件立即重来）
+let lastSilentRestart = 0;
+const RESTART_COOLDOWN_MS = 60000;
 async function silentRestartClangd(info) {
-  logLine(`[restart] 强制重启 clangd（workers=${info && info.workers}）`);
+  const force = !!(info && info.force);
+  const now = Date.now();
+  if (!force && now - lastSilentRestart < RESTART_COOLDOWN_MS) {
+    logLine(`[restart] 跳过（${Math.round((RESTART_COOLDOWN_MS - (now - lastSilentRestart)) / 1000)}s 冷却中）workers=${info && info.workers}`);
+    return;
+  }
+  lastSilentRestart = now;
+  logLine(`[restart] ${force ? "强制" : "冷却"}重启 clangd（workers=${info && info.workers}）`);
   lspPromise = null;
   try { await stopClangd(); } catch { /* ignore */ }
   if (openCppCount() > 0) ensureLsp();

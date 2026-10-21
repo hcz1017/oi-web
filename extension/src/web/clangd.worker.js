@@ -303,12 +303,18 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
       //    否则 clangd 的线程churn会把日志刷爆（实测可见 68+ 个 worker 创建记录）。
       if (id <= 10) oiWorkerLog(`#${id} 创建 type=${(opts && opts.type) || "-"}`);
       else if (id % 32 === 0) oiWorkerLog(`pthread worker 累计已创建 ${id} 个（线程churn，clangd 每开一个 std::thread 就会新建）`);
-      // ⚠️ 野但有效：worker 数涨到阈值（32，正常只需 4）就**强制重启**（无冷却）。
+      // ⚠️ 野但有效：worker 数涨到阈值就重启——12 带冷却，32 强制（正常只需 4 个）。
       //    重启能恢复（池子重建、线程清空），与其等它雪崩，不如主动重来。
-      //    每个 worker 实例只请求一次；扩展侧不再做冷却（用户要求）。
+      //    每个 worker 实例各请求一次；冷却策略在扩展侧。
+      // 12 个：**带冷却**的重启（可能只是短时突发，冷却避免反复重启）
+      // 32 个：**强制**重启（已经雪崩，无条件重来）
+      if (id === 12) {
+        try { self.postMessage({ __oiRestart: { workers: id, force: false } }); } catch {}
+        oiWorkerLog("worker 数达 12，请求重启（带冷却）");
+      }
       if (id === 32) {
-        try { self.postMessage({ __oiRestart: { workers: id } }); } catch {}
-        oiWorkerLog("worker 数达 32，强制重启 clangd");
+        try { self.postMessage({ __oiRestart: { workers: id, force: true } }); } catch {}
+        oiWorkerLog("worker 数达 32，强制重启（无冷却）");
       }
       if (id === 64 || id === 128 || id === 256) {
         // 提醒：worker 数持续增长说明线程 churn 严重，内存与响应都会变差
