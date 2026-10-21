@@ -66,18 +66,11 @@ async function releaseLspIfIdle() {
   vscode.window.setStatusBarMessage("$(circle-slash) OI C++: clangd 已释放（无打开的 C++ 文件）", 4000);
 }
 
-// ⚠️ 野但有效的兜底：clangd 的 pthread worker 数涨到阈值（正常只需 4，涨到 8 说明
-//    线程池已被打爆、正在雪崩）时**静默重启**——重启能恢复（池子重建、线程清空）。
-//    60s 防抖，避免"重启→又炸→再重启"的死循环。
-let lastSilentRestart = 0;
+// ⚠️ 野但有效的兜底：clangd 的 pthread worker 数涨到 32（正常只需 4）说明线程池已被打爆，
+//    直接**强制重启**——重启能恢复（池子重建、线程清空）。
+//    用户明确要求：阈值 32、无冷却（不设防抖）。
 async function silentRestartClangd(info) {
-  const now = Date.now();
-  if (now - lastSilentRestart < 60000) {
-    logLine(`[restart] 跳过（60s 内已重启过）workers=${info && info.workers}`);
-    return;
-  }
-  lastSilentRestart = now;
-  logLine(`[restart] 静默重启 clangd（workers=${info && info.workers}）`);
+  logLine(`[restart] 强制重启 clangd（workers=${info && info.workers}）`);
   lspPromise = null;
   try { await stopClangd(); } catch { /* ignore */ }
   if (openCppCount() > 0) ensureLsp();

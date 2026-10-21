@@ -276,12 +276,12 @@
         const u = String(url);
         if (id <= 10) oiWorkerLog(`#${id} \u521B\u5EFA type=${opts && opts.type || "-"}`);
         else if (id % 32 === 0) oiWorkerLog(`pthread worker \u7D2F\u8BA1\u5DF2\u521B\u5EFA ${id} \u4E2A\uFF08\u7EBF\u7A0Bchurn\uFF0Cclangd \u6BCF\u5F00\u4E00\u4E2A std::thread \u5C31\u4F1A\u65B0\u5EFA\uFF09`);
-        if (id === 12) {
+        if (id === 32) {
           try {
             self.postMessage({ __oiRestart: { workers: id } });
           } catch {
           }
-          oiWorkerLog("worker \u6570\u8FBE 12\uFF0C\u8BF7\u6C42\u9759\u9ED8\u91CD\u542F clangd");
+          oiWorkerLog("worker \u6570\u8FBE 32\uFF0C\u5F3A\u5236\u91CD\u542F clangd");
         }
         if (id === 64 || id === 128 || id === 256) {
           oiWorkerLog(`\u26A0 pthread worker \u5DF2\u8FBE ${id} \u4E2A\uFF0C\u82E5\u7EE7\u7EED\u589E\u957F\u5EFA\u8BAE\u91CD\u542F clangd\uFF08\u547D\u4EE4\uFF1AOI C++: \u91CD\u542F clangd\uFF09`);
