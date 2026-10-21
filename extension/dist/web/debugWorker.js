@@ -1042,6 +1042,7 @@
   var ctrl = null;
   var inst = null;
   var resumeMode = 1;
+  var stopDepth = 0;
   var stopBody = -1;
   var stopLine = -1;
   var running = false;
@@ -1064,13 +1065,40 @@
     }
     return frames;
   }
+  var depthTick = 0;
+  var DEPTH_CHECK_EVERY = 16;
+  function depthThrottled() {
+    if (++depthTick % DEPTH_CHECK_EVERY !== 0) return false;
+    return true;
+  }
+  function stackDepth() {
+    try {
+      return captureStack().length;
+    } catch {
+      return stopDepth;
+    }
+  }
   function probe(siteId) {
     const site = siteById.get(siteId);
     if (!site) return 0;
     const ids = [siteId, ...site.aliases || []];
     const isBreakpoint = !!bp && ids.some((id) => (Atomics.load(bp, id >>> 5) & 1 << (id & 31)) !== 0);
     const sameLine = resumeMode !== 1 && site.line === stopLine;
-    const hit = resumeMode === 2 ? !sameLine : resumeMode === 3 ? !sameLine && site.body === stopBody : resumeMode === 4 ? !sameLine && site.body !== stopBody : isBreakpoint;
+    let hit = false;
+    if (isBreakpoint) {
+      hit = true;
+    } else if (resumeMode === 2) {
+      hit = !sameLine;
+    } else if (resumeMode === 3) {
+      if (!sameLine) {
+        if (site.body === stopBody) hit = true;
+        else hit = depthThrottled() && stackDepth() < stopDepth;
+      }
+    } else if (resumeMode === 4) {
+      if (!sameLine && site.body !== stopBody) {
+        hit = depthThrottled() && stackDepth() < stopDepth;
+      }
+    }
     if (!hit) return 0;
     if (!scratchBase) {
       try {
@@ -1136,6 +1164,7 @@
     resumeMode = mode;
     stopBody = site.body;
     stopLine = site.line;
+    stopDepth = frames.length;
     Atomics.store(ctrl, 0, 0);
   }
   async function run() {

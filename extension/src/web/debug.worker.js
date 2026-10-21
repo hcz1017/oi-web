@@ -53,7 +53,8 @@ let siteById = new Map();      // siteId -> { id, line, file, body, origOffset }
 let bp = null;                 // 断点位图（Int32Array on SharedArrayBuffer）：宿主可随时改，无需消息
 let ctrl = null;               // Int32Array(SAB)
 let inst = null;
-let resumeMode = 1;            // 默认 continue（只在断点处停）
+let resumeMode = 1;
+let stopDepth = 0;      // 暂停时的栈帧数（stepOut 用来判断是否已返回调用者）
 let stopBody = -1;             // 最近一次暂停所在的函数体（stepOver/stepOut 用）
 let stopLine = -1;             // 最近一次暂停的行号（单步按行前进，避免同一条语句反复停）
 let running = false;
@@ -80,6 +81,15 @@ function captureStack() {
 }
 
 /** 探针：判断是否需要暂停；需要则返回 locals 快照地址（0 = 不暂停） */
+let depthTick = 0;
+const DEPTH_CHECK_EVERY = 16;   // 每 16 个候选点才算一次栈深度（限流，兼顾精度与开销）
+function depthThrottled() {
+  if ((++depthTick % DEPTH_CHECK_EVERY) !== 0) return false;
+  return true;
+}
+// 只在限流通过时才算（captureStack 会 new Error().stack，不便宜）
+function stackDepth() { try { return captureStack().length; } catch { return stopDepth; } }
+
 function probe(siteId) {
   const site = siteById.get(siteId);
   if (!site) return 0;
@@ -87,12 +97,30 @@ function probe(siteId) {
   // 任意一个别名 id 命中断点都算命中
   const ids = [siteId, ...(site.aliases || [])];
   const isBreakpoint = !!bp && ids.some((id) => (Atomics.load(bp, id >>> 5) & (1 << (id & 31))) !== 0);
+  // ⚠️ 单步语义对齐 gdb（这里以前有三处与 gdb 不符）：
+  //   · next(3)：只停在本函数体的下一条语句，但**函数里的断点仍然要命中**
+  //     （以前直接忽略断点 → 调用的函数里有断点也不停）
+  //   · stepOut(4)：要"回到调用者栈帧"才停。以前用"函数体不同"判断，
+  //     于是同一个函数被再次调用时会误停（表现为"出来后又回到这个函数第一行"）
+  //   · stepIn(2)：停在任意位置的下一条语句；断点同样优先
+  // 栈深度用 captureStack() 数帧；为了不给每个语句都付代价，
+  // 只在 stepOut 的候选点上才算深度。
   const sameLine = resumeMode !== 1 && site.line === stopLine;
-  const hit =
-    resumeMode === 2 ? !sameLine :
-    resumeMode === 3 ? (!sameLine && site.body === stopBody) :
-    resumeMode === 4 ? (!sameLine && site.body !== stopBody) :
-    isBreakpoint;
+  let hit = false;
+  if (isBreakpoint) {
+    hit = true;                                   // 断点永远优先（任何模式下）
+  } else if (resumeMode === 2) {
+    hit = !sameLine;                              // step in
+  } else if (resumeMode === 3) {
+    if (!sameLine) {
+      if (site.body === stopBody) hit = true;                          // 同帧下一条语句
+      else hit = depthThrottled() && stackDepth() < stopDepth;          // 已返回调用者（函数末行 next ≈ finish）
+    }
+  } else if (resumeMode === 4) {
+    if (!sameLine && site.body !== stopBody) {
+      hit = depthThrottled() && stackDepth() < stopDepth;               // step out：真正回到更浅的帧
+    }
+  }
   if (!hit) return 0;
 
   // locals 快照区：第一次暂停时 grow 一页并复用（不碰堆/栈）
@@ -165,6 +193,7 @@ function pause() {
   resumeMode = mode;
   stopBody = site.body;
   stopLine = site.line;
+  stopDepth = frames.length;      // stepOut 用它判断"是否已返回到调用者"
   Atomics.store(ctrl, 0, 0);
 }
 
