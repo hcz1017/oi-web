@@ -309,12 +309,12 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   let initTimer = null, initReject = null;
   const timeout = new Promise((_, rej) => {
     initReject = rej;
-    initTimer = setTimeout(() => rej(new Error("clangd 初始化超时（45s 无进展）")), 45000);
+    initTimer = setTimeout(() => rej(new Error("clangd 初始化超时（120s 无进展）")), 120000);
   });
   const bumpInitDeadline = () => {
     if (!initTimer) return;
     clearTimeout(initTimer);
-    initTimer = setTimeout(() => initReject?.(new Error("clangd 初始化超时（45s 无进展）")), 45000);
+    initTimer = setTimeout(() => initReject?.(new Error("clangd 初始化超时（120s 无进展）")), 120000);
   };
   // worker 自身报错（例如 module worker 里 importScripts 不被支持）要**立刻**失败，
   // 不能等 30s 超时——否则降级重试要等半分钟以上，用户体感就是"起不动"。

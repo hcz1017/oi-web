@@ -178,7 +178,35 @@
   }
   async function loadGlueModule(glueUrl) {
     stage("\u6293\u53D6 glue \u6587\u672C\u5E76\u8F6C blob");
-    const text = await (await fetch(glueUrl)).text();
+    const text = await (async () => {
+      const r = await fetch(glueUrl);
+      if (!r.ok) throw new Error(`\u53D6\u4E0D\u5230 glue: HTTP ${r.status}`);
+      if (!r.body || !r.body.getReader) return r.text();
+      const rd = r.body.getReader();
+      const chunks = [];
+      let total = 0, last = 0;
+      for (; ; ) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        chunks.push(value);
+        total += value.length;
+        const now = Date.now();
+        if (now - last > 400) {
+          last = now;
+          try {
+            self.postMessage({ __oiProgress: 1 });
+          } catch {
+          }
+        }
+      }
+      const bytes = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) {
+        bytes.set(c, off);
+        off += c.length;
+      }
+      return new TextDecoder().decode(bytes);
+    })();
     if (!text) throw new Error("glue \u4E3A\u7A7A");
     const blobUrl = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
     stage("import() glue blob");
@@ -193,7 +221,32 @@
     const get = async (url) => {
       const r = await fetch(url);
       if (!r.ok) throw new Error(`\u53D6\u4E0D\u5230 ${url}: HTTP ${r.status}`);
-      return r.arrayBuffer();
+      const total = Number(r.headers.get("content-length")) || 0;
+      if (!r.body || !r.body.getReader) return r.arrayBuffer();
+      const reader = r.body.getReader();
+      const chunks = [];
+      let received = 0, last = 0;
+      for (; ; ) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        const now = Date.now();
+        if (now - last > 400) {
+          last = now;
+          try {
+            self.postMessage({ __oiProgress: 1, __oiDownload: total ? { received, total } : { received } });
+          } catch {
+          }
+        }
+      }
+      const out = new Uint8Array(received);
+      let off = 0;
+      for (const c of chunks) {
+        out.set(c, off);
+        off += c.length;
+      }
+      return out.buffer;
     };
     const [wasmGz, hdrGz] = await Promise.all([
       get(`${b}/clangd/clangd.wasm.gz`),

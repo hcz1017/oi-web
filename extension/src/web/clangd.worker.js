@@ -188,7 +188,26 @@ function drainPending() {
  */
 async function loadGlueModule(glueUrl) {
   stage("抓取 glue 文本并转 blob");
-  const text = await (await fetch(glueUrl)).text();
+  const text = await (async () => {
+    const r = await fetch(glueUrl);
+    if (!r.ok) throw new Error(`取不到 glue: HTTP ${r.status}`);
+    if (!r.body || !r.body.getReader) return r.text();
+    const rd = r.body.getReader();
+    const chunks = [];
+    let total = 0, last = 0;
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.length;
+      const now = Date.now();
+      if (now - last > 400) { last = now; try { self.postMessage({ __oiProgress: 1 }); } catch {} }
+    }
+    const bytes = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { bytes.set(c, off); off += c.length; }
+    return new TextDecoder().decode(bytes);
+  })();
   if (!text) throw new Error("glue 为空");
   // ⚠️ 关键（对照参考实现）：pthread 子 worker 用 Module.mainScriptUrlOrBlob 创建，
   //    传字符串 URL 时子 worker 直接去加载该 URL；传 **blob** 时 emscripten 会
@@ -206,10 +225,34 @@ async function loadGlueModule(glueUrl) {
 async function start({ base, files, flags, opt = 2, debug = true }) {
   if (!self.crossOriginIsolated) throw new Error("clangd 需要 COOP/COEP 跨源隔离");
   const b = String(base).replace(/\/+$/, "");
+  // ⚠️ 网慢时一次下载可能好几分钟，期间**必须**持续给扩展发进度心跳，
+  //    否则会被"空闲超时"误杀（以前 45s 没消息就失败，弱网必然踩）。
+  //    这里用流式读取，边下边发 __oiProgress（不带日志，避免刷屏）。
   const get = async (url) => {
     const r = await fetch(url);
     if (!r.ok) throw new Error(`取不到 ${url}: HTTP ${r.status}`);
-    return r.arrayBuffer();
+    const total = Number(r.headers.get("content-length")) || 0;
+    if (!r.body || !r.body.getReader) return r.arrayBuffer();
+    const reader = r.body.getReader();
+    const chunks = [];
+    let received = 0, last = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      const now = Date.now();
+      if (now - last > 400) {
+        last = now;
+        try {
+          self.postMessage({ __oiProgress: 1, __oiDownload: total ? { received, total } : { received } });
+        } catch {}
+      }
+    }
+    const out = new Uint8Array(received);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.length; }
+    return out.buffer;
   };
   const [wasmGz, hdrGz] = await Promise.all([
     get(`${b}/clangd/clangd.wasm.gz`),
