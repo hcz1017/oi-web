@@ -171,8 +171,11 @@ writeFileSync(path.join(OUT, "_headers"), `/*
 /static/devextensions/dist/web/*
   Cache-Control: no-cache
 
+# ⚠️ assets 不设长缓存：文件名固定（无内容哈希），max-age=86400 会让改过的
+# dwarf 引擎 worker.js / 各 wasm 在部署后一天内仍是旧的（"改了没生效"）。
+# no-cache 只是每次带 ETag 回来校验，命中 304 时几乎不耗流量。
 /static/devextensions/assets/*
-  Cache-Control: max-age=86400
+  Cache-Control: no-cache
 
 /index.html
   Cache-Control: no-cache

@@ -844,7 +844,8 @@ function reMatch(...exprs) {
     return false;
   };
 }
-CustomFormatters.addFormatter({ types: reMatch(/^std::vector<.+>$/), format: formatVector });
+// [oi patch] 兼容 libc++ 的 ABI 命名空间（std::__2::vector / std::__1::vector）
+CustomFormatters.addFormatter({ types: reMatch(/^(?:std::)?(?:__\w+::)?vector<.+>$/), format: formatVector });
 function formatPointerOrReference(wasm, value) {
   const address = value.asUint32();
   if (address === 0) {
@@ -9898,12 +9899,30 @@ var DWARFLanguageExtensionPlugin = class {
       apiRawLocation.inlineFrameIndex = context.inlineFrameIndex || 0;
       const wasm = new HostWasmInterface(this.hostInterface, stopId);
       const proxy = new DebuggerProxy(wasm, moduleInfo.backend);
-      const typeInfoResult = manage(moduleInfo.dwarfSymbolsPlugin.EvaluateExpression(apiRawLocation, expression, proxy));
-      const error = manage(typeInfoResult.error);
-      if (error) {
-        if (error.code === moduleInfo.backend.ErrorCode.MODULE_NOT_FOUND_ERROR) {
+      // [oi patch] 容器下标兜底：x[i] → x.__begin_[i] / x.__elems_[i]
+      const oiCandidates = (() => {
+        const m = /^([\s\S]+?)\[([^\[\]]+)\]\s*$/.exec(String(expression || "").trim());
+        if (!m) return [expression];
+        const base = m[1].trim();
+        const idx = m[2].trim();
+        if (!base || !idx) return [expression];
+        return [expression, base + ".__begin_[" + idx + "]", base + ".__elems_[" + idx + "]"];
+      })();
+      let typeInfoResult = null;
+      let error = null;
+      for (const oiExpr of oiCandidates) {
+        const oiResult = manage(moduleInfo.dwarfSymbolsPlugin.EvaluateExpression(apiRawLocation, oiExpr, proxy));
+        const oiError = manage(oiResult.error);
+        if (!oiError) { typeInfoResult = oiResult; error = null; break; }
+        typeInfoResult = null;
+        error = oiError;
+        if (oiError.code === moduleInfo.backend.ErrorCode.MODULE_NOT_FOUND_ERROR) {
           return null;
         }
+        // 只有"下标不是数组/指针"才值得换写法；语法错、名字不存在等直接报原错
+        if (!/subscripted value is not an array or pointer/.test(String(oiError.message))) break;
+      }
+      if (!typeInfoResult) {
         throw new Error(`${moduleInfo.stringifyErrorCode(error.code)}: ${error.message}`);
       }
       const typeInfos = mapVector(manage(typeInfoResult.typeInfos), (typeInfo) => fromApiTypeInfo2(manage(typeInfo)));
