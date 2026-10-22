@@ -1,5 +1,5 @@
 (() => {
-  // wdb/src/stub/wdb-stub.mjs
+  // ../wdb/src/stub/wdb-stub.mjs
   var WDB_ABI_VERSION = 1;
   var DBG_STUB_SOURCE = `/* SPDX-License-Identifier: AGPL-3.0-or-later WITH WdbStub-exception
  *
@@ -20,7 +20,7 @@ __attribute__((used, visibility("default")))
 void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
 `;
 
-  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
   var CLOCKID_REALTIME = 0;
   var CLOCKID_MONOTONIC = 1;
   var ERRNO_SUCCESS = 0;
@@ -229,7 +229,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     }
   };
 
-  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
   var Debug = class Debug2 {
     enable(enabled) {
       this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -255,7 +255,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
   }
   var debug = new Debug(false);
 
-  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
   var WASIProcExit = class extends Error {
     constructor(code) {
       super("exit with exit code " + code);
@@ -819,7 +819,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     }
   };
 
-  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
   var Fd = class {
     fd_allocate(offset, len) {
       return ERRNO_NOTSUP;
@@ -919,7 +919,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
   };
   Inode.next_ino = 1n;
 
-  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+  // node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
   var OpenFile = class extends Fd {
     fd_allocate(offset, len) {
       if (this.file.size > offset + len) {
@@ -1404,7 +1404,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     }
   };
 
-  // extension/src/core/tarfs.mjs
+  // src/core/tarfs.mjs
   var BLOCK = 512;
   var str = (u8, off, len) => {
     let s = "";
@@ -1506,7 +1506,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     return f.data.slice();
   }
 
-  // extension/src/core/flags.mjs
+  // src/core/flags.mjs
   var TRIPLE = "wasm32-wasip1";
   var RESOURCE_DIR = "/lib/clang/22";
   var LIBDIR = "/lib/wasm32-wasi";
@@ -1534,7 +1534,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     return { kept, dropped };
   }
 
-  // extension/src/core/toolchain.mjs
+  // src/core/toolchain.mjs
   var Toolchain = class {
     /**
      * @param {{clangWasm: Uint8Array, lldWasm: Uint8Array, sysrootTar: Uint8Array, compatBits?: Uint8Array}} assets
@@ -1720,7 +1720,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     }
   };
 
-  // extension/src/web/compileWorker.js
+  // src/web/compileWorker.js
   var post = (m, transfer) => self.postMessage(m, transfer || []);
   self.onerror = (e) => post({ type: "error", message: "compile worker \u5185\u90E8\u9519\u8BEF: " + (e.message || e) });
   self.addEventListener("unhandledrejection", (e) => {

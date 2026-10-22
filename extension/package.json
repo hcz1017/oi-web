@@ -1,6 +1,6 @@
 {
-  "name": "oi-cpp-wasm",
-  "displayName": "OI C++ — C++ in VS Code Web (WASM)",
+  "name": "web-cpp-tool",
+  "displayName": "WebC++ — C++ in the Browser (WASM)",
   "description": "在 VS Code for the Web（vscode.dev / 自托管）里写、跑、调试 C++：WASM Clang 编译、真实终端交互运行、clangd 补全，以及源码级断点调试（wdb）。",
   "version": "0.1.0",
   "publisher": "oi-web",
@@ -35,43 +35,43 @@
     "commands": [
       {
         "command": "oiCpp.runInTerminal",
-        "title": "OI C++: 编译并在终端运行",
+        "title": "WebC++: 编译并在终端运行",
         "icon": "$(play)"
       },
       {
         "command": "oiCpp.runTerminal",
-        "title": "OI C++: 打开运行终端"
+        "title": "WebC++: 打开运行终端"
       },
       {
         "command": "oiCpp.restartLsp",
-        "title": "OI C++: 重启 clangd(WASM)"
+        "title": "WebC++: 重启 clangd(WASM)"
       },
       {
         "command": "oiCpp.debug",
-        "title": "OI C++: 开始调试（WASM）",
+        "title": "WebC++: 开始调试（WASM）",
         "icon": "$(debug-alt)"
       },
       {
         "command": "oiCpp.toggleBreakpoint",
-        "title": "OI C++: 切换断点（当前行）",
+        "title": "WebC++: 切换断点（当前行）",
         "icon": "$(circle-filled)"
       },
       {
         "command": "oiCpp.openFolder",
-        "title": "OI C++: 打开本地文件夹（浏览器）",
+        "title": "WebC++: 打开本地文件夹（浏览器）",
         "icon": "$(folder-opened)"
       },
       {
         "command": "oiCpp.refreshFolder",
-        "title": "OI C++: 刷新本地文件夹"
+        "title": "WebC++: 刷新本地文件夹"
       },
       {
         "command": "oiCpp.showLogs",
-        "title": "OI C++: 显示日志"
+        "title": "WebC++: 显示日志"
       },
       {
         "command": "oiCpp.copyLogs",
-        "title": "OI C++: 复制日志"
+        "title": "WebC++: 复制日志"
       }
     ],
     "menus": {
@@ -133,7 +133,7 @@
       }
     ],
     "configuration": {
-      "title": "OI C++ (WASM)",
+      "title": "WebC++ (WASM)",
       "properties": {
         "oiCpp.flags": {
           "type": "string",
@@ -175,7 +175,7 @@
     "debuggers": [
       {
         "type": "oi-cpp-wasm",
-        "label": "OI C++ (WASM)",
+        "label": "WebC++ (WASM)",
         "languages": [
           "cpp",
           "c"
@@ -190,17 +190,17 @@
           {
             "type": "oi-cpp-wasm",
             "request": "launch",
-            "name": "OI C++ 调试（WASM）"
+            "name": "WebC++ 调试（WASM）"
           }
         ],
         "configurationSnippets": [
           {
-            "label": "OI C++ 调试（WASM）",
+            "label": "WebC++ 调试（WASM）",
             "description": "调试当前打开的 C++ 文件（WASM）",
             "body": {
               "type": "oi-cpp-wasm",
               "request": "launch",
-              "name": "OI C++ 调试（WASM）"
+              "name": "WebC++ 调试（WASM）"
             }
           }
         ]

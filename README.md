@@ -1,4 +1,4 @@
-# oi-web —— 浏览器里的 C++：编译、运行、补全、调试
+# oi-web —— WebC++：浏览器里的 C++ 编译、运行、补全、调试
 
 纯静态、零后端的 **VS Code for the Web** 环境：**WASM 版 Clang** 把单文件 C++ 编译成
 `wasm32-wasip1`，在**真实终端**里交互运行，**clangd.wasm** 提供补全 / 诊断 / 跳转，
@@ -7,7 +7,7 @@
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  VS Code Web（静态站，固定 8083 本地 / CF Pages 线上）        │
-│   ├─ 扩展 oi-cpp-wasm：编译 · 终端 · clangd · 调试宿主        │
+│   ├─ 扩展 web-cpp-tool（WebC++）：编译 · 终端 · clangd · 调试宿主        │
 │   └─ wdb：插桩 · 暂停运行时 · DWARF 符号引擎 · DAP 适配器     │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -38,8 +38,8 @@ npm run web          # 启动本地 VS Code Web（固定 8083，中文）
 |---|---|
 | `Ctrl+Shift+B` | 编译并运行当前 `.cpp`（终端里直接打字输入） |
 | `Ctrl+D` / `Ctrl+C` | EOF / 终止本次运行 |
-| 命令面板 `OI C++: 打开本地文件夹` | 用 File System Access API 打开真实磁盘目录 |
-| 命令面板 `OI C++: 显示日志` / `复制日志` | 排查 clangd / 调试问题 |
+| 命令面板 `WebC++: 打开本地文件夹` | 用 File System Access API 打开真实磁盘目录 |
+| 命令面板 `WebC++: 显示日志` / `复制日志` | 排查 clangd / 调试问题 |
 
 ## 打包与部署
 
@@ -93,7 +93,7 @@ wdb/                       （gitignore）调试器仓库，见上表
 
 ## 调试（源码级）
 
-`F5` 或命令面板 `OI C++: 调试当前文件`：源码级断点、单步（next / step in / step out）、
+`F5` 或命令面板 `WebC++: 调试当前文件`：源码级断点、单步（next / step in / step out）、
 调用栈、变量、watch 表达式。调试器内核是独立项目 **wdb**：
 
 - 原理：编译期链入 `wdb-stub.c`（预置 `wdb.probe` / `wdb.pause` 两个 import）→ 语句级插桩 →

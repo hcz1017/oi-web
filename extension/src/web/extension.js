@@ -17,7 +17,7 @@ import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 
-const TERM_NAME = "OI C++ (WASM)";
+const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
 const S_EMPTY = 0, S_DATA = 1, S_EOF = 3;
 
@@ -27,9 +27,9 @@ let statusItem = null;
 function setStatus(kind) {
   if (!statusItem) return;
   const map = {
-    idle: ["$(check) OI C++: 就绪", "Ctrl+Shift+B 编译运行当前文件"],
-    compile: ["$(sync~spin) OI C++: 编译中…", "正在用 WASM clang 编译，完成后自动运行"],
-    run: ["$(play) OI C++: 运行中", "程序在终端里等待输入（Ctrl+D=EOF，Ctrl+C=终止）"],
+    idle: ["$(check) WebC++: 就绪", "Ctrl+Shift+B 编译运行当前文件"],
+    compile: ["$(sync~spin) WebC++: 编译中…", "正在用 WASM clang 编译，完成后自动运行"],
+    run: ["$(play) WebC++: 运行中", "程序在终端里等待输入（Ctrl+D=EOF，Ctrl+C=终止）"],
   };
   const [text, tip] = map[kind] || map.idle;
   statusItem.text = text;
@@ -39,7 +39,7 @@ function setStatus(kind) {
 
 // ---------------------------------------------------------------- 语言服务
 let lspPromise = null;
-/** 「OI C++」输出面板：clangd 阶段日志 / stderr / 生命周期都记这里（网页版控制台不好翻） */
+/** 「WebC++」输出面板：clangd 阶段日志 / stderr / 生命周期都记这里（网页版控制台不好翻） */
 let logChannel = null;
 const logRing = [];
 function logLine(line) {
@@ -63,7 +63,7 @@ async function releaseLspIfIdle() {
   if (!lspPromise && !vscode.workspace.getConfiguration("oiCpp").get("lsp", true)) return;
   lspPromise = null;
   try { await stopClangd(); } catch { /* ignore */ }
-  vscode.window.setStatusBarMessage("$(circle-slash) OI C++: clangd 已释放（无打开的 C++ 文件）", 4000);
+  vscode.window.setStatusBarMessage("$(circle-slash) WebC++: clangd 已释放（无打开的 C++ 文件）", 4000);
 }
 
 // ⚠️ 野但有效的兜底：clangd 的 pthread worker 数异常增长（正常只需 4 个）说明线程池被打爆，
@@ -112,7 +112,7 @@ function ensureLsp() {
     try {
       const files = await listCppFiles();
       const flags = String(cfg.get("flags", "-std=c++20"));
-      busy = vscode.window.setStatusBarMessage("$(sync~spin) OI C++: 启动 clangd(WASM)…", 600000);
+      busy = vscode.window.setStatusBarMessage("$(sync~spin) WebC++: 启动 clangd(WASM)…", 600000);
       const c = await startClangd(ctx, {
         files: files.length ? files : ["main.cpp"], flags,
         base: assetsBase(),
@@ -123,7 +123,7 @@ function ensureLsp() {
         onRestart: (info) => { silentRestartClangd(info); },
       });
       busy?.dispose(); busy = null;
-      vscode.window.setStatusBarMessage("$(check) OI C++: clangd 就绪", 5000);
+      vscode.window.setStatusBarMessage("$(check) WebC++: clangd 就绪", 5000);
       return c;
     } catch (e) {
       busy?.dispose(); busy = null;
@@ -170,7 +170,7 @@ class OiPty {
     // 补播 open 之前的写入（否则首次运行的 "[编译中…]" 会被静默丢掉）
     const pending = (this._pendingWrites || []).splice(0);
     for (const s2 of pending) this._w.fire(s2);
-    this.write("\x1b[36m[OI C++] " + this.fileName + " 的运行终端\x1b[0m\r\n");
+    this.write("\x1b[36m[WebC++] " + this.fileName + " 的运行终端\x1b[0m\r\n");
     this.write("\x1b[90mCtrl+Shift+B 编译运行；Ctrl+D=EOF；Ctrl+C=终止；编译完成后才能输入\x1b[0m\r\n");
   }
   setDimensions() {}
@@ -535,7 +535,7 @@ async function symbolsProbe() {
   const doc = ed.document;
   const fileName = doc.uri.path.split("/").pop() || "main.cpp";
   const cfg = vscode.workspace.getConfiguration("oiCpp");
-  const out = vscode.window.createOutputChannel("OI C++ 符号");
+  const out = vscode.window.createOutputChannel("WebC++ 符号");
   out.show(true);
   const log = (s) => { out.appendLine(s); console.log("[oi symbols]", s); };
 
@@ -577,7 +577,7 @@ async function symbolsProbe() {
       log(`  line ${line} (col ${hit.col}) → [${hit.r.startOffset},${hit.r.endOffset}) → ${b ? b.sourceFileURL.split("/").pop() + ":" + b.lineNumber : "?"}`);
     }
     log("== 完成 ==");
-    vscode.window.showInformationMessage("OI C++ 符号探针完成，见「OI C++ 符号」输出面板");
+    vscode.window.showInformationMessage("WebC++ 符号探针完成，见「WebC++ 符号」输出面板");
   } catch (e) {
     log("失败: " + ((e && (e.stack || e.message)) || e));
     vscode.window.showErrorMessage("符号探针失败: " + ((e && e.message) || e));
@@ -589,13 +589,13 @@ let pendingDebugTarget = null;
 /** 调试日志统一出口：Output 面板 + DevTools（否则浏览器里只能靠 DevTools，很难自查） */
 let debugChannel = null;
 function debugLog(s) {
-  if (!debugChannel) debugChannel = vscode.window.createOutputChannel("OI C++ 调试");
+  if (!debugChannel) debugChannel = vscode.window.createOutputChannel("WebC++ 调试");
   const line = String(s);
   console.log("[oi debug]", line);
   try { debugChannel.appendLine(line); } catch {}
 }
 function showDebugLog() {
-  if (!debugChannel) debugChannel = vscode.window.createOutputChannel("OI C++ 调试");
+  if (!debugChannel) debugChannel = vscode.window.createOutputChannel("WebC++ 调试");
   try { debugChannel.show(true); } catch {}
 }
 
@@ -660,7 +660,7 @@ async function startDebugging() {
     await vscode.debug.startDebugging(undefined, {
       type: "oi-cpp-wasm",
       request: "launch",
-      name: "OI C++ 调试（WASM）",
+      name: "WebC++ 调试（WASM）",
     });
   } catch (e) {
     debugLog("启动调试失败: " + ((e && (e.stack || e.message)) || e));
@@ -736,9 +736,9 @@ function registerDebugAdapter(c) {
     },
   }));
   c.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("oi-cpp-wasm", {
-    provideDebugConfigurations: () => [{ type: "oi-cpp-wasm", request: "launch", name: "OI C++ 调试（WASM）" }],
+    provideDebugConfigurations: () => [{ type: "oi-cpp-wasm", request: "launch", name: "WebC++ 调试（WASM）" }],
     resolveDebugConfiguration: (_folder, config) =>
-      config && config.type ? config : { type: "oi-cpp-wasm", request: "launch", name: "OI C++ 调试（WASM）" },
+      config && config.type ? config : { type: "oi-cpp-wasm", request: "launch", name: "WebC++ 调试（WASM）" },
   }));
 }
 
@@ -831,14 +831,14 @@ export async function activate(c) {
     c.subscriptions.push(statusItem);
     setStatus("idle");
 
-    logChannel = vscode.window.createOutputChannel("OI C++");
+    logChannel = vscode.window.createOutputChannel("WebC++");
     c.subscriptions.push(logChannel);
     logLine(`activate 开始（v${(c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?"}）`);
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.showLogs", () => logChannel.show(true)));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.copyLogs", async () => {
       // 输出面板内容无法直接读，改为重放最近日志（保存在环形缓冲里）
       await vscode.env.clipboard.writeText(logRing.join("\n"));
-      vscode.window.showInformationMessage("已复制 OI C++ 日志（最近 " + logRing.length + " 行）");
+      vscode.window.showInformationMessage("已复制 WebC++ 日志（最近 " + logRing.length + " 行）");
     }));
 
     c.subscriptions.push(vscode.window.onDidCloseTerminal((t) => {
@@ -871,7 +871,7 @@ export async function activate(c) {
     try { registerLocalFolder(c); }
     catch (e) {
       console.error("[oi-cpp-wasm] 注册本地文件夹失败:", e);
-      vscode.window.showErrorMessage("OI C++: 本地文件夹功能注册失败（打开文件夹命令不可用）: " + ((e && e.message) || e));
+      vscode.window.showErrorMessage("WebC++: 本地文件夹功能注册失败（打开文件夹命令不可用）: " + ((e && e.message) || e));
     }
 
     const maybeLsp = () => {

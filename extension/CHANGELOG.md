@@ -1,4 +1,4 @@
-# Changelog
+# Changelog — WebC++ (`web-cpp-tool`)
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
@@ -13,7 +13,7 @@
 - **源码级断点调试**：断点、单步（next / step in / step out）、调用栈、变量、watch 表达式。
   单步语义对齐 gdb：断点优先、`next` 不越帧、`stepOut` 以栈深度变浅为准。
 - **打开本地文件夹**：基于 File System Access API（`oiCpp.openFolder`）。
-- **日志通道**：「OI C++」输出通道，命令 `显示日志` / `复制日志`。
+- **日志通道**：「WebC++」输出通道，命令 `显示日志` / `复制日志`。
 - **中文界面**：内置简体中文语言包与中文命令文案。
 - **自托管打包**：`npm run pack` 产出可直接部署 Cloudflare Pages 的静态站。
 
