@@ -1,5 +1,5 @@
 (() => {
-  // src/core/dbg-stub.mjs
+  // extension/src/core/dbg-stub.mjs
   var DBG_STUB_SOURCE = `// oi-cpp-wasm debug stub (auto-generated, do not edit)
 // probe\uFF1A\u8FD4\u56DE\u672C\u6B21\u6682\u505C\u7684 locals \u5FEB\u7167\u5730\u5740\uFF080 = \u8FD9\u6B21\u4E0D\u9700\u8981\u6682\u505C\uFF09
 __attribute__((import_module("oi"), import_name("probe")))
@@ -14,7 +14,7 @@ __attribute__((used, visibility("default")))
 void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
 `;
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
   var CLOCKID_REALTIME = 0;
   var CLOCKID_MONOTONIC = 1;
   var ERRNO_SUCCESS = 0;
@@ -223,7 +223,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     }
   };
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
   var Debug = class Debug2 {
     enable(enabled) {
       this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -249,7 +249,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
   }
   var debug = new Debug(false);
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
   var WASIProcExit = class extends Error {
     constructor(code) {
       super("exit with exit code " + code);
@@ -290,7 +290,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
         buffer.setUint32(argc, self2.args.length, true);
         let buf_size = 0;
         for (const arg of self2.args) {
-          buf_size += arg.length + 1;
+          buf_size += new TextEncoder().encode(arg).length + 1;
         }
         buffer.setUint32(argv_buf_size, buf_size, true);
         debug.log(buffer.getUint32(argc, true), buffer.getUint32(argv_buf_size, true));
@@ -813,7 +813,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     }
   };
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
   var Fd = class {
     fd_allocate(offset, len) {
       return ERRNO_NOTSUP;
@@ -913,7 +913,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
   };
   Inode.next_ino = 1n;
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
   var OpenFile = class extends Fd {
     fd_allocate(offset, len) {
       if (this.file.size > offset + len) {
@@ -1398,7 +1398,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     }
   };
 
-  // src/core/tarfs.mjs
+  // extension/src/core/tarfs.mjs
   var BLOCK = 512;
   var str = (u8, off, len) => {
     let s = "";
@@ -1500,7 +1500,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     return f.data.slice();
   }
 
-  // src/core/flags.mjs
+  // extension/src/core/flags.mjs
   var TRIPLE = "wasm32-wasip1";
   var RESOURCE_DIR = "/lib/clang/22";
   var LIBDIR = "/lib/wasm32-wasi";
@@ -1528,7 +1528,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     return { kept, dropped };
   }
 
-  // src/core/toolchain.mjs
+  // extension/src/core/toolchain.mjs
   var Toolchain = class {
     /**
      * @param {{clangWasm: Uint8Array, lldWasm: Uint8Array, sysrootTar: Uint8Array, compatBits?: Uint8Array}} assets
@@ -1711,7 +1711,7 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
     }
   };
 
-  // src/web/compileWorker.js
+  // extension/src/web/compileWorker.js
   var post = (m, transfer) => self.postMessage(m, transfer || []);
   self.onerror = (e) => post({ type: "error", message: "compile worker \u5185\u90E8\u9519\u8BEF: " + (e.message || e) });
   self.addEventListener("unhandledrejection", (e) => {

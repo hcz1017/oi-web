@@ -1,5 +1,5 @@
 (() => {
-  // src/web/dwarf.worker.js
+  // extension/src/web/dwarf.worker.js
   (() => {
     let booted = false;
     const pending = [];

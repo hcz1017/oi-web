@@ -14,7 +14,7 @@
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
   var wasi_defs_exports = {};
   __export(wasi_defs_exports, {
     ADVICE_DONTNEED: () => ADVICE_DONTNEED,
@@ -214,7 +214,7 @@
   });
   var FD_STDIN, FD_STDOUT, FD_STDERR, CLOCKID_REALTIME, CLOCKID_MONOTONIC, CLOCKID_PROCESS_CPUTIME_ID, CLOCKID_THREAD_CPUTIME_ID, ERRNO_SUCCESS, ERRNO_2BIG, ERRNO_ACCES, ERRNO_ADDRINUSE, ERRNO_ADDRNOTAVAIL, ERRNO_AFNOSUPPORT, ERRNO_AGAIN, ERRNO_ALREADY, ERRNO_BADF, ERRNO_BADMSG, ERRNO_BUSY, ERRNO_CANCELED, ERRNO_CHILD, ERRNO_CONNABORTED, ERRNO_CONNREFUSED, ERRNO_CONNRESET, ERRNO_DEADLK, ERRNO_DESTADDRREQ, ERRNO_DOM, ERRNO_DQUOT, ERRNO_EXIST, ERRNO_FAULT, ERRNO_FBIG, ERRNO_HOSTUNREACH, ERRNO_IDRM, ERRNO_ILSEQ, ERRNO_INPROGRESS, ERRNO_INTR, ERRNO_INVAL, ERRNO_IO, ERRNO_ISCONN, ERRNO_ISDIR, ERRNO_LOOP, ERRNO_MFILE, ERRNO_MLINK, ERRNO_MSGSIZE, ERRNO_MULTIHOP, ERRNO_NAMETOOLONG, ERRNO_NETDOWN, ERRNO_NETRESET, ERRNO_NETUNREACH, ERRNO_NFILE, ERRNO_NOBUFS, ERRNO_NODEV, ERRNO_NOENT, ERRNO_NOEXEC, ERRNO_NOLCK, ERRNO_NOLINK, ERRNO_NOMEM, ERRNO_NOMSG, ERRNO_NOPROTOOPT, ERRNO_NOSPC, ERRNO_NOSYS, ERRNO_NOTCONN, ERRNO_NOTDIR, ERRNO_NOTEMPTY, ERRNO_NOTRECOVERABLE, ERRNO_NOTSOCK, ERRNO_NOTSUP, ERRNO_NOTTY, ERRNO_NXIO, ERRNO_OVERFLOW, ERRNO_OWNERDEAD, ERRNO_PERM, ERRNO_PIPE, ERRNO_PROTO, ERRNO_PROTONOSUPPORT, ERRNO_PROTOTYPE, ERRNO_RANGE, ERRNO_ROFS, ERRNO_SPIPE, ERRNO_SRCH, ERRNO_STALE, ERRNO_TIMEDOUT, ERRNO_TXTBSY, ERRNO_XDEV, ERRNO_NOTCAPABLE, RIGHTS_FD_DATASYNC, RIGHTS_FD_READ, RIGHTS_FD_SEEK, RIGHTS_FD_FDSTAT_SET_FLAGS, RIGHTS_FD_SYNC, RIGHTS_FD_TELL, RIGHTS_FD_WRITE, RIGHTS_FD_ADVISE, RIGHTS_FD_ALLOCATE, RIGHTS_PATH_CREATE_DIRECTORY, RIGHTS_PATH_CREATE_FILE, RIGHTS_PATH_LINK_SOURCE, RIGHTS_PATH_LINK_TARGET, RIGHTS_PATH_OPEN, RIGHTS_FD_READDIR, RIGHTS_PATH_READLINK, RIGHTS_PATH_RENAME_SOURCE, RIGHTS_PATH_RENAME_TARGET, RIGHTS_PATH_FILESTAT_GET, RIGHTS_PATH_FILESTAT_SET_SIZE, RIGHTS_PATH_FILESTAT_SET_TIMES, RIGHTS_FD_FILESTAT_GET, RIGHTS_FD_FILESTAT_SET_SIZE, RIGHTS_FD_FILESTAT_SET_TIMES, RIGHTS_PATH_SYMLINK, RIGHTS_PATH_REMOVE_DIRECTORY, RIGHTS_PATH_UNLINK_FILE, RIGHTS_POLL_FD_READWRITE, RIGHTS_SOCK_SHUTDOWN, Iovec, Ciovec, WHENCE_SET, WHENCE_CUR, WHENCE_END, FILETYPE_UNKNOWN, FILETYPE_BLOCK_DEVICE, FILETYPE_CHARACTER_DEVICE, FILETYPE_DIRECTORY, FILETYPE_REGULAR_FILE, FILETYPE_SOCKET_DGRAM, FILETYPE_SOCKET_STREAM, FILETYPE_SYMBOLIC_LINK, Dirent, ADVICE_NORMAL, ADVICE_SEQUENTIAL, ADVICE_RANDOM, ADVICE_WILLNEED, ADVICE_DONTNEED, ADVICE_NOREUSE, FDFLAGS_APPEND, FDFLAGS_DSYNC, FDFLAGS_NONBLOCK, FDFLAGS_RSYNC, FDFLAGS_SYNC, Fdstat, FSTFLAGS_ATIM, FSTFLAGS_ATIM_NOW, FSTFLAGS_MTIM, FSTFLAGS_MTIM_NOW, OFLAGS_CREAT, OFLAGS_DIRECTORY, OFLAGS_EXCL, OFLAGS_TRUNC, Filestat, EVENTTYPE_CLOCK, EVENTTYPE_FD_READ, EVENTTYPE_FD_WRITE, EVENTRWFLAGS_FD_READWRITE_HANGUP, SUBCLOCKFLAGS_SUBSCRIPTION_CLOCK_ABSTIME, Subscription, Event, SIGNAL_NONE, SIGNAL_HUP, SIGNAL_INT, SIGNAL_QUIT, SIGNAL_ILL, SIGNAL_TRAP, SIGNAL_ABRT, SIGNAL_BUS, SIGNAL_FPE, SIGNAL_KILL, SIGNAL_USR1, SIGNAL_SEGV, SIGNAL_USR2, SIGNAL_PIPE, SIGNAL_ALRM, SIGNAL_TERM, SIGNAL_CHLD, SIGNAL_CONT, SIGNAL_STOP, SIGNAL_TSTP, SIGNAL_TTIN, SIGNAL_TTOU, SIGNAL_URG, SIGNAL_XCPU, SIGNAL_XFSZ, SIGNAL_VTALRM, SIGNAL_PROF, SIGNAL_WINCH, SIGNAL_POLL, SIGNAL_PWR, SIGNAL_SYS, RIFLAGS_RECV_PEEK, RIFLAGS_RECV_WAITALL, ROFLAGS_RECV_DATA_TRUNCATED, SDFLAGS_RD, SDFLAGS_WR, PREOPENTYPE_DIR, PrestatDir, Prestat;
   var init_wasi_defs = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js"() {
       FD_STDIN = 0;
       FD_STDOUT = 1;
       FD_STDERR = 2;
@@ -538,7 +538,7 @@
     }
   });
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
   function createLogger(enabled, prefix) {
     if (enabled) {
       const a = (() => {
@@ -551,7 +551,7 @@
   }
   var Debug, debug;
   var init_debug = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/debug.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/debug.js"() {
       Debug = class Debug2 {
         enable(enabled) {
           this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -569,10 +569,10 @@
     }
   });
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
   var WASIProcExit, WASI;
   var init_wasi = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js"() {
       init_wasi_defs();
       init_debug();
       WASIProcExit = class extends Error {
@@ -615,7 +615,7 @@
             buffer.setUint32(argc, self2.args.length, true);
             let buf_size = 0;
             for (const arg of self2.args) {
-              buf_size += arg.length + 1;
+              buf_size += new TextEncoder().encode(arg).length + 1;
             }
             buffer.setUint32(argv_buf_size, buf_size, true);
             debug.log(buffer.getUint32(argc, true), buffer.getUint32(argv_buf_size, true));
@@ -1140,10 +1140,10 @@
     }
   });
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
   var Fd, Inode;
   var init_fd = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/fd.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/fd.js"() {
       init_wasi_defs();
       Fd = class {
         fd_allocate(offset, len) {
@@ -1246,10 +1246,10 @@
     }
   });
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
   var OpenFile, OpenDirectory, PreopenDirectory, File, Path, Directory, ConsoleStdout;
   var init_fs_mem = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js"() {
       init_debug();
       init_wasi_defs();
       init_fd();
@@ -1739,10 +1739,10 @@
     }
   });
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/fs_opfs.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fs_opfs.js
   var SyncOPFSFile, OpenSyncOPFSFile;
   var init_fs_opfs = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/fs_opfs.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/fs_opfs.js"() {
       init_wasi_defs();
       init_fd();
       SyncOPFSFile = class extends Inode {
@@ -1835,7 +1835,7 @@
     }
   });
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/strace.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/strace.js
   function strace(imports, no_trace) {
     return new Proxy(imports, { get(target, prop, receiver) {
       const f = Reflect.get(target, prop, receiver);
@@ -1849,11 +1849,11 @@
     } });
   }
   var init_strace = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/strace.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/strace.js"() {
     }
   });
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/index.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/index.js
   var dist_exports = {};
   __export(dist_exports, {
     ConsoleStdout: () => ConsoleStdout,
@@ -1872,7 +1872,7 @@
     wasi: () => wasi_defs_exports
   });
   var init_dist = __esm({
-    "node_modules/@bjorn3/browser_wasi_shim/dist/index.js"() {
+    "extension/node_modules/@bjorn3/browser_wasi_shim/dist/index.js"() {
       init_wasi();
       init_fd();
       init_fs_mem();
@@ -1882,7 +1882,7 @@
     }
   });
 
-  // src/web/runWorker.js
+  // extension/src/web/runWorker.js
   init_dist();
   var post = (m, transfer) => self.postMessage(m, transfer || []);
   var TermStdin = class extends Fd {
