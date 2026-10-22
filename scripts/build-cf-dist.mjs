@@ -9,8 +9,7 @@
 //   README-deploy.md           部署说明
 //
 // 用法：node scripts/build-cf-dist.mjs
-import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync, readdirSync, statSync, renameSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -88,38 +87,13 @@ for (const item of ["package.json", "package.nls.json", "LICENSE", "README.md", 
   if (existsSync(src)) cpSync(src, path.join(extOut, item), { recursive: true });
 }
 
-// ---------- 2.5) 扩展主 bundle 加内容哈希 ----------
-// CF 的缓存按 4 小时计，manifest 是 no-cache 而 bundle 命中缓存时会出现
-// "命令面板有命令、点了 command not found"。文件名带 hash 后 URL 变化即可绕过。
-{
-  const webDir = path.join(extOut, "dist/web");
-  const bundle = path.join(webDir, "extension.js");
-  if (existsSync(bundle)) {
-    const bytes = readFileSync(bundle);
-    const h = createHash("sha1").update(bytes).digest("hex").slice(0, 10);
-    const hashed = path.join(webDir, `extension.${h}.js`);
-    renameSync(bundle, hashed);
-    const pkgPath = path.join(extOut, "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    pkg.browser = `./dist/web/extension.${h}.js`;
-    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-    console.log(`    主 bundle: extension.${h}.js（package.json 已同步）`);
-
-    // worker 脚本同样按内容哈希重命名，并把 bundle 里的文件名常量一起改写：
-    // 否则浏览器缓存 4h 的旧 worker（如 clangdWorker.js）会让"新逻辑'根本没跑。
-    let bundleText = readFileSync(hashed, "utf8");
-    for (const name of ["clangdWorker.js", "compileWorker.js", "runWorker.js", "debugWorker.js", "dwarfWorker.js"]) {
-      const src = path.join(webDir, name);
-      if (!existsSync(src)) continue;
-      const wh = createHash("sha1").update(readFileSync(src)).digest("hex").slice(0, 10);
-      const target = `${name.replace(/\.js$/, "")}.${wh}.js`;
-      renameSync(src, path.join(webDir, target));
-      bundleText = bundleText.split(`"${name}"`).join(`"${target}"`).split(`'${name}'`).join(`'${target}'`);
-      console.log(`    worker: ${target}`);
-    }
-    writeFileSync(hashed, bundleText);
-  }
-}
+// ---------- 2.5) 文件名保持原样（不做内容哈希） ----------
+// 曾经给 extension/各 worker 做过内容哈希，目的是绕 CF 的 4h 缓存。实测代价大于收益：
+//   - 只要 worker 内容变了而宿主代码没变，两次构建的 extension 文件名可能一样、内容不同，
+//     缓存里那份旧 bundle 就会去加载已不存在的旧 worker 名（importScripts failed to load）；
+//   - 部署后旧哈希文件全部 404，出问题难排查。
+// 现在统一用固定文件名，靠 _headers 里的 Cache-Control: no-cache 强制每次校验。
+// ⚠️ 改这里之前先确认 _headers 里 /static/devextensions/dist/web/* 仍是 no-cache。
 
 // ---------- 3) index.html（地址运行时修正 + SW 兜底） ----------
 console.log("[3/4] 生成 index.html …");
@@ -228,10 +202,15 @@ WASM 线程（clangd）与 SharedArrayBuffer 要求页面处于跨源隔离状�
 let zipPath = null;
 try {
   // zip 放仓库根（不要放进 dist-cf，否则会被当成站点文件一起上传）
-  execFileSync("zip", ["-qr", path.join(ROOT, "oi-web-cf.zip"), "."], { cwd: OUT });
+  // ⚠️ 必须先删旧的：`zip -q` 是"更新模式"，会保留 zip 里已删除/已改名的旧条目，
+  //    导致 zip 里同时存在 dwarfWorker.js / dwarfWorker.deae5d7ddb.js / dwarfWorker.<新>.js
+  //    三份，体积膨胀且极易误传旧文件。
   zipPath = path.join(ROOT, "oi-web-cf.zip");
+  rmSync(zipPath, { force: true });
+  execFileSync("zip", ["-qr", zipPath, "."], { cwd: OUT });
 } catch (e) {
   console.warn("⚠ 未生成 zip（缺少 zip 命令？）：" + e.message);
+  zipPath = null;
 }
 
 // 统计

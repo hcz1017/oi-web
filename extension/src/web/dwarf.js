@@ -30,7 +30,17 @@ export class DwarfEngine {
     });
     this.worker.addEventListener("message", (ev) => this._onMessage(ev.data));
     this.worker.addEventListener("error", (e) => {
-      const err = new Error("dwarf worker error: " + ((e && (e.message || e.error)) || e));
+      const raw = (e && (e.message || e.error)) || e;
+      let msg = "dwarf worker error: " + raw;
+      // ⚠️ 经典 worker 的"脚本本身加载失败"在 Chrome 里也报成
+      //    "Failed to execute 'importScripts' … The script at '<url>' failed to load"，
+      //    最常见原因是【浏览器/边缘缓存了旧 extension bundle，去加载已不存在的旧 worker 文件名】。
+      //    打包脚本已改成真内容哈希避免再发生，这里给用户一句能自救的提示。
+      if (/importScripts|failed to load|NetworkError/i.test(String(raw))) {
+        msg += `\n提示：worker 脚本 ${workerUrl} 加载失败 —— 通常是浏览器缓存了旧版本的扩展。` +
+          "请按 Ctrl+Shift+R（Mac: Cmd+Shift+R）强制刷新页面后重试。";
+      }
+      const err = new Error(msg);
       this._rejectReady(err);
       for (const { reject } of this.requests.values()) reject(err);
       this.requests.clear();
