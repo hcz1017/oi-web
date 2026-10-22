@@ -1,7 +1,7 @@
 {
   "name": "oi-cpp-wasm",
-  "displayName": "OI C++ (WASM, terminal run)",
-  "description": "在 VS Code Web 里用 WASM Clang 编译单文件 C++，并在真实终端里交互运行。",
+  "displayName": "OI C++ — C++ in VS Code Web (WASM)",
+  "description": "在 VS Code for the Web（vscode.dev / 自托管）里写、跑、调试 C++：WASM Clang 编译、真实终端交互运行、clangd 补全，以及源码级断点调试（wdb）。",
   "version": "0.1.0",
   "publisher": "oi-web",
   "license": "AGPL-3.0-or-later",
@@ -9,7 +9,10 @@
     "vscode": "^1.91.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Debuggers",
+    "Education",
+    "Other"
   ],
   "extensionKind": [
     "workspace"
@@ -214,10 +217,8 @@
   },
   "scripts": {
     "bundle": "node esbuild.mjs",
-    "package": "node esbuild.mjs && npx --no-install @vscode/vsce package --no-dependencies --allow-missing-repository",
     "test": "node test/smoke.mjs",
     "test:debug": "node test/debug-instr.mjs",
-    "dwarf": "node scripts/build-dwarf-worker.mjs",
     "test:session": "node test/debug-session.mjs",
     "test:dap": "node test/dap-flow.mjs",
     "test:client": "node test/dwarf-client.mjs",
@@ -227,12 +228,44 @@
     "test:vars": "node test/debug-vars.mjs",
     "test:lineedit": "node test/lineedit.mjs",
     "test:stl": "node test/debug-stl.mjs",
-    "postinstall": "node ../scripts/patch-wasi-shim.mjs"
+    "postinstall": "node ../scripts/patch-wasi-shim.mjs",
+    "vsix": "node esbuild.mjs && npx --no-install @vscode/vsce package --target web --no-dependencies --allow-missing-repository",
+    "publish:marketplace": "node esbuild.mjs && npx --no-install @vscode/vsce publish --target web --no-dependencies"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",
     "esbuild": "^0.28.2",
     "vscode-languageclient": "^10.1.2",
     "@vscode/vsce": "^3.2.0"
-  }
+  },
+  "icon": "icon.png",
+  "keywords": [
+    "c++",
+    "cpp",
+    "wasm",
+    "webassembly",
+    "clang",
+    "clangd",
+    "lsp",
+    "debug",
+    "debugger",
+    "dwarf",
+    "competitive-programming",
+    "oi",
+    "vscode-web",
+    "no-backend",
+    "web-ide"
+  ],
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CHANGE-ME/oi-cpp-wasm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CHANGE-ME/oi-cpp-wasm/issues"
+  },
+  "homepage": "https://github.com/CHANGE-ME/oi-cpp-wasm#readme"
 }

@@ -1,6 +1,6 @@
 # Third-party notices / 第三方组件声明
 
-本扩展自身的代码是 MIT（见 ../LICENSE）。下列第三方组件随包分发，各自许可见下。
+本扩展自身的代码是 **AGPL-3.0-or-later**（见 `../LICENSE`）。下列第三方组件随包分发，各自许可见下。
 
 ## 1. WASM 工具链（assets/）
 
@@ -34,7 +34,7 @@ LLVM 许可原文见 `notices/LLVM-LICENSE.txt`；WASI 相关许可见 `notices/
 - 编译产物（用户程序）链接的 `libc.a`/`libc++.a`/`libc++abi.a` 来自 wasi-sdk sysroot，其许可见上表；
   用户程序的分发不受本项目许可约束。
 
-## @vscode/dwarf-debugging（DWARF 符号引擎）
+## @vscode/dwarf-debugging（DWARF 符号引擎，经 wdb 引入）
 
 - 用途：把源码行映射到 wasm 指令偏移、解析变量与表达式（调试功能的符号层）
 - 来源：Microsoft，`@vscode/dwarf-debugging@0.0.2`
@@ -42,11 +42,18 @@ LLVM 许可原文见 `notices/LLVM-LICENSE.txt`；WASI 相关许可见 `notices/
   - 其上游是 Chrome DevTools 的 C/C++ DWARF 调试扩展：
     <https://github.com/ChromeDevTools/devtools-frontend/tree/main/extensions/cxx_debugging>
 - 许可证：MIT（Copyright (c) Microsoft Corporation）
-- 本仓库里的产物：
+- 引入方式：调试器核心已抽成独立项目 **wdb**（AGPL-3.0-or-later）；
+  引擎资产的真身在 wdb 仓库的 `assets/dwarf/`，构建时同步到本扩展的 `assets/dwarf/`：
   - `assets/dwarf/SymbolsBackend.wasm.gz`：原样取得的 DWARF 引擎（重新 gzip 压缩）
   - `assets/dwarf/worker.js`：上游 worker 的浏览器适配版（`scripts/build-dwarf-worker.mjs` 生成：
     仅在文件头注入 require/`parentPort`/`fs` shim，其余逻辑未改）
-  - `assets/dwarf/LICENSE`：原许可证全文
+  - `assets/dwarf/LICENSE`：原许可证全文（MIT 要求随分发保留）
+
+## wdb（调试器核心，AGPL-3.0-or-later）
+
+- 内容：wasm 插桩、暂停运行时、DWARF 符号服务、DAP 适配器（bundle 进 `dist/web/*.js`）
+- stub 例外：wdb 的 `wdb-stub.c` 带例外条款，**链接进用户程序不会传染 AGPL**
+- 许可：AGPL-3.0-or-later + WdbStub-exception
 
 ## 中文语言包翻译数据（web/zh-main.i18n.json）
 

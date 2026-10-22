@@ -1,5 +1,5 @@
 // 复用 C++ Studio Web 的 WASM 工具链（Clang 22.1.8 / wasm-ld / wasi-sdk sysroot），
-import { DBG_STUB_SOURCE } from "./dbg-stub.mjs";
+import { DBG_STUB_SOURCE } from "../../../wdb/src/stub/wdb-stub.mjs";
 // 驱动完全自己写：WASI 不能 fork，所以直接以 -cc1 模式调用 clang，再调 wasm-ld 链接。
 // 产物是 wasm32-wasip1 模块。
 import {

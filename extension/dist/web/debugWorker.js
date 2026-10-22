@@ -993,7 +993,7 @@
     }
   };
 
-  // extension/src/web/debug.worker.js
+  // wdb/src/runtime/debug.worker.js
   var post = (m, transfer) => self.postMessage(m, transfer || []);
   var TermStdin = class extends Fd {
     constructor(sab) {
@@ -1199,7 +1199,7 @@
     try {
       inst = await WebAssembly.instantiate(mod, {
         wasi_snapshot_preview1: wasi.wasiImport,
-        oi: { probe, pause }
+        wdb: { probe, pause }
       });
     } catch (e) {
       post({ type: "error", message: "\u5B9E\u4F8B\u5316\u5931\u8D25: " + (e && e.message || e) });

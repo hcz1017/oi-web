@@ -35,7 +35,7 @@ globalThis.Worker = class CompatWorker extends NodeWorker {
 // ---------- 打测试包（vscode → 桩）----------
 const outfile = path.join(EXT, ".dev/adapter-for-test.mjs");
 await esbuild.build({
-  entryPoints: [path.join(EXT, "src/web/debugAdapter.js")],
+  entryPoints: [path.join(EXT, "..", "wdb", "src", "adapters", "dap", "adapter.js")],
   bundle: true,
   format: "esm",
   platform: "neutral",

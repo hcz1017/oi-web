@@ -8,7 +8,7 @@ import { Worker } from "worker_threads";
 import path from "path";
 import { fileURLToPath } from "url";
 import { Toolchain } from "../src/core/toolchain.mjs";
-import { parseWasm, instrumentWasm } from "../src/core/wasm-bin.mjs";
+import { parseWasm, instrumentWasm } from "../../wdb/src/instrument/wasm-bin.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, "..");
@@ -40,7 +40,7 @@ if (!must(!!r.wasm, "编译（带 probe/pause 桩）")) process.exit(1);
 const orig = new Uint8Array(r.wasm);
 const info = parseWasm(orig);
 must(info.probeImportIndex >= 0 && info.pauseImportIndex >= 0,
-  `产物里有 oi.probe(#${info.probeImportIndex}) 和 oi.pause(#${info.pauseImportIndex})`);
+  `产物里有 wdb.probe(#${info.probeImportIndex}) 和 wdb.pause(#${info.pauseImportIndex})`);
 
 // ---------- DWARF 引擎（宿主 getter 从暂停快照读） ----------
 let spawn;

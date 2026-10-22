@@ -1,8 +1,13 @@
-# VSIX 只放运行所需：dist + assets + notices + manifest/许可
+# VSIX 只放运行所需：dist + assets + notices + manifest/许可/图标文档
 src/**
 sample/**
 test/**
+docs/**
+node_modules/**
 esbuild.mjs
 package-lock.json
+.dev/**
 **/*.map
 **/.gitignore
+**/*.tgz
+**/*.zip

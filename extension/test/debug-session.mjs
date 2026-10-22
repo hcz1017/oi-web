@@ -8,7 +8,7 @@ import { Worker } from "worker_threads";
 import path from "path";
 import { fileURLToPath } from "url";
 import { Toolchain } from "../src/core/toolchain.mjs";
-import { parseWasm, instrumentWasm } from "../src/core/wasm-bin.mjs";
+import { parseWasm, instrumentWasm } from "../../wdb/src/instrument/wasm-bin.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, "..");
@@ -47,7 +47,7 @@ if (!must(!!r.wasm, "调试构建编译成功")) process.exit(1);
 const orig = new Uint8Array(r.wasm);
 const info = parseWasm(orig);
 const baseOut = [];
-const baseCode = await tc.run(orig, { onOut: (b) => baseOut.push(Buffer.from(b)), extraImports: { oi: { probe() { return 0; }, pause() {} } } });
+const baseCode = await tc.run(orig, { onOut: (b) => baseOut.push(Buffer.from(b)), extraImports: { wdb: { probe() { return 0; }, pause() {} } } });
 const baseText = Buffer.concat(baseOut).toString().trim();
 must(baseCode === 0 && baseText === "3", `基线运行输出 ${JSON.stringify(baseText)}`);
 

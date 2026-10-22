@@ -13,8 +13,8 @@ import * as vscode from "vscode";
 import { startClangd, stopClangd, resetClangdFatal } from "./lsp.js";
 import { registerHeaderFs } from "./headerfs.js";
 import { registerLocalFolder } from "./fsa-folder.js";
-import { DwarfEngine } from "./dwarf.js";
-import { WasmDebugAdapter } from "./debugAdapter.js";
+import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
+import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 
 const TERM_NAME = "OI C++ (WASM)";
@@ -465,7 +465,7 @@ function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, d
       },
       _fail(msg) { clearTimeout(timer); reject(new Error(msg)); },
     });
-    // ⚠️ 必须把 debugStub 一起传下去：调试构建靠它链入 src/core/dbg-stub.c，
+    // ⚠️ 必须把 debugStub 一起传下去：调试构建靠它链入 wdb 的 src/stub/wdb-stub.c，
     //    否则产物里没有 import "oi"."probe"，插桩阶段会直接报"桩没链上"
     shared.worker.postMessage({ type: "compile", id, source, fileName, flags, opt, debugInfo, debugStub });
   });
@@ -724,6 +724,13 @@ function registerDebugAdapter(c) {
         onSnapshot: (mem) => { symbols.memory = mem; },
         onFrame: (f) => { symbols.frame = f; },
         terminal,
+        // wdb 的 DAP 适配器是宿主无关的，状态提示由我们（VS Code）自己画
+        onStatus: (text) => {
+          try {
+            symbols.status?.dispose?.();
+            symbols.status = vscode.window.setStatusBarMessage(String(text), 600000);
+          } catch {}
+        },
       });
       return new vscode.DebugAdapterInlineImplementation(adapter);
     },

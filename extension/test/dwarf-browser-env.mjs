@@ -15,6 +15,7 @@ import { Toolchain } from "../src/core/toolchain.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, "..");
 const A = (f) => path.join(EXT, "assets", f);
+const WDB_A = (f) => path.join(EXT, "..", "wdb", "assets", f);   // wdb 的 dwarf 引擎资产
 
 let pass = true;
 const must = (c, m) => { console.log(`${c ? "✓" : "✗"} ${m}`); if (!c) pass = false; return c; };
@@ -34,8 +35,8 @@ const r = await tc.compile({
 if (!must(!!r.wasm, "编译测试程序")) process.exit(1);
 
 // ---------- 造一个「像浏览器 Worker」的 realm ----------
-const engineCode = readFileSync(path.join(EXT, "assets/dwarf/worker.js"), "utf8");
-const gz = readFileSync(path.join(EXT, "assets/dwarf/SymbolsBackend.wasm.gz"));
+const engineCode = readFileSync(WDB_A("dwarf/worker.js"), "utf8");
+const gz = readFileSync(WDB_A("dwarf/SymbolsBackend.wasm.gz"));
 
 const outbox = [];
 const self = {
@@ -45,7 +46,7 @@ const self = {
   removeEventListener: () => {},
   close: () => {},
   crypto: globalThis.crypto,
-  __oiDwarfBase: "http://127.0.0.1:8083/static/devextensions/assets",
+  __wdbDwarfBase: "http://127.0.0.1:8083/static/devextensions/assets",
 };
 let fetchCount = 0;
 const fetched = [];

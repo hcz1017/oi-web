@@ -7,7 +7,7 @@ import { createRequire } from "module";
 import path from "path";
 import { fileURLToPath } from "url";
 import { Toolchain } from "../src/core/toolchain.mjs";
-import { parseWasm, instrumentWasm, firstInstrOffset } from "../src/core/wasm-bin.mjs";
+import { parseWasm, instrumentWasm, firstInstrOffset } from "../../wdb/src/instrument/wasm-bin.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, "..");
@@ -52,7 +52,7 @@ must(!!r.wasm, `编译（debugStub）${Date.now() - t0}ms，wasm ${r.wasm ? (r.w
 if (!r.wasm) { console.log(r.log.slice(-800)); process.exit(1); }
 const orig = new Uint8Array(r.wasm);
 const info = parseWasm(orig);
-must(info.probeImportIndex >= 0, `产物里有 import "oi"."probe"（函数索引 ${info.probeImportIndex}）`);
+must(info.probeImportIndex >= 0, `产物里有 import "wdb"."probe"（函数索引 ${info.probeImportIndex}）`);
 must(info.code.bodies.length > 10, `函数体数量 ${info.code.bodies.length}`);
 
 // ---------- 2. 基线输出 ----------
@@ -60,7 +60,7 @@ const runWith = async (wasm, onProbe) => {
   const out = [];
   const code = await tc.run(wasm, {
     onOut: (b) => out.push(Buffer.from(b)),
-    extraImports: { oi: { probe: (id) => { onProbe(id); return 0; }, pause: () => {} } },
+    extraImports: { wdb: { probe: (id) => { onProbe(id); return 0; }, pause: () => {} } },
   });
   return { code, text: Buffer.concat(out).toString().trim() };
 };

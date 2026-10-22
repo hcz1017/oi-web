@@ -1,16 +1,20 @@
 import esbuild from "esbuild";
-import { mkdirSync } from "fs";
+import { mkdirSync, cpSync, existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 // 用绝对路径，避免"从仓库根执行 node oi-cpp-wasm/esbuild.mjs"时产物写错地方
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(HERE, "src", "web");
+// wdb 核心（独立仓库，默认与本仓库同级：<repo>/../wdb 或 <repo>/wdb）
+const WDB = path.resolve(HERE, "..", "wdb", "src");
 const OUT = path.join(HERE, "dist", "web");
 mkdirSync(OUT, { recursive: true });
 
 const common = {
   bundle: true,
+  resolveExtensions: [".mjs", ".js"],
+  nodePaths: [path.join(HERE, "node_modules")],
   platform: "browser",
   target: ["es2022"],
   logLevel: "info",
@@ -68,7 +72,7 @@ await esbuild.build({
 //    所以这里只打包我们自己的引导逻辑。
 await esbuild.build({
   ...common,
-  entryPoints: [path.join(SRC, "dwarf.worker.js")],
+  entryPoints: [path.join(WDB, "symbols/dwarf.worker.js")],
   outfile: path.join(OUT, "dwarfWorker.js"),
   format: "iife",
   minify: false,
@@ -77,10 +81,20 @@ await esbuild.build({
 // 6) 调试运行 worker：运行插桩后的 wasm（经典 worker）
 await esbuild.build({
   ...common,
-  entryPoints: [path.join(SRC, "debug.worker.js")],
+  entryPoints: [path.join(WDB, "runtime/debug.worker.js")],
   outfile: path.join(OUT, "debugWorker.js"),
   format: "iife",
   minify: false,
 });
+
+// 7) 把 wdb 的 DWARF 引擎资产拷进扩展（运行时按 assets/dwarf/... 取）
+//    资产的真身在 wdb 仓库里，这里是构建期同步，避免两处各存一份 12MB。
+const wdbDwarf = path.resolve(HERE, "..", "wdb", "assets", "dwarf");
+if (existsSync(wdbDwarf)) {
+  cpSync(wdbDwarf, path.join(HERE, "assets", "dwarf"), { recursive: true });
+  console.log("copied: wdb/assets/dwarf → assets/dwarf");
+} else {
+  console.warn("⚠ 未找到 wdb/assets/dwarf（wdb 仓库不在预期位置？DWARF 引擎缺失，调试会失败）");
+}
 
 console.log("bundled: extension.js / compileWorker.js / runWorker.js / clangdWorker.js / dwarfWorker.js / debugWorker.js");

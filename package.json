@@ -2,7 +2,7 @@
   "name": "oi-web",
   "version": "0.2.0",
   "private": true,
-  "description": "浏览器里的 C++：WASM Clang + 真 VS Code 终端 + clangd（纯静态，零后端）",
+  "description": "浏览器里的 C++：WASM Clang + 真 VS Code 终端 + clangd + 源码级调试（纯静态，零后端）",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "web": "bash ./run-web.sh",
@@ -15,9 +15,9 @@
     "nls": "node scripts/build-zh-nls.mjs",
     "fetch:web": "node scripts/fetch-vscode-web.mjs",
     "patch:test-web": "node scripts/patch-test-web.mjs",
-    "dwarf": "node scripts/build-dwarf-worker.mjs",
     "test": "node extension/test/smoke.mjs",
-    "test:all": "node extension/test/lineedit.mjs && node extension/test/smoke.mjs && node extension/test/debug-instr.mjs && node extension/test/debug-session.mjs && node extension/test/debug-eval.mjs && node extension/test/debug-vars.mjs && node extension/test/debug-stl.mjs && node extension/test/dap-flow.mjs && node extension/test/dwarf-client.mjs && node extension/test/dwarf-browser-env.mjs"
+    "test:all": "node extension/test/lineedit.mjs && node extension/test/smoke.mjs && node extension/test/debug-instr.mjs && node extension/test/debug-session.mjs && node extension/test/debug-eval.mjs && node extension/test/debug-vars.mjs && node extension/test/debug-stl.mjs && node extension/test/dap-flow.mjs && node extension/test/dwarf-client.mjs && node extension/test/dwarf-browser-env.mjs",
+    "wdb": "cd wdb && npm test"
   },
   "devDependencies": {
     "@vscode/test-web": "^0.0.81",

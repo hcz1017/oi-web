@@ -25,7 +25,7 @@ class FakeWorker {
 const workers = [];
 globalThis.Worker = class extends FakeWorker { constructor(url) { super(url); workers.push(this); } };
 
-const { DwarfEngine } = await import("../src/web/dwarf.js");
+const { DwarfEngine } = await import("../../wdb/src/symbols/dwarf.js");
 
 const host = {
   getWasmLinearMemory(offset, length) {
@@ -41,11 +41,11 @@ const host = {
 const engine = new DwarfEngine("fake://dwarfWorker.js", "https://assets/base/", host);
 const w = workers[0];
 must(!!w && w.url === "fake://dwarfWorker.js", "worker 已创建");
-must(w.sent.length === 1 && w.sent[0].m.__oiConfig && w.sent[0].m.__oiConfig.base === "https://assets/base",
-  `首条消息是 __oiConfig（base=${w.sent[0] && w.sent[0].m.__oiConfig && w.sent[0].m.__oiConfig.base}）`);
+must(w.sent.length === 1 && w.sent[0].m.__wdbConfig && w.sent[0].m.__wdbConfig.base === "https://assets/base",
+  `首条消息是 __wdbConfig（base=${w.sent[0] && w.sent[0].m.__wdbConfig && w.sent[0].m.__wdbConfig.base}）`);
 
 // 1) ready → hello 的响应是 undefined（真实引擎就是这样），不能抛
-w.event({ __oiReady: true });
+w.event({ __wdbReady: true });
 const starting = engine.start();
 await Promise.resolve();          // 让 hello 发出去
 const helloSent = w.sent.find((x) => x.m.request && x.m.request.method === "hello");

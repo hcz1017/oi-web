@@ -25,3 +25,5 @@ dist-cf/
 oi-web-cf.zip
 .wrangler/
 .ref/
+extension/assets/dwarf/
+wdb/
