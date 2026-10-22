@@ -17,13 +17,18 @@
 | 仓库 | 内容 | 位置 |
 |---|---|---|
 | **oi-web**（本仓库） | VS Code Web 静态站、扩展本体、clangd、编译工具链、部署脚本 | 当前目录 |
-| **wdb** | 通用的浏览器内 WebAssembly 源码级调试器（AGPL-3.0-or-later） | `../wdb` 或 `./wdb`（**不进本仓库 git**） |
+| **wdb** | 通用的浏览器内 WebAssembly 源码级调试器（AGPL-3.0-or-later） | `./wdb` —— **git submodule** |
 
-`wdb` 是独立 git 仓库，本仓库只按**相对路径**引用它的源码（`extension/esbuild.mjs` 里的 `WDB` 常量），
+`wdb` 是独立仓库（<https://github.com/hcz1017/wdb>），本仓库以 **submodule** 方式挂在 `./wdb`。
 构建时把它 bundle 进 `dist/web/*.js`，并把 `wdb/assets/dwarf/` 同步到 `extension/assets/dwarf/`。
 
-> ⚠️ 因此：**克隆本仓库后 `npm run build` 需要旁边有 wdb 仓库**，否则 DWARF 引擎缺失、调试不可用
-> （编译/运行/clangd 不受影响）。私有部署请用 submodule 或直接包含 wdb 源码。
+```bash
+# 克隆时带上 submodule（推荐）
+git clone --recurse-submodules https://github.com/hcz1017/oi-web.git
+
+# 已经克隆了但忘了 submodule
+git submodule update --init --recursive
+```
 
 ## 快速开始
 

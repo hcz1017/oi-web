@@ -9,6 +9,18 @@ const SRC = path.join(HERE, "src", "web");
 // wdb 核心（独立仓库，默认与本仓库同级：<repo>/../wdb 或 <repo>/wdb）
 const WDB = path.resolve(HERE, "..", "wdb", "src");
 const OUT = path.join(HERE, "dist", "web");
+
+// ⚠️ wdb 是 git submodule（调试器核心）。忘了初始化就构建时会报一堆 esbuild 解析错误，
+//    这里提前给出人话提示，省得以为是仓库坏了。
+if (!existsSync(path.join(WDB, "index.js"))) {
+  console.error(
+    "\n✗ 缺少 wdb 源码（调试器核心）。请在仓库根执行：\n" +
+    "    git submodule update --init --recursive\n" +
+    "  或克隆时用：\n" +
+    "    git clone --recurse-submodules https://github.com/hcz1017/oi-web.git\n",
+  );
+  process.exit(1);
+}
 mkdirSync(OUT, { recursive: true });
 
 const common = {
