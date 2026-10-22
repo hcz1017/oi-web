@@ -1677,11 +1677,14 @@ void __oi_dbg_anchor(void) { __oi_probe(-1); __oi_pause(); }
       }
       const link = [
         "--export-dynamic",
-        // 调试构建每层递归会经过插桩 probe（暂停时还要走 pause/Atomics.wait），
-        // 栈消耗比平时大得多 → 调试栈 512MB（配合分段内存快照，暂停只拷贝实际用到的区域）
-        // 普通构建 1MB
+        // 栈统一 512MB（普通构建也一样）。
+        //   · 调试构建：每层递归都要过插桩 probe（暂停时还走 pause/Atomics.wait），
+        //     栈消耗远大于平时，小栈会在深递归（如 merge）里直接爆。
+        //   · 普通构建：OI 题经常深递归（线段树/DFS），1MB 很容易爆栈，而爆栈在 wasm 里
+        //     表现为莫名其妙的 trap，排查成本高；统一成大栈省事。
+        // 代价：初始线性内存就按 512MB + 数据段预留（浏览器是虚拟地址预留，实际只提交用到的页）。
         "-z",
-        stubObj ? "stack-size=536870912" : "stack-size=1048576",
+        "stack-size=536870912",
         `-L${LIBDIR}/noeh`,
         `-L${LIBDIR}`,
         `${LIBDIR}/crt1.o`,
