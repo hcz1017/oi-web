@@ -18,7 +18,7 @@
 - **自托管打包**：`npm run pack` 产出可直接部署 Cloudflare Pages 的静态站。
 
 ### 调试器内核
-- 调试能力已抽成独立项目 **[wdb](https://github.com/CHANGE-ME/wdb)**（AGPL-3.0-or-later，
+- 调试能力已抽成独立项目 **[wdb](https://github.com/hcz1017/wdb)**（AGPL-3.0-or-later，
   stub 带例外条款），本扩展作为其中一个 DAP 宿主。
 
 ### 说明

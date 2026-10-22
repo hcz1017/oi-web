@@ -13,7 +13,7 @@
 | **编译** | Clang 22.1.8 编译到 WebAssembly（`wasm32-wasip1`），产物直接在浏览器里跑 |
 | **交互终端** | 真终端：stdin/stdout 直连，`Ctrl+D` = EOF，`Ctrl+C` = 终止 |
 | **补全 / 诊断** | 内置 clangd（WASM）：补全、悬浮、跳转、诊断、格式化，含参数名与推导类型的 inlay hints |
-| **断点调试** | 源码级调试：断点、单步（`F10`/`F11`/`Shift+F11`）、调用栈、变量、watch（内核见 [wdb](https://github.com/CHANGE-ME/wdb)） |
+| **断点调试** | 源码级调试：断点、单步（`F10`/`F11`/`Shift+F11`）、调用栈、变量、watch（内核见 [wdb](https://github.com/hcz1017/wdb)） |
 | **离线可用** | 首次加载后工具链全在本地，代码不出浏览器 |
 | **中文界面** | 自带简体中文语言包与中文命令 |
 
@@ -95,5 +95,5 @@ int main() {
 
 ## 反馈
 
-- 扩展问题：<https://github.com/CHANGE-ME/oi-cpp-wasm/issues>
-- 调试器问题（断点 / 单步 / 变量）：<https://github.com/CHANGE-ME/wdb/issues>
+- 扩展问题：<https://github.com/hcz1017/oi-web/issues>
+- 调试器问题（断点 / 单步 / 变量）：<https://github.com/hcz1017/wdb/issues>
