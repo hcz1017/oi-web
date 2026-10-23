@@ -50,7 +50,7 @@ must(info.probeImportIndex >= 0 && info.pauseImportIndex >= 0,
 // ---------- DWARF 引擎（宿主 getter 从暂停快照读） ----------
 let spawn;
 try {
-  ({ spawn } = require(path.join(EXT, ".dev/dwarf-pkg/node-test/index.js")));
+  ({ spawn } = require(path.join(EXT, "..", "wdb", ".dev-dwarf-pkg/node-test/index.cjs")));
 } catch {
   console.log("跳过：缺少 .dev/dwarf-pkg");
   process.exit(0);

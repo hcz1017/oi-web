@@ -70,7 +70,7 @@ if (!must(!!built.wasm, "编译 STL 程序")) process.exit(1);
 
 // ---------- 真引擎（宿主 getter 读暂停快照）----------
 let spawn;
-try { ({ spawn } = require(path.join(EXT, ".dev/dwarf-pkg/node-test/index.js"))); }
+try { ({ spawn } = require(path.join(EXT, "..", "wdb", ".dev-dwarf-pkg/node-test/index.cjs"))); }
 catch { console.log("跳过：缺少 .dev/dwarf-pkg"); process.exit(0); }
 let snap = null, frame = null;
 const rd = (dv, t) => t === 0x7f ? { type: "i32", value: dv.getInt32(0, true) }

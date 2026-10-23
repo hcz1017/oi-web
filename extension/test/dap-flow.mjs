@@ -60,7 +60,7 @@ const tc = new Toolchain({
 });
 let spawn;
 try {
-  ({ spawn } = require(path.join(EXT, ".dev/dwarf-pkg/node-test/index.js")));
+  ({ spawn } = require(path.join(EXT, "..", "wdb", ".dev-dwarf-pkg/node-test/index.cjs")));
 } catch {
   console.log("跳过：缺少 .dev/dwarf-pkg（见 scripts/build-dwarf-worker.mjs 的说明）");
   process.exit(0);
@@ -109,7 +109,10 @@ int main() {
   return 0;
 }
 `;
-const target = { source: SRC, fileName: "main.cpp", sourceUri: "vscode-test-web://mount/main.cpp", flags: "-std=c++20" };
+// 文件名可用环境变量覆盖：DAP_FILE_NAME="二分图判定.cpp" node dap-flow.mjs
+// （中文文件名曾经让断点全部"未验证"——引擎给的 sourceFileURL 是 percent-encoded）
+const FILE_NAME = process.env.DAP_FILE_NAME || "main.cpp";
+const target = { source: SRC, fileName: FILE_NAME, sourceUri: `vscode-test-web://mount/${encodeURIComponent(FILE_NAME)}`, flags: "-std=c++20" };
 const adapter = new WasmDebugAdapter({
   target,
   getEngine: async () => engine,

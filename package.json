@@ -16,7 +16,7 @@
     "fetch:web": "node scripts/fetch-vscode-web.mjs",
     "patch:test-web": "node scripts/patch-test-web.mjs",
     "test": "node extension/test/smoke.mjs",
-    "test:all": "node extension/test/lineedit.mjs && node extension/test/smoke.mjs && node extension/test/debug-instr.mjs && node extension/test/debug-session.mjs && node extension/test/debug-eval.mjs && node extension/test/debug-vars.mjs && node extension/test/debug-stl.mjs && node extension/test/dap-flow.mjs && node extension/test/dwarf-client.mjs && node extension/test/dwarf-browser-env.mjs",
+    "test:all": "node extension/test/lineedit.mjs && node extension/test/smoke.mjs && node extension/test/debug-instr.mjs && node extension/test/debug-session.mjs && node extension/test/debug-eval.mjs && node extension/test/debug-vars.mjs && node extension/test/debug-stl.mjs && node extension/test/dap-flow.mjs && DAP_FILE_NAME=\"二分图判定.cpp\" node extension/test/dap-flow.mjs && node extension/test/dwarf-client.mjs && node extension/test/dwarf-browser-env.mjs",
     "wdb": "cd wdb && npm test"
   },
   "devDependencies": {
