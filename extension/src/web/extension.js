@@ -639,23 +639,41 @@ async function toggleBreakpoint() {
   debugLog(`已添加断点 line ${line0 + 1}`);
 }
 
-async function startDebugging() {
+/**
+ * 从当前活动编辑器构造调试目标。
+ * ⚠️ 命令（Ctrl+Shift+B 那条 / 标题栏按钮）和 **F5** 必须走同一份逻辑：
+ *    F5 是通用启动，不经过我们的命令，以前只有命令里设了 pendingDebugTarget，
+ *    F5 时它为空 → 适配器退化成硬编码的 "main.cpp"（编译一个不存在的空文件），
+ *    表现为"调的不是当前文件、断点全灰"。
+ */
+function targetFromActiveEditor() {
   const ed = vscode.window.activeTextEditor;
-  if (!ed) { vscode.window.showWarningMessage("先打开一个 C/C++ 文件"); return; }
+  if (!ed) return null;
   const doc = ed.document;
-  const fileName = doc.uri.path.split("/").pop() || "main.cpp";
-  if (!/\.(cpp|cc|cxx|c)$/i.test(fileName)) { vscode.window.showWarningMessage("当前文件不是 C/C++ 源文件"); return; }
+  const rawName = doc.uri.path.split("/").pop() || "";
+  let fileName = rawName;
+  // uri.path 在部分 provider 下是 percent-encoded 的，解码后再用于编译文件名
+  try { fileName = decodeURIComponent(rawName); } catch {}
+  if (!/\.(cpp|cc|cxx|c)$/i.test(fileName)) return null;
   const cfg = vscode.workspace.getConfiguration("oiCpp");
-  pendingDebugTarget = {
+  return {
     source: doc.getText(),
     fileName,
     sourceUri: doc.uri.toString(),
     flags: String(cfg.get("flags", "-std=c++20")),
   };
+}
+
+const NO_CPP_HINT = "先打开一个 C/C++ 源文件（.cpp/.cc/.cxx/.c）再调试";
+
+async function startDebugging() {
+  const t = targetFromActiveEditor();
+  if (!t) { vscode.window.showWarningMessage(NO_CPP_HINT); return; }
+  pendingDebugTarget = t;
   symbols.memory = null;
   symbols.frame = null;
   showDebugLog();
-  debugLog(`== 开始调试 ${fileName} ==`);
+  debugLog(`== 开始调试 ${t.fileName} ==`);
   try {
     await vscode.debug.startDebugging(undefined, {
       type: "oi-cpp-wasm",
@@ -708,11 +726,13 @@ function getDebugTerminal(fileName) {
 function registerDebugAdapter(c) {
   c.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory("oi-cpp-wasm", {
     createDebugAdapterDescriptor() {
-      const target = pendingDebugTarget || {
-        source: "",
-        fileName: "main.cpp",
-        flags: String(vscode.workspace.getConfiguration("oiCpp").get("flags", "-std=c++20")),
-      };
+      // ⚠️ 不要退化成 main.cpp：F5 / 从"运行和调试"面板启动时不会有 pendingDebugTarget
+      const target = pendingDebugTarget || targetFromActiveEditor();
+      pendingDebugTarget = null;   // 用掉即清：避免下次 F5 复用上一次的文件
+      if (!target) {
+        vscode.window.showWarningMessage(NO_CPP_HINT);
+        throw new Error(NO_CPP_HINT);
+      }
       debugLog(`创建调试适配器（${target.fileName}，${target.source.length} 字节源码）`);
       const terminal = getDebugTerminal(target.fileName);
       const adapter = new WasmDebugAdapter({
@@ -735,10 +755,24 @@ function registerDebugAdapter(c) {
       return new vscode.DebugAdapterInlineImplementation(adapter);
     },
   }));
+  // 会话结束也清一次（例如用户中途取消启动）
+  c.subscriptions.push(vscode.debug.onDidTerminateDebugSession(() => { pendingDebugTarget = null; }));
   c.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("oi-cpp-wasm", {
     provideDebugConfigurations: () => [{ type: "oi-cpp-wasm", request: "launch", name: "WebC++ 调试（WASM）" }],
-    resolveDebugConfiguration: (_folder, config) =>
-      config && config.type ? config : { type: "oi-cpp-wasm", request: "launch", name: "WebC++ 调试（WASM）" },
+    resolveDebugConfiguration: (_folder, config) => {
+      const cfg = config && config.type ? config : { type: "oi-cpp-wasm", request: "launch", name: "WebC++ 调试（WASM）" };
+      // F5 会直接到这里：把"当前活动文件"补成调试目标（命令路径已经设好了就不动）
+      if (!pendingDebugTarget) {
+        const t = targetFromActiveEditor();
+        if (!t) { vscode.window.showWarningMessage(NO_CPP_HINT); return undefined; }  // undefined = 中止启动
+        pendingDebugTarget = t;
+        symbols.memory = null;
+        symbols.frame = null;
+        showDebugLog();
+        debugLog(`== F5 启动调试 ${t.fileName} ==`);
+      }
+      return cfg;
+    },
   }));
 }
 
