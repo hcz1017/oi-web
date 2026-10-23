@@ -28,8 +28,13 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: 安装依赖（全部在仓库 node_modules）
+      - name: 安装依赖（根 node_modules）
         run: npm ci
+
+      # ⚠️ 扩展自己的依赖（vscode-languageclient / @bjorn3 shim / esbuild）在 extension/ 下，
+      #    只装根目录会在打包时报 Could not resolve "vscode-languageclient/browser"
+      - name: 安装扩展依赖（extension/node_modules）
+        run: npm ci --prefix extension
 
       - name: 打包扩展
         run: node extension/esbuild.mjs
