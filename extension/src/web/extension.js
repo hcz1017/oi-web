@@ -858,6 +858,10 @@ async function runActive() {
   await p.runSource(doc.getText(), fileName);
 }
 
+// ⚠️ 模块级日志：区分"扩展 bundle 压根没被加载"和"activate 内部某步抛错"。
+//    桌面端排查时这两者的处理完全不同，所以必须先留下这一行。
+try { console.log("[WebC++] bundle loaded（activate 之前）"); } catch {}
+
 export async function activate(c) {
   ctx = c;
   console.log("[oi-cpp-wasm] activate 开始");
@@ -904,7 +908,9 @@ export async function activate(c) {
     registerDebugAdapter(c);
     // 双保险：contributes.breakpoints 让行号凹槽可用；再把 allowBreakpointsEverywhere 也打开，
     // 即使某个 Web 构建忽略贡献点，行号左侧也一定能点出断点。
-    ensureBreakpointsEnabled();
+    // ⚠️ 必须单独 try：某些宿主（虚拟工作区/桌面 web 宿主）里改配置会抛错，
+    //    以前它抛出去会把后面的 clangd 初始化、文件夹注册全带崩 → 表现为"扩展没激活"。
+    try { ensureBreakpointsEnabled(); } catch (e) { logLine("⚠ 打开断点凹槽开关失败（不影响使用）: " + ((e && e.message) || e)); }
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.restartLsp", async () => {
       resetClangdFatal();          // 手动重启时清掉"已停用"标记
       await stopClangd().catch(() => {});
@@ -913,14 +919,13 @@ export async function activate(c) {
     }));
 
     // 只读虚拟 FS：让 clangd 虚拟路径（bits/stdc++.h 等）可点击/可跳转
-    try { c.subscriptions.push(registerHeaderFs(assetsBase)); }
-    catch (e) { console.warn("[oi-cpp-wasm] 注册头文件虚拟 FS 失败:", e && e.message); }
+    try { c.subscriptions.push(registerHeaderFs(assetsBase)); logLine("头文件虚拟 FS 已注册"); }
+    catch (e) { logLine("⚠ 注册头文件虚拟 FS 失败: " + ((e && e.message) || e)); }
 
     // 浏览器本地文件夹（File System Access API）：vscode-web 自带的"打开文件夹"在空窗口下是坏的
-    try { registerLocalFolder(c); }
+    try { registerLocalFolder(c); logLine("本地文件夹（FSA）命令已注册"); }
     catch (e) {
-      console.error("[oi-cpp-wasm] 注册本地文件夹失败:", e);
-      vscode.window.showErrorMessage("WebC++: 本地文件夹功能注册失败（打开文件夹命令不可用）: " + ((e && e.message) || e));
+      logLine("本地文件夹注册失败（网页版专属功能，桌面端可忽略）: " + ((e && e.message) || e));
     }
 
     const maybeLsp = () => {
@@ -935,11 +940,14 @@ export async function activate(c) {
     c.subscriptions.push(vscode.workspace.onDidCloseTextDocument(() => { releaseLspIfIdle(); }));
     // 切换/关闭工作区文件夹 → 彻底重启，避免旧实例残留（内存 5G+ 的根因之一）
     c.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { restartLspClean(); }));
-    maybeLsp();
+    try { maybeLsp(); } catch (e) { logLine("⚠ 启动 clangd 失败（不影响编译运行）: " + ((e && e.message) || e)); }
+    logLine("activate 完成");
     console.log(`[oi-cpp-wasm] activate 完成 v${(c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?"}（命令: runInTerminal/debug/openFolder/restartLsp 已注册）`);
   } catch (e) {
-    console.error("[oi-cpp-wasm] activate 失败", e);
-    vscode.window.showErrorMessage("oi-cpp-wasm 激活失败: " + ((e && e.message) || e));
+    const msg = (e && (e.stack || e.message)) || String(e);
+    try { logLine("✗ activate 失败: " + msg); } catch {}
+    console.error("[WebC++] activate 失败", e);
+    try { vscode.window.showErrorMessage("WebC++ 激活失败: " + msg); } catch {}
   }
 }
 

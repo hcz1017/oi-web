@@ -2,6 +2,23 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.5] - 2026-10-24
+
+### 修复
+- **移除 `extensionKind: ["workspace"]`**：按 VS Code 的映射规则，桌面版里这个值等价于
+  "跑在唯一的 Nodejs 扩展宿主"；而本扩展只有 `browser` 入口，Node 宿主加载不了它
+  → 表现为"装了但永远不激活"。
+- **激活过程加固 + 分步日志**：
+  - 模块加载时先打 `[WebC++] bundle loaded`（区分"bundle 没跑"与"activate 内某步挂了"）；
+  - `ensureBreakpointsEnabled()`（改配置，虚拟工作区里会抛）、头文件虚拟 FS、本地文件夹、
+    clangd 启动各自独立 try/catch —— 以前任何一处抛错都会中断后续注册，
+    看起来就像"扩展没激活"；
+  - 失败写进「WebC++」输出通道，不再只进 devtools console。
+
+### 说明
+- 桌面版仍需要 VS Code 的 **Web 扩展宿主**；若你的 VS Code 在本地文件夹下只提供 Nodejs 宿主，
+  本扩展无法激活（这不是 bug，是 web 扩展的宿主限制）。
+
 ## [0.1.4] - 2026-10-24
 
 ### 新增
