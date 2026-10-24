@@ -2,7 +2,7 @@
   "name": "web-cpp-tool",
   "displayName": "WebC++ — C++ in the Browser (WASM)",
   "description": "在 VS Code for the Web（vscode.dev / 自托管）里写、跑、调试 C++：WASM Clang 编译、真实终端交互运行、clangd 补全，以及源码级断点调试（wdb）。",
-  "version": "0.2.1",
+  "version": "0.2.0",
   "publisher": "web-cpp-tool",
   "license": "AGPL-3.0-or-later",
   "engines": {

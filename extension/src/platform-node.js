@@ -14,6 +14,7 @@ import * as vscode from "vscode";
 import path from "node:path";
 import { Worker as NodeWorker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
+import { wrapNodeWorker } from "./node/wrap-worker.js";
 
 export const isWeb = false;
 export const label = "desktop(node)";
@@ -47,22 +48,7 @@ export function createNamedWorker(name, opts = {}) {
   return Promise.resolve(wrap(new NodeWorker(file, { workerData }), log, name));
 }
 
-/** 把 worker_threads.Worker 包成 Web Worker 风格的接口（我们代码只用到这几个方法） */
-function wrap(w, log, name) {
-  const listeners = { message: [], error: [] };
-  w.on("message", (data) => { for (const cb of listeners.message) { try { cb({ data }); } catch (e) { log(`[${name}] message 处理异常: ${e && e.message}`); } } });
-  w.on("error", (e) => {
-    const err = { message: `worker error: ${(e && (e.stack || e.message)) || e}` };
-    for (const cb of listeners.error) { try { cb(err); } catch {} }
-  });
-  w.on("exit", (code) => { if (code !== 0) log(`[${name}] worker 退出 code=${code}`); });
-  return {
-    addEventListener(type, cb) { (listeners[type] ||= []).push(cb); },
-    postMessage(m, transfer) { try { w.postMessage(m, transfer || undefined); } catch (e) { log(`[${name}] postMessage 失败: ${e && e.message}`); } },
-    terminate() { try { w.terminate(); } catch {} },
-    _nodeWorker: w,
-  };
-}
+function wrap(w, log, name) { return wrapNodeWorker(w, { log, name }); }
 
 // ---------------- DWARF 引擎（Node 版） ----------------
 // 上游 node 引擎是 emscripten 的 node 构建：它用 fs 读同目录下的 SymbolsBackend.wasm。
