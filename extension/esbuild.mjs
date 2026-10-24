@@ -23,6 +23,9 @@ if (!existsSync(path.join(WDB, "index.js"))) {
 }
 mkdirSync(OUT, { recursive: true });
 
+const webPlatform = path.join(HERE, "src", "platform-web.js");
+const nodePlatform = path.join(HERE, "src", "platform-node.js");
+
 const common = {
   bundle: true,
   resolveExtensions: [".mjs", ".js"],
@@ -43,6 +46,22 @@ await esbuild.build({
   outfile: path.join(OUT, "extension.js"),
   format: "cjs",
   minify: true,
+  alias: { "oi-platform": webPlatform },
+});
+
+// 1b) 桌面版宿主入口（Node 扩展宿主）：同一份源码，换平台实现
+const OUT_NODE = path.join(HERE, "dist", "node");
+mkdirSync(OUT_NODE, { recursive: true });
+await esbuild.build({
+  ...common,
+  ...hostOnly,
+  entryPoints: [path.join(SRC, "extension.js")],
+  outfile: path.join(OUT_NODE, "extension.js"),
+  format: "cjs",
+  minify: true,
+  platform: "node",
+  alias: { "oi-platform": nodePlatform },
+  external: ["vscode", "vscode-languageclient/browser", "node:worker_threads", "node:fs", "node:path", "node:url", "node:os"],
 });
 
 // 2) 编译 worker：经典 worker（IIFE）。
@@ -108,5 +127,20 @@ if (existsSync(wdbDwarf)) {
 } else {
   console.warn("⚠ 未找到 wdb/assets/dwarf（wdb 仓库不在预期位置？DWARF 引擎缺失，调试会失败）");
 }
+
+// 8) 桌面版资源：同一份 IIFE worker 产物 + worker_threads 垫片 + 上游 node 版 DWARF 引擎
+const nodeWorkers = path.join(OUT_NODE, "workers");
+mkdirSync(nodeWorkers, { recursive: true });
+for (const name of ["runWorker.js", "compileWorker.js", "debugWorker.js"]) {
+  const src = path.join(OUT, name);
+  if (existsSync(src)) cpSync(src, path.join(nodeWorkers, name));
+}
+cpSync(path.join(HERE, "src", "node", "worker-shim.cjs"), path.join(OUT_NODE, "worker-shim.cjs"));
+{
+  const engine = path.resolve(HERE, "..", "wdb", "assets", "dwarf", "worker.node.cjs");
+  if (existsSync(engine)) cpSync(engine, path.join(nodeWorkers, "dwarfEngine.node.cjs"));
+  else console.warn("⚠ 缺少 wdb/assets/dwarf/worker.node.cjs（桌面版调试不可用；先跑 wdb 的 build:dwarf）");
+}
+console.log("copied: dist/node/workers/{runWorker,compileWorker,debugWorker}.js + 垫片 + node 引擎");
 
 console.log("bundled: extension.js / compileWorker.js / runWorker.js / clangdWorker.js / dwarfWorker.js / debugWorker.js");

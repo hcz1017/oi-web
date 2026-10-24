@@ -14,7 +14,7 @@ import { startClangd, stopClangd, resetClangdFatal } from "./lsp.js";
 import { registerHeaderFs } from "./headerfs.js";
 import { registerLocalFolder } from "./fsa-folder.js";
 import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
-import { createWorker } from "../../../wdb/src/runtime/create-worker.js";
+import * as platform from "oi-platform";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 
@@ -102,6 +102,14 @@ async function listCppFiles() {
 }
 function ensureLsp() {
   if (lspPromise) return lspPromise;
+  // 桌面版：clangd(WASM pthreads) 目前只有浏览器加载路径（emscripten 的 node 分支另做），先跳过
+  if (!platform.isWeb) {
+    if (!ensureLsp._warnedDesktop) {
+      ensureLsp._warnedDesktop = true;
+      logLine("桌面版暂不启动 clangd（补全/诊断）：clangd(WASM) 目前只适配了浏览器加载路径；编译/运行/调试不受影响");
+    }
+    return null;
+  }
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   if (!cfg.get("lsp", true)) return null;
   // 只给"真正打开着的 cpp 文件"启语言服务：没有打开就不启动，省内存/CPU
@@ -189,10 +197,7 @@ class OiPty {
     this.wln(`\x1b[90m[oi] ${s}\x1b[0m`);
   }
 
-  _workerUrl(name) {
-    // ⚠️ 不要用 toString(true)：skipEncoding 会让含空格/中文的扩展路径拼出非法 URL
-    return vscode.Uri.joinPath(ctx.extensionUri, "dist", "web", name).toString();
-  }
+  _workerUrl(name) { return platform.workerRef(name); }
   // ---- 编译 worker：全局单例 ----
   _spawnCompiler() { return getCompiler(); }
 
@@ -211,11 +216,9 @@ class OiPty {
   // ---- 运行 worker（每次新建） ----
   async _startRunner(wasmBuf) {
     this._killRunner();
-    let url;
-    try { url = this._workerUrl("runWorker.js"); } catch (e) { this.wln("[错误] " + e.message); return; }
     try {
-      // 跨源 CDN / 桌面 vscode-file:// 下 new Worker(url) 会被拦 → createWorker 走 fetch+blob
-      this.runner = await createWorker(url, { log: (m) => debugLog("[wdb] " + m) });
+      // web: URL + 跨源 blob 兜底；桌面: worker_threads + 垫片
+      this.runner = await platform.createNamedWorker("runWorker.js", { log: (m) => debugLog("[wdb] " + m) });
     } catch (e) {
       this._fail("无法创建运行 worker: " + e.message);
       return;
@@ -435,14 +438,12 @@ const shared = {
 function assetsBase() {
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   const custom = String(cfg.get("assetsBaseUrl", "") || "").replace(/\/+$/, "");
-  if (custom) return custom;               // 资产外置（VSIX 不含 assets）时指向静态托管
-  return vscode.Uri.joinPath(ctx.extensionUri, "assets").toString().replace(/\/+$/, "");
+  // 外置资产只对浏览器版有意义（桌面版直接读扩展目录里的文件）
+  if (custom && platform.isWeb) return custom;
+  return platform.assetsBase();
 }
 
-function workerUrl(name) {
-  // ⚠️ 不要 toString(true)：skipEncoding 会让含空格/中文的扩展路径拼出非法 URL
-  return vscode.Uri.joinPath(ctx.extensionUri, "dist", "web", name).toString();
-}
+function workerUrl(name) { return platform.workerRef(name); }
 
 /**
  * 编译一份源码并拿到 wasm 字节（给调试/符号功能用，不走终端）。
@@ -520,7 +521,14 @@ function getSymbolsEngine() {
       },
       getWasmOp() { throw new Error("operand stack 不可用"); },
     };
-    const engine = new DwarfEngine(workerUrl("dwarfWorker.js"), assetsBase(), host);
+    // web：跑我们打包的浏览器版引擎 worker（blob 兜底）；
+    // 桌面：跑上游 node 版引擎（自己用 fs 读 wasm，没有 __wdbConfig/__wdbReady 握手）
+    const engine = platform.isWeb
+      ? new DwarfEngine(workerUrl("dwarfWorker.js"), assetsBase(), host)
+      : new DwarfEngine("(node-engine)", assetsBase(), host, {
+          createWorker: () => platform.createDwarfEngineWorker({ log: debugLog }),
+          assumeReady: true,
+        });
     engine.verbose = vscode.workspace.getConfiguration("oiCpp").get("verbose", false);
     await engine.start();
     symbols.engine = engine;
@@ -742,6 +750,7 @@ function registerDebugAdapter(c) {
         getEngine: () => getSymbolsEngine(),
         compile: (args) => compileForDebug(args),
         workerUrl: workerUrl("debugWorker.js"),
+        createWorker: () => platform.createNamedWorker("debugWorker.js", { log: (m) => debugLog("[wdb] " + m) }),
         log: debugLog,
         onSnapshot: (mem) => { symbols.memory = mem; },
         onFrame: (f) => { symbols.frame = f; },
@@ -789,9 +798,8 @@ function resetCompiler() {
 function getCompiler() {
   if (shared.worker) return shared.ready;
   if (shared.spawnPromise) return shared.spawnPromise;   // 并发调用只创建一次
-  const url = workerUrl("compileWorker.js");
-  // createWorker 是异步的（跨源/vscode-file 需要 fetch+blob），所以整个创建过程包成 promise
-  shared.spawnPromise = createWorker(url, { log: (m) => debugLog("[wdb] " + m) })
+  // 创建是异步的（web 要 fetch+blob，桌面要起 worker_threads），所以整个过程包成 promise
+  shared.spawnPromise = platform.createNamedWorker("compileWorker.js", { log: (m) => debugLog("[wdb] " + m) })
     .then((w) => {
       shared.worker = w;
       shared.ready = new Promise((resolve, reject) => {
@@ -864,6 +872,7 @@ try { console.log("[WebC++] bundle loaded（activate 之前）"); } catch {}
 
 export async function activate(c) {
   ctx = c;
+  try { platform.setExtensionRoot(platform.isWeb ? c.extensionUri : c.extensionPath); } catch {}
   console.log("[oi-cpp-wasm] activate 开始");
   try {
     statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -923,7 +932,10 @@ export async function activate(c) {
     catch (e) { logLine("⚠ 注册头文件虚拟 FS 失败: " + ((e && e.message) || e)); }
 
     // 浏览器本地文件夹（File System Access API）：vscode-web 自带的"打开文件夹"在空窗口下是坏的
-    try { registerLocalFolder(c); logLine("本地文件夹（FSA）命令已注册"); }
+    try {
+      if (platform.isWeb) { registerLocalFolder(c); logLine("本地文件夹（FSA）命令已注册"); }
+      else logLine("桌面版：跳过 FSA 文件夹命令（用 VS Code 自带的打开文件夹）");
+    }
     catch (e) {
       logLine("本地文件夹注册失败（网页版专属功能，桌面端可忽略）: " + ((e && e.message) || e));
     }

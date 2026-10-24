@@ -3,7 +3,7 @@
 //   ① 给客户端一对"会改写 URI 的" reader/writer（clangd 只认 /workspace/<file> 路径）
 //   ② 双向映射 URI（文档 URI ↔ file:///workspace/<name>），含诊断与 WorkspaceEdit
 import * as vscode from "vscode";
-import { LanguageClient } from "vscode-languageclient/browser";
+
 import { sanitizeName } from "../core/names.mjs";
 import { clangdArgs } from "../core/flags.mjs";
 
@@ -327,6 +327,9 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   worker.addEventListener("messageerror", () => { try { liveReader?.onError.fire([new Error("messageerror"), undefined, 1]); } catch {} });
   // provider 每次新建 reader/writer：lc.stop() 会 dispose reader，复用同一对会让重启后静默丢弃消息
   let clientRef = null;   // middleware 里要发请求，构造完回指
+  // ⚠️ 动态 import：桌面版（Node 宿主）没有 vscode-languageclient/browser，
+  //    静态 import 会让整个扩展加载就崩。桌面版不启动 clangd，所以这里不会被调用。
+  const { LanguageClient } = await import("vscode-languageclient/browser");
   const lc = new LanguageClient(
     "oi-cpp-clangd",
     "clangd (WASM)",

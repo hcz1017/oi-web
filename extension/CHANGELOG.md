@@ -2,6 +2,27 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-10-24
+
+### 新增：桌面版（Node 扩展宿主）真正可用
+桌面 VS Code 的 Web 扩展宿主没有跨源隔离 → 没有 `SharedArrayBuffer` → 交互 stdin 和断点调试都不可用。
+0.2.0 增加 **Node 入口**（`main`），在 Node 宿主里跑同一份源码（平台差异全部收在
+`src/platform-web.js` / `src/platform-node.js`，构建时用 esbuild alias 切换）：
+
+- **worker**：Node 版用 `worker_threads` + 垫片（`src/node/worker-shim.cjs`）跑**同一份** IIFE 产物，
+  垫片补齐 `self` / `postMessage` / `importScripts` / `fetch(file://)`；
+- **交互 stdin / 断点暂停**：Node 里 `SharedArrayBuffer` 与 `Atomics` 原生可用，**无需跨源隔离** → 全部恢复；
+- **DWARF 引擎**：桌面版用上游的 node 版引擎（Emscripten node 分支），
+  wasm 从 `SymbolsBackend.wasm.gz` 首次运行解压到临时目录（`fs` 相对路径重定向，因为 worker 里不能 chdir）；
+- **clangd**：桌面版暂不启动（`vscode-languageclient/browser` 与 emscripten 的 node 分支要另做），
+  编译/运行/调试不受影响；日志里会说明。
+- 宿主入口：`browser` → `dist/web/extension.js`，`main` → `dist/node/extension.js`；
+  同一个 VSIX 两边都能装。
+
+### 验证
+- Node 链路已跑通：垫片里 compile worker `ready`、编译成功；node 版 DWARF 引擎 `hello` 成功。
+- Web 链路回归：冒烟 + DAP 全流程（ASCII / 中文文件名）全绿。
+
 ## [0.1.5] - 2026-10-24
 
 ### 修复
