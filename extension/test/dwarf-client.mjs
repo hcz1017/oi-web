@@ -39,6 +39,8 @@ const host = {
 };
 
 const engine = new DwarfEngine("fake://dwarfWorker.js", "https://assets/base/", host);
+// worker 现在是**延迟创建**的（跨源 / vscode-file: 时要用 fetch+blob），先显式触发一次
+await engine._ensureWorker();
 const w = workers[0];
 must(!!w && w.url === "fake://dwarfWorker.js", "worker 已创建");
 must(w.sent.length === 1 && w.sent[0].m.__wdbConfig && w.sent[0].m.__wdbConfig.base === "https://assets/base",
@@ -47,7 +49,8 @@ must(w.sent.length === 1 && w.sent[0].m.__wdbConfig && w.sent[0].m.__wdbConfig.b
 // 1) ready → hello 的响应是 undefined（真实引擎就是这样），不能抛
 w.event({ __wdbReady: true });
 const starting = engine.start();
-await Promise.resolve();          // 让 hello 发出去
+// start() 现在多了一层 await（_ensureWorker），单次微任务不够，冲刷几轮
+for (let i = 0; i < 8; i++) await Promise.resolve();
 const helloSent = w.sent.find((x) => x.m.request && x.m.request.method === "hello");
 must(!!helloSent, "start() 发出了 hello");
 w.reply(helloSent.m.requestId, undefined);   // ⚠️ 曾经这里因为 JSON.stringify(undefined).slice 抛异常
