@@ -2,7 +2,7 @@
   "name": "web-cpp-tool",
   "displayName": "WebC++ — C++ in the Browser (WASM)",
   "description": "在 VS Code for the Web（vscode.dev / 自托管）里写、跑、调试 C++：WASM Clang 编译、真实终端交互运行、clangd 补全，以及源码级断点调试（wdb）。",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "web-cpp-tool",
   "license": "AGPL-3.0-or-later",
   "engines": {
@@ -226,8 +226,8 @@
     "test:lineedit": "node test/lineedit.mjs",
     "test:stl": "node test/debug-stl.mjs",
     "postinstall": "node ../scripts/patch-wasi-shim.mjs",
-    "vsix": "node esbuild.mjs && npx --no-install @vscode/vsce package --target web --no-dependencies --allow-missing-repository",
-    "publish:marketplace": "node esbuild.mjs && npx --no-install @vscode/vsce publish --target web --no-dependencies"
+    "vsix": "node esbuild.mjs && npx --no-install @vscode/vsce package --no-dependencies --allow-missing-repository",
+    "publish:marketplace": "node esbuild.mjs && npx --no-install @vscode/vsce publish --no-dependencies"
   },
   "devDependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",
@@ -265,5 +265,8 @@
     "url": "https://github.com/hcz1017/oi-web/issues"
   },
   "homepage": "https://github.com/hcz1017/oi-web#readme",
-  "main": "./dist/node/extension.js"
+  "main": "./dist/node/extension.js",
+  "extensionKind": [
+    "workspace"
+  ]
 }

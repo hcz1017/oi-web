@@ -2,6 +2,18 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-10-24
+
+### 修复
+- **桌面版仍被塞进 Web 扩展宿主，导致"工具链准备超时"**：0.2.0 的 VSIX 是用
+  `--target web` 打的，被标记为 web 专用 → 桌面 VS Code 只肯用 `LocalWebWorker` 宿主，
+  而那个宿主里 `fetch(vscode-file://…)` 不返回也不报错 → `createWorker()` 永远等下去 →
+  120s 后报"工具链加载超时"。
+  - 打包改为**通用 target**（去掉 `--target web`），并显式 `extensionKind: ["workspace"]`：
+    桌面走 **Node 扩展宿主**（SAB 可用、编译 0.5s ready / 1.5s 出产物），web 仍走 web 宿主。
+- `createWorker()` 的 fetch 加 **15s 超时**：这类"不返回也不报错"的宿主以后会明确报错，
+  而不是靠 120s 的工具链超时兜底。
+
 ## [0.2.0] - 2026-10-24
 
 ### 新增：桌面版（Node 扩展宿主）真正可用
