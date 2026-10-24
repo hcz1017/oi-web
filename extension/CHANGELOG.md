@@ -2,6 +2,14 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.3] - 2026-10-24
+
+### 修复
+- **补全里混进工作区其它文件的符号**：clangd 的 `Completion.AllScopes` 默认为 `Yes`，
+  会把已经打开过的其它 `.cpp`（在本项目里常是十几道不同题）索引进补全列表。
+  现在在生成的 `.clangd` 里设 `Completion: AllScopes: No` —— 只补全光标处作用域可见的名字。
+  （`Index.Background: Skip` 只关后台索引，关不掉"打开过的文件"进入动态索引。）
+
 ## [0.1.2] - 2026-10-23
 
 ### 修复

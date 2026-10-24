@@ -352,6 +352,11 @@
       "  MissingIncludes: None",
       "Index:",
       "  Background: Skip",
+      // ⚠️ 关掉"跨文件索引补全"：默认 AllScopes=Yes 时，clangd 会把**已经 didOpen 的其它文件**
+      //    里的符号也塞进补全列表（我们的工作区里常常是十几道不同题的 .cpp），
+      //    表现为"写当前文件却提示别的题里的变量名"。AllScopes=No 后只补全光标处作用域可见的名字。
+      "Completion:",
+      "  AllScopes: No",
       // 参数名提示（inlay hints）：用户喜欢，保留开启；只关掉推导类型提示省点开销
       "InlayHints:",
       "  Enabled: Yes",
