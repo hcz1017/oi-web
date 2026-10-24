@@ -15,6 +15,7 @@ import { registerHeaderFs } from "./headerfs.js";
 import { registerLocalFolder } from "./fsa-folder.js";
 import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
 import * as platform from "oi-platform";
+import { startNativeClangd, stopNativeClangd, nativeSupported } from "oi-lsp-native";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 
@@ -102,13 +103,25 @@ async function listCppFiles() {
 }
 function ensureLsp() {
   if (lspPromise) return lspPromise;
-  // 桌面版：clangd(WASM pthreads) 目前只有浏览器加载路径（emscripten 的 node 分支另做），先跳过
+  // 桌面版：用**原生 clangd**（wasm 版是 emscripten 浏览器构建，Node 里跑不了）
   if (!platform.isWeb) {
-    if (!ensureLsp._warnedDesktop) {
-      ensureLsp._warnedDesktop = true;
-      logLine("桌面版暂不启动 clangd（补全/诊断）：clangd(WASM) 目前只适配了浏览器加载路径；编译/运行/调试不受影响");
-    }
-    return null;
+    const cfgN = vscode.workspace.getConfiguration("oiCpp");
+    lspPromise = (async () => {
+      try {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd();
+        const c = await startNativeClangd({
+          clangdPath: String(cfgN.get("clangdPath", "") || ""),
+          flags: String(cfgN.get("flags", "-std=c++20")),
+          workspaceDir: root,
+          outputChannel: logChannel,
+          log: (s) => logLine(s),
+        });
+        if (!c) logLine("桌面版：没有可用的 clangd —— 补全/诊断不可用（编译/运行/调试不受影响）");
+      } catch (e) {
+        logLine("桌面版 clangd 启动失败: " + ((e && e.message) || e));
+      }
+    })();
+    return lspPromise;
   }
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   if (!cfg.get("lsp", true)) return null;

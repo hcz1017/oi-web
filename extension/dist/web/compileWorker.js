@@ -1739,6 +1739,9 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     return new Uint8Array(await r.arrayBuffer());
   }
   var tc = null;
+  var compileChain = Promise.resolve();
+  var enqueue = (fn) => compileChain = compileChain.then(fn, () => {
+  });
   self.onmessage = async (ev) => {
     const m = ev.data || {};
     try {
@@ -1757,22 +1760,28 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
       }
       if (m.type === "compile") {
         if (!tc) throw new Error("\u5DE5\u5177\u94FE\u672A\u5C31\u7EEA");
-        const t0 = performance.now();
-        const r = await tc.compile({
-          source: m.source,
-          fileName: m.fileName,
-          flags: m.flags || [],
-          opt: m.opt ?? 2,
-          debug: m.debugInfo !== false,
-          // 调试构建：先链接 wdb-stub，预置 import "wdb"."probe"（插桩需要）
-          debugStub: !!m.debugStub
+        enqueue(async () => {
+          try {
+            const t0 = performance.now();
+            const r = await tc.compile({
+              source: m.source,
+              fileName: m.fileName,
+              flags: m.flags || [],
+              opt: m.opt ?? 2,
+              debug: m.debugInfo !== false,
+              // 调试构建：先链接 wdb-stub，预置 import "wdb"."probe"（插桩需要）
+              debugStub: !!m.debugStub
+            });
+            const ms = Math.round(performance.now() - t0);
+            if (!r.wasm) {
+              post({ type: "compiled", id: m.id, ok: false, log: r.log, ms, exit: r.exit });
+              return;
+            }
+            post({ type: "compiled", id: m.id, ok: true, log: r.log, ms, size: r.wasm.length, wasm: r.wasm.buffer }, [r.wasm.buffer]);
+          } catch (e) {
+            post({ type: "error", id: m.id, message: e && (e.stack || e.message) || String(e) });
+          }
         });
-        const ms = Math.round(performance.now() - t0);
-        if (!r.wasm) {
-          post({ type: "compiled", id: m.id, ok: false, log: r.log, ms, exit: r.exit });
-          return;
-        }
-        post({ type: "compiled", id: m.id, ok: true, log: r.log, ms, size: r.wasm.length, wasm: r.wasm.buffer }, [r.wasm.buffer]);
         return;
       }
       throw new Error("\u672A\u77E5\u6D88\u606F " + m.type);

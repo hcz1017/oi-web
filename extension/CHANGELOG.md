@@ -27,6 +27,17 @@
   同样表现为"工具链加载超时"。新增 `src/node/wrap-worker.js` 两种订阅都支持。
 - `createWorker()` 的 fetch 加 15s 超时，避免宿主静默悬挂。
 
+### 桌面版 clangd：改用**原生 clangd**
+wasm 版 clangd 是 emscripten 的浏览器构建（pthread 用 `new Worker(...,{type:'module'})`），
+Node 里没有对应构建。桌面版改为：从 `PATH`（或设置 `oiCpp.clangdPath`）找原生 `clangd`，
+用 `vscode-languageclient/node` 走 stdio 连接，编译参数通过临时目录里的 `.clangd` 传入。
+找不到 clangd 时只提示、不影响编译运行调试。
+
+### 修复：并发编译导致 `wasm-ld: cannot open /workspace/dbgstub.o`
+compile worker 里只有一个 Toolchain、一份内存 FS，之前两条 compile 消息可以并发
+（例如"调试构建"和终端里的 `Ctrl+Shift+B` 同时触发）→ 互相删掉 out.o/dbgstub.o。
+现在 worker 内部**串行排队**，并且排队任务里的异常也会回报给宿主。
+
 ### 验证
 - Node 链路：垫片里 compile worker `ready`、调试版（debugStub）编译成功、node 版 DWARF 引擎 `hello` 成功。
 - Web 链路回归：冒烟 + DAP 全流程（ASCII / 中文文件名）全绿。
