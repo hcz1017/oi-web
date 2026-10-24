@@ -389,18 +389,15 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
     "  MissingIncludes: None",
     "Index:",
     "  Background: Skip",
-    // ⚠️ 关掉"跨文件索引补全"：默认 AllScopes=Yes 时，clangd 会把**已经 didOpen 的其它文件**
-    //    里的符号也塞进补全列表（我们的工作区里常常是十几道不同题的 .cpp），
-    //    表现为"写当前文件却提示别的题里的变量名"。AllScopes=No 后只补全光标处作用域可见的名字。
-    "Completion:",
-    "  AllScopes: No",
-    // 参数名提示（inlay hints）：用户喜欢，保留开启；只关掉推导类型提示省点开销
+    // 参数名提示（inlay hints）：用户喜欢，保留开启
     "InlayHints:",
     "  Enabled: Yes",
     "  ParameterNames: Yes",
     "  DeducedTypes: Yes",
-    "Tidy:",
-    "  Enabled: No",
+    // ⚠️ 不要再加 Completion.AllScopes / Tidy 这类键：
+    //    · Completion.AllScopes 会关掉"跨文件补全"——用户明确说这个好用，别删；
+    //    · Tidy 在这版 clangd 里不被识别，会报 "Unknown Config key 'Tidy'" 的诊断，
+    //      clang-tidy 本身已在 callMain 里用 --clang-tidy=false 关掉了。
     "",
   ].join("\n")));
   stage("写入 /workspace/.clangd（含 sysroot 标志，覆盖所有文件）");

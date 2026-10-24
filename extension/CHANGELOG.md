@@ -5,10 +5,10 @@
 ## [0.1.3] - 2026-10-24
 
 ### 修复
-- **补全里混进工作区其它文件的符号**：clangd 的 `Completion.AllScopes` 默认为 `Yes`，
-  会把已经打开过的其它 `.cpp`（在本项目里常是十几道不同题）索引进补全列表。
-  现在在生成的 `.clangd` 里设 `Completion: AllScopes: No` —— 只补全光标处作用域可见的名字。
-  （`Index.Background: Skip` 只关后台索引，关不掉"打开过的文件"进入动态索引。）
+- **`.clangd` 里的 `Tidy` 键不被这版 clangd 识别**，会报
+  `Unknown Config key 'Tidy'`（clangd-config 诊断）。已删除该键；
+  clang-tidy 本来就在启动参数里用 `--clang-tidy=false` 关着，行为不变。
+- 保留**跨文件补全**（用户反馈好用，`Completion.AllScopes` 保持 clangd 默认值）。
 
 ## [0.1.2] - 2026-10-23
 
