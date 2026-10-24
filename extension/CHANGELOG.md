@@ -2,6 +2,20 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.4] - 2026-10-24
+
+### 新增
+- **同一个 VSIX 兼顾网页版与桌面版**：worker 创建统一走 `createWorker()`
+  —— 同源直接建，跨源 CDN 或桌面 `vscode-file://` 时自动 fetch 成 blob 再建。
+  之前只有 clangd 有这层兜底，编译/运行/调试/符号引擎四个 worker 在桌面宿主里会直接失败。
+- 激活时输出**环境自述**一行日志（uiKind / crossOriginIsolated / SharedArrayBuffer /
+  extensionUri scheme），桌面端排障靠它。
+
+### 说明
+- 桌面端依赖 VS Code 的 **Web 扩展宿主**；终端交互输入与断点调试需要 SharedArrayBuffer，
+  若该环境不提供，会明确提示而不是静默失败。
+- 仍然只有一个制品：`web-cpp-tool-web-<版本>.vsix`，不再区分 web/桌面两套。
+
 ## [0.1.3] - 2026-10-24
 
 ### 修复

@@ -14,6 +14,7 @@ import { startClangd, stopClangd, resetClangdFatal } from "./lsp.js";
 import { registerHeaderFs } from "./headerfs.js";
 import { registerLocalFolder } from "./fsa-folder.js";
 import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
+import { createWorker } from "../../../wdb/src/runtime/create-worker.js";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 
@@ -208,12 +209,13 @@ class OiPty {
   }
 
   // ---- 运行 worker（每次新建） ----
-  _startRunner(wasmBuf) {
+  async _startRunner(wasmBuf) {
     this._killRunner();
     let url;
     try { url = this._workerUrl("runWorker.js"); } catch (e) { this.wln("[错误] " + e.message); return; }
     try {
-      this.runner = new Worker(url);
+      // 跨源 CDN / 桌面 vscode-file:// 下 new Worker(url) 会被拦 → createWorker 走 fetch+blob
+      this.runner = await createWorker(url, { log: (m) => debugLog("[wdb] " + m) });
     } catch (e) {
       this._fail("无法创建运行 worker: " + e.message);
       return;
@@ -780,27 +782,36 @@ function resetCompiler() {
   if (shared.worker) { try { shared.worker.terminate(); } catch {} }
   shared.worker = null;
   shared.ready = null;
+  shared.spawnPromise = null;
   shared.byId.clear();
 }
 
 function getCompiler() {
   if (shared.worker) return shared.ready;
+  if (shared.spawnPromise) return shared.spawnPromise;   // 并发调用只创建一次
   const url = workerUrl("compileWorker.js");
-  try {
-    shared.worker = new Worker(url);
-  } catch (e) {
-    return Promise.reject(new Error("创建编译 worker 失败: " + e.message));
-  }
-  shared.ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("工具链加载超时（120s）")), 120000);
-    shared.resolve = () => { clearTimeout(timer); resolve(); };
-    shared.reject = (err) => { clearTimeout(timer); reject(err); };
-    shared.worker.postMessage({ type: "init", assetsBase: assetsBase() });
-  });
-  // init 失败必须把 worker 丢掉：否则之后每个终端都会立刻拿到这个已 reject 的 promise
-  shared.ready.catch(() => { resetCompiler(); });
-  shared.worker.onmessage = (ev) => {
-    const m = ev.data || {};
+  // createWorker 是异步的（跨源/vscode-file 需要 fetch+blob），所以整个创建过程包成 promise
+  shared.spawnPromise = createWorker(url, { log: (m) => debugLog("[wdb] " + m) })
+    .then((w) => {
+      shared.worker = w;
+      shared.ready = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("工具链加载超时（120s）")), 120000);
+        shared.resolve = () => { clearTimeout(timer); resolve(); };
+        shared.reject = (err) => { clearTimeout(timer); reject(err); };
+        w.postMessage({ type: "init", assetsBase: assetsBase() });
+      });
+      // init 失败必须把 worker 丢掉：否则之后每个终端都会立刻拿到这个已 reject 的 promise
+      shared.ready.catch(() => { resetCompiler(); });
+      w.onmessage = (ev) => onCompileWorkerMessage(ev.data);
+      w.onerror = (e) => { shared.reject?.(new Error("compile worker error: " + ((e && e.message) || e))); };
+      return shared.ready;
+    })
+    .catch((e) => { shared.spawnPromise = null; throw e; });
+  return shared.spawnPromise;
+}
+
+function onCompileWorkerMessage(m0) {
+    const m = m0 || {};
     if (m.type === "compiled") {
       const owner = shared.byId.get(m.id);
       shared.byId.delete(m.id);
@@ -820,15 +831,6 @@ function getCompiler() {
     }
     if (m.type === "ready") { shared.resolve?.(); return; }
     if (m.type === "log") { for (const p of shared.ptys) p._log?.(m.message); return; }
-  };
-  shared.worker.onerror = (e) => {
-    // worker 硬崩：所有在编译的终端都要回到 idle，不能永远卡 compiling
-    for (const p of shared.byId.values()) p._fail?.("编译 worker 崩溃: " + (e.message || e));
-    shared.byId.clear();
-    shared.reject?.(new Error(e.message || "compile worker error"));
-    resetCompiler();
-  };
-  return shared.ready;
 }
 
 // ---------------------------------------------------------------- 会话（一个文件一个终端）
@@ -868,6 +870,19 @@ export async function activate(c) {
     logChannel = vscode.window.createOutputChannel("WebC++");
     c.subscriptions.push(logChannel);
     logLine(`activate 开始（v${(c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?"}）`);
+    // 环境自述：桌面 / 网页两种宿主的差异全靠这几行定位（尤其是 SAB 与跨源隔离）
+    try {
+      const hasSAB = typeof SharedArrayBuffer !== "undefined";
+      logLine(`环境: uiKind=${vscode.env.uiKind === vscode.UIKind.Web ? "web" : "desktop"}` +
+        ` crossOriginIsolated=${typeof self !== "undefined" && self.crossOriginIsolated === true}` +
+        ` SharedArrayBuffer=${hasSAB}` +
+        ` extensionUri=${ctx.extensionUri.scheme}:` +
+        ` activeEditor=${vscode.window.activeTextEditor ? "有" : "无"}`);
+      if (!hasSAB) {
+        logLine("⚠ 当前环境没有 SharedArrayBuffer：终端交互输入与断点调试依赖它，可能不可用" +
+          "（网页版需要 COOP/COEP 跨源隔离；桌面版跑 Web 扩展宿主时同理）");
+      }
+    } catch (e) { logLine("环境自述失败: " + ((e && e.message) || e)); }
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.showLogs", () => logChannel.show(true)));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.copyLogs", async () => {
       // 输出面板内容无法直接读，改为重放最近日志（保存在环形缓冲里）
