@@ -27,11 +27,36 @@
   同样表现为"工具链加载超时"。新增 `src/node/wrap-worker.js` 两种订阅都支持。
 - `createWorker()` 的 fetch 加 15s 超时，避免宿主静默悬挂。
 
-### 桌面版 clangd：改用**原生 clangd**
+### 桌面版 clangd：**内置 wasm clangd 跑通了（不依赖外部 clangd）**
+clangd.wasm 是 emscripten 的浏览器构建，在 Node 里需要三处伪装（都在
+`src/node/worker-shim.cjs` 的 `browserEmulation` 模式里，默认关闭，只有 clangd 用）：
+
+1. 载入 glue 时**文本改写** `ENVIRONMENT_IS_NODE=false`（否则运行时断言
+   "node environment detected but not enabled at build time"；不能全局删
+   `process.versions.node`，Node 的 undici 会炸）；
+2. 伪造 `globalThis.WorkerGlobalScope`（`ENVIRONMENT_IS_WORKER` 靠它判断）；
+3. 全局 `Worker` 映射到 `worker_threads.Worker`，并把 `name` 传成 `self.name="em-pthread-N"`
+   （`ENVIRONMENT_IS_PTHREAD` 靠它判断），同时 `parentPort → self.onmessage` 转发，
+   且 `addEventListener("message")` 必须真的接上（emscripten 的 pthread 主线程 mailbox 用它）。
+
+另外补了：`Blob` 同步实现、`URL.createObjectURL` 落盘成 `.mjs`、
+`fetch(file://)` 支持、fd1/fd2 强制 TTY（`put_char`）。
+
+实测（Node，走桌面版真实代码路径）：
+`pthread #1..#4 loaded` → `callMain` → 发 `initialize` → **5.2s 收到完整 capabilities**
+（completion / hover / definition / semanticTokens / inlayHint / documentSymbol …）。
+
+### 旧的原生 clangd 方案（已删除）
 wasm 版 clangd 是 emscripten 的浏览器构建（pthread 用 `new Worker(...,{type:'module'})`），
 Node 里没有对应构建。桌面版改为：从 `PATH`（或设置 `oiCpp.clangdPath`）找原生 `clangd`，
 用 `vscode-languageclient/node` 走 stdio 连接，编译参数通过临时目录里的 `.clangd` 传入。
 找不到 clangd 时只提示、不影响编译运行调试。
+
+### 修复：断点"已验证但程序不停"
+VS Code 会为**每个有断点的文件**各发一次 `setBreakpoints`。以前每次都用本次结果覆盖
+`enabledSites`，于是最后一个文件（通常是别的 `.cpp`，在当前调试目标里查不到站点）
+把集合清空 → 日志里能看到「断点 1/1 已验证」但「启动调试运行 worker（…，断点 0 个）」。
+现在按来源文件分别保存取并集。
 
 ### 修复：并发编译导致 `wasm-ld: cannot open /workspace/dbgstub.o`
 compile worker 里只有一个 Toolchain、一份内存 FS，之前两条 compile 消息可以并发

@@ -44,7 +44,10 @@ export function createNamedWorker(name, opts = {}) {
     // 纯 Node worker（例如 DWARF 引擎）：需要额外 workerData
     return Promise.resolve(wrap(new NodeWorker(file, { workerData: opts.extraWorkerData }), log, name));
   }
-  const workerData = useShim ? { bundle, log: !!opts.verbose } : {};
+  // clangd 需要"浏览器环境伪装"（emscripten 的 -sENVIRONMENT=web,worker 产物）
+  const workerData = useShim
+    ? { bundle, log: !!opts.verbose, browserEmulation: !!opts.browserEmulation, threadName: opts.browserEmulation ? "main-shim" : undefined }
+    : {};
   return Promise.resolve(wrap(new NodeWorker(file, { workerData }), log, name));
 }
 
@@ -63,7 +66,13 @@ export async function ensureDwarfEngine() {
   const launcher = path.join(dir, "launch.cjs");
   const wasm = path.join(dir, "SymbolsBackend.wasm");
   const gz = path.join(extRoot, "assets", "dwarf", "SymbolsBackend.wasm.gz");
-  const engineSrc = path.join(extRoot, "dist", "node", "workers", "dwarfEngine.node.cjs");
+  const bundled = path.join(extRoot, "dist", "node", "workers", "dwarfEngine.node.cjs");
+  // ⚠️ 上游 node 引擎是用**自己所在目录**找 SymbolsBackend.wasm 的，
+  //    所以必须把引擎也拷进这个临时目录（只改 fs 相对路径不够，它用的是 import.meta.url/__dirname）。
+  const engineSrc = path.join(dir, "dwarfEngine.node.cjs");
+  if (!fs.existsSync(engineSrc) || fs.statSync(engineSrc).size !== (fs.existsSync(bundled) ? fs.statSync(bundled).size : -1)) {
+    fs.copyFileSync(bundled, engineSrc);
+  }
   if (!fs.existsSync(wasm) || fs.statSync(wasm).size < 1024) {
     // 12.7MB gz → 55.7MB wasm，只解一次
     const { gunzipSync } = await import("node:zlib");

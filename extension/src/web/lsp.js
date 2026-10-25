@@ -3,6 +3,8 @@
 //   ① 给客户端一对"会改写 URI 的" reader/writer（clangd 只认 /workspace/<file> 路径）
 //   ② 双向映射 URI（文档 URI ↔ file:///workspace/<name>），含诊断与 WorkspaceEdit
 import * as vscode from "vscode";
+import * as platform from "oi-platform";
+
 
 import { sanitizeName } from "../core/names.mjs";
 import { clangdArgs } from "../core/flags.mjs";
@@ -279,7 +281,14 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   //    （早期为了"兼容"改成经典 worker + importScripts，直接导致 #include 卡死，
   //     细节见 docs/CLANGD-WASM-PITFALLS.md）
   let worker;
+  if (!platform.isWeb) {
+    // 桌面版：Node 的 worker_threads + 垫片（browserEmulation 让 emscripten 的
+    // -sENVIRONMENT=web,worker 产物以为自己在浏览器 worker 里）
+    worker = await platform.createNamedWorker("clangdWorker.js", { browserEmulation: true, log: out });
+    out("桌面版：clangd(WASM) 运行在 Node worker 中（browserEmulation）");
+  }
   try {
+    if (worker) throw { __skip: true };
     // ⚠️ 必须是**经典 worker**（与参考实现一致）：`new Worker(url)` 不带 type。
     //    worker 脚本内部用**动态 import()** 加载 ESM glue —— 动态 import 在经典
     //    worker 里是允许的；而如果这里传 {type:"module"}，worker 就成了 module
@@ -288,6 +297,7 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
     worker = new Worker(workerUrl);
     console.warn("[oi clangd] worker(classic) ←", workerUrl);
   } catch (e) {
+    if (e && e.__skip) { /* 桌面版已创建 */ } else {
     // 跨源部署时的兜底：fetch 源码再 blob 化
     const resp = await fetch(workerUrl);
     if (!resp.ok) throw new Error(`取不到 clangdWorker.js: HTTP ${resp.status}`);
@@ -295,6 +305,7 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
     // 兜底也是经典 worker（同上面原因：动态 import 在经典 worker 里可用）
     worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
     console.warn("[oi clangd] worker(blob fallback) ←", workerUrl, "err=", (e && e.message) || e);
+    }
   }
   // 调试通道：worker 的阶段日志/错误直接进控制台，避免被 LSP 握手前的丢弃规则吞掉
   worker.addEventListener("message", (ev) => {

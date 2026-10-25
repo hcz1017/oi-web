@@ -102,16 +102,6 @@ async function listCppFiles() {
 }
 function ensureLsp() {
   if (lspPromise) return lspPromise;
-  // 桌面版：同样用内置 wasm clangd（不依赖任何外部 clangd）。
-  //   ⚠️ Node 里跑 wasm clangd 需要 worker 垫片的 browserEmulation 模式（见 src/node/worker-shim.cjs），
-  //      目前还在打通 LSP stdout 那一步；先明确告知，避免用户以为坏了。
-  if (!platform.isWeb) {
-    if (!ensureLsp._warnedDesktop) {
-      ensureLsp._warnedDesktop = true;
-      logLine("桌面版 clangd(WASM) 适配中：编译/运行/调试正常，补全暂不可用（不使用外部 clangd）");
-    }
-    return null;
-  }
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   if (!cfg.get("lsp", true)) return null;
   // 只给"真正打开着的 cpp 文件"启语言服务：没有打开就不启动，省内存/CPU

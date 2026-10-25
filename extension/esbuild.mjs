@@ -131,7 +131,7 @@ if (existsSync(wdbDwarf)) {
 // 8) 桌面版资源：同一份 IIFE worker 产物 + worker_threads 垫片 + 上游 node 版 DWARF 引擎
 const nodeWorkers = path.join(OUT_NODE, "workers");
 mkdirSync(nodeWorkers, { recursive: true });
-for (const name of ["runWorker.js", "compileWorker.js", "debugWorker.js"]) {
+for (const name of ["runWorker.js", "compileWorker.js", "debugWorker.js", "clangdWorker.js"]) {
   const src = path.join(OUT, name);
   if (existsSync(src)) cpSync(src, path.join(nodeWorkers, name));
 }

@@ -47,6 +47,8 @@ globalThis.removeEventListener = (type, cb) => {
   const i = shimMsgListeners.indexOf(cb);
   if (i >= 0) shimMsgListeners.splice(i, 1);
 };
+globalThis.__wdbDbg = (tag, extra) => { try { parentPort.postMessage({ __wdbDbg: tag, extra }); } catch {} };
+
 parentPort.on("message", (data) => {
   try { globalThis.onmessage && globalThis.onmessage({ data }); } catch (e) { console.error("worker onmessage 异常", e); }
   for (const cb of [...shimMsgListeners]) { try { cb({ data }); } catch (e) { console.error("message 监听器异常", e && e.message); } }
@@ -140,7 +142,16 @@ globalThis.fetch = async (input, init) => {
       // 关掉 node 环境判定（否则 emscripten 断言 "node environment detected but not enabled at build time"）
       .replace(/ENVIRONMENT_IS_NODE=globalThis\.process\?\.versions\?\.node&&globalThis\.process\?\.type!="renderer"/g, "ENVIRONMENT_IS_NODE=false")
       // 关掉"检测到 node 版本就 throw"的那段
-      .replace(/typeof process!=="undefined"&&process\.versions\?\.node/g, "false");
+      .replace(/typeof process!=="undefined"&&process\.versions\?\.node/g, "false")
+      // 在 FS.init 里注入调试/修复钩子（作用域内才有 FS / Module）
+      .replace(
+        'FS.initialized=true;input??=Module["stdin"];output??=Module["stdout"];error??=Module["stderr"];FS.createStandardStreams(input,output,error)',
+        'FS.initialized=true;input??=Module["stdin"];output??=Module["stdout"];error??=Module["stderr"];FS.createStandardStreams(input,output,error);'
+        + 'try{var __ow=FS.write;FS.write=function(s,b,o,l,p){try{globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-write",[s&&s.fd,l])}catch(e){}return __ow.apply(FS,arguments)};'
+        + 'var __orr=FS.read;FS.read=function(s,b,o,l,p){var __n=__orr.apply(FS,arguments);try{if(((s&&s.fd)===0)||__true0)globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-read",[s&&s.fd,l,__n])}catch(e){}return __n};'
+        + 'for(var __fd of [1,2]){var __st=FS.streams[__fd];if(__st){__st.tty=true;var __fn=(__fd===1)?Module["stdout"]:Module["stderr"];(function(fd,fn){__st.stream_ops=Object.assign({},__st.stream_ops||{},{put_char:function(_s,_b){try{globalThis.__wdbDbg&&globalThis.__wdbDbg("put-char",[fd,_b])}catch(e){};if(typeof fn==="function")fn(_b)}})})(__fd,__fn)}}'
+        + 'globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-hooks",[typeof Module.stdout,typeof Module.stdin,!!(FS.streams[1]&&FS.streams[1].tty)])}catch(e){globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-hook-fail",String(e))}',
+      );
     if (patched !== t0) console.log("[shim] 已改写 glue 的 node 环境检测");
     buf = Buffer.from(patched);
   }
@@ -160,7 +171,16 @@ globalThis.importScripts = (...urls) => {
 
 // ---------------- 加载业务 worker 代码 ----------------
 try {
-  require(path.resolve(workerData.bundle));
+  const bundlePath = path.resolve(workerData.bundle);
+  if (/\.mjs$/i.test(bundlePath)) {
+    // clangd 的 glue 是 ESM（pthread 子线程也用同一份）
+    import(pathToFileURL(bundlePath).href).catch((e) => {
+      console.error("[worker-shim] 加载 ESM worker 失败:", (e && (e.stack || e.message)) || e);
+      parentPort.postMessage({ type: "error", message: "worker 加载失败: " + ((e && e.message) || e) });
+    });
+  } else {
+    require(bundlePath);
+  }
 } catch (e) {
   console.error("[worker-shim] 加载 worker 失败:", (e && (e.stack || e.message)) || e);
   parentPort.postMessage({ type: "error", message: "worker 加载失败: " + ((e && e.message) || e) });
