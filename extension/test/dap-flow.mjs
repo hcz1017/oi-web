@@ -154,10 +154,22 @@ must(!!launchResp && launchResp.success, `launch 成功（${launchResp ? "" : "�
 const initialized = await waitFor((m) => m.type === "event" && m.event === "initialized");
 must(!!initialized, "收到 initialized 事件（VS Code 收到它才会发断点/configurationDone）");
 
-send("setBreakpoints", { source: { path: "vscode-test-web://mount/main.cpp" }, breakpoints: [{ line: 10 }] }, 3);
+send("setBreakpoints", { source: { path: target.sourceUri || ("vscode-test-web://mount/" + FILE_NAME) }, breakpoints: [{ line: 10 }] }, 3);
 const bpResp = await waitFor((m) => m.type === "response" && m.command === "setBreakpoints");
 const bps = bpResp && bpResp.body && bpResp.body.breakpoints;
 must(!!bps && bps.length === 1 && bps[0].verified === true, `断点已验证: ${JSON.stringify(bps)}`);
+
+// 回归：**别的文件**的断点不能被验证（VS Code 会为工作区里每个有断点的文件都发 setBreakpoints，
+// 以前按行号硬查，别的文件第 10 行会命中当前文件第 10 行 → 程序在莫名其妙的地方停下）
+{
+  send("setBreakpoints", { source: { path: "/tmp/another_file.cpp" }, breakpoints: [{ line: 10 }] }, 31);
+  await waitFor((m) => m.type === "response" && m.command === "setBreakpoints" && m.request_seq === 31);
+  const r = msgs.filter((m) => m.type === "response" && m.command === "setBreakpoints" && m.request_seq === 31).pop();
+  must(!!r && r.body.breakpoints.every((b) => b.verified === false),
+    `别的文件的断点未被验证: ${JSON.stringify(r && r.body.breakpoints)}`);
+  // 并且不能把目标文件的断点集合清空
+  const log = msgs.length; // 仅用于占位，真正的验证看下面是否仍能停住
+}
 
 send("configurationDone", {}, 4);
 const stopped = await waitFor((m) => m.type === "event" && m.event === "stopped", 30000);
