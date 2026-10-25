@@ -995,6 +995,23 @@
 
   // ../wdb/src/runtime/debug.worker.js
   var post = (m, transfer) => self.postMessage(m, transfer || []);
+  var ReplayStdin = class extends Fd {
+    constructor(bytes) {
+      super();
+      this.bytes = bytes;
+      this.pos = 0;
+    }
+    fd_fdstat_get() {
+      return { ret: 0, fdstat: { fs_filetype: 2, fs_flags: 0, fs_rights_base: 0xffffffffn, fs_rights_inheriting: 0xffffffffn } };
+    }
+    fd_read(size) {
+      const n = Math.min(size, this.bytes.length - this.pos);
+      if (n <= 0) return { ret: 0, data: new Uint8Array(0) };
+      const data = this.bytes.slice(this.pos, this.pos + n);
+      this.pos += n;
+      return { ret: 0, data };
+    }
+  };
   var TermStdin = class extends Fd {
     constructor(sab) {
       super();
@@ -1026,6 +1043,10 @@
           Atomics.notify(this.ctrl, 0);
           post({ type: "consumed" });
           this._justServed = true;
+          if (stdinRecordLen < STDIN_RECORD_CAP) {
+            stdinRecord.push(data.slice(0));
+            stdinRecordLen += data.length;
+          }
           return { ret: 0, data };
         }
         if (this._justServed) {
@@ -1049,6 +1070,10 @@
   var pending = null;
   var lastSite = null;
   var trapped = null;
+  var stdinRecord = [];
+  var stdinRecordLen = 0;
+  var STDIN_RECORD_CAP = 16 * 1024 * 1024;
+  var replay = { active: false, target: 0, budget: 0, hit: false };
   var scratchBase = 0;
   var bodyLocals = [];
   var globalTypes = [];
@@ -1084,6 +1109,22 @@
     const site = siteById.get(siteId);
     if (!site) return 0;
     lastSite = site;
+    if (replay.active) {
+      if (replay.budget-- <= 0) throw new Error("__oi_replay_abort");
+      if (siteId !== replay.target) return 0;
+      if (!scratchBase) {
+        try {
+          const old = inst.exports.memory.buffer.byteLength;
+          inst.exports.memory.grow(1);
+          scratchBase = old;
+        } catch {
+          scratchBase = 0;
+        }
+      }
+      pending = site;
+      replay.hit = true;
+      return scratchBase;
+    }
     const ids = [siteId, ...site.aliases || []];
     const isBreakpoint = !!bp && ids.some((id) => (Atomics.load(bp, id >>> 5) & 1 << (id & 31)) !== 0);
     const sameLine = resumeMode !== 1 && site.line === stopLine;
@@ -1121,6 +1162,30 @@
     if (!site) return;
     const frames = captureStack();
     const snap = snapshotMemory(site);
+    if (replay.active) {
+      post({
+        type: "trap",
+        replayed: true,
+        reason: trapped && trapped.reason,
+        message: trapped && trapped.message,
+        site,
+        siteId: site.id,
+        frames,
+        memorySegments: snap.memorySegments,
+        memorySize: snap.memorySize,
+        localsBase: scratchBase,
+        body: site.body,
+        bodyLocals: bodyLocals[site.body] || [],
+        globalsBase: scratchBase + (bodyLocals[site.body] || []).length * 8,
+        globalTypes
+      });
+      Atomics.wait(ctrl, 0, 0);
+      try {
+        Atomics.store(ctrl, 0, 0);
+      } catch {
+      }
+      return;
+    }
     post({
       type: "paused",
       siteId: site.id,
@@ -1218,10 +1283,15 @@
       if (e && typeof e.code === "number") code = e.code;
       else if (e && e.name === "WASIProcExit") code = e.code ?? 0;
       else if (isTrap(e)) {
-        reportTrap(e);
-        try {
-          Atomics.wait(ctrl, 0, 0);
-        } catch {
+        const msg = String(e && (e.message || e) || e);
+        trapped = { reason: msg, message: msg, site: lastSite };
+        const ok = await replayToTrap(mod);
+        if (!ok) {
+          reportTrap(e);
+          try {
+            Atomics.wait(ctrl, 0, 0);
+          } catch {
+          }
         }
         code = -1;
       } else post({ type: "error", message: "\u8FD0\u884C\u5F02\u5E38: " + (e && (e.stack || e.message) || e) });
@@ -1234,6 +1304,49 @@
     if (!e) return false;
     if (typeof WebAssembly !== "undefined" && e instanceof WebAssembly.RuntimeError) return true;
     return TRAP_RE.test(String(e && e.message || e));
+  }
+  async function replayToTrap(mod) {
+    const site = lastSite;
+    if (!site) return false;
+    replay.active = true;
+    replay.target = site.id;
+    replay.budget = 2e6;
+    replay.hit = false;
+    const prevInst = inst, prevPending = pending, prevScratch = scratchBase;
+    scratchBase = 0;
+    pending = null;
+    try {
+      const all = new Uint8Array(stdinRecordLen);
+      let off = 0;
+      for (const c of stdinRecord) {
+        all.set(c, off);
+        off += c.length;
+      }
+      const fds = [
+        new ReplayStdin(all),
+        new ConsoleStdout(() => {
+        }),
+        // 重放不重复打印用户输出
+        new ConsoleStdout(() => {
+        })
+      ];
+      const wasi2 = new WASI([cfg.fileName || "program"], [], fds);
+      inst = await WebAssembly.instantiate(mod, {
+        wasi_snapshot_preview1: wasi2.wasiImport,
+        wdb: { probe, pause }
+      });
+      try {
+        wasi2.start(inst);
+      } catch {
+      }
+    } catch {
+    } finally {
+      replay.active = false;
+      inst = prevInst;
+      scratchBase = prevScratch;
+      pending = prevPending;
+    }
+    return replay.hit;
   }
   function reportTrap(e) {
     const msg = String(e && (e.message || e) || e);
