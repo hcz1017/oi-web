@@ -1,6 +1,31 @@
+# Changelog — WebC++ (`web-cpp-tool`)
+
+本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+
+
+## [0.2.1] - 2026-10-25
+
+### 新增：RE 在 VS Code 里"像个异常"
+- 调试器声明 `supportsExceptionInfoRequest`：程序崩溃暂停时，VS Code 的
+  「调用堆栈」面板会显示**异常条目**，点开能看到 `exceptionInfo`——
+  分类成用户能看懂的话（数组越界 / 除零 / 栈溢出 / unreachable）+ 崩溃前最后一句的 文件:行；
+- 终端里红底白字横幅 `⚠ 运行时错误 (RE)`，不再像普通断点一样只有一条 stopped。
+
+### 新增：编译缓存（代码没变就不编译）
+- 终端 `Ctrl+Shift+B` 与 `F5` 调试共用一套缓存：按 `源码+文件名+参数+优化级` 做键，
+  代码/参数没变就直接复用上一版产物，日志显示
+  `[编译缓存命中，跳过编译（代码未变化）]`；
+- 缓存放 `globalState`（重启 VS Code 也有效），LRU 最多 8 条、单条 ≤32MB；
+- 调试版和运行版分开缓存（debugStub/优化级参与键）。
+
+### 测试
+- `dap-flow` 增加回归：别的文件的断点必须未验证，且目标文件断点仍能命中；
+- `debug-vars` / `debug-eval` 修好（暂停快照早已改为分段 `memorySegments`，
+  这两个测试还在用旧的整块 `memory`，导致 `no frame` 误导性报错）。
+
 ## [0.2.0] - 2026-10-25
 
-线上此前是 0.1.4，这一版把桌面版从"半残"做成"能用"，并修掉一批调试/补全问题。
+**桌面版（Node 宿主）与调试/补全修复。** 线上此前是 0.1.4，这一版把桌面版从"半残"做成"能用"，并修掉一批调试/补全问题。
 
 ### 新增：桌面版（Node 扩展宿主）
 **目标：无需任何配置就能写 C++。** 同一个 VSIX 同时适用于网页版与桌面版：
@@ -65,93 +90,6 @@
   clang-tidy 本来就用 `--clang-tidy=false` 关着。
 - **激活失败排查**：去掉 `extensionKind`（桌面版等价于"必须跑 Node 宿主"，只有 `browser`
   入口时永远不会激活），激活流程分步 try/catch + 分环境自述日志，失败写进输出通道。
-
-### 新增：RE 在 VS Code 里"像个异常"
-- 调试器声明 `supportsExceptionInfoRequest`：程序崩溃暂停时，VS Code 的
-  「调用堆栈」面板会显示**异常条目**，点开能看到 `exceptionInfo`——
-  分类成用户能看懂的话（数组越界 / 除零 / 栈溢出 / unreachable）+ 崩溃前最后一句的 文件:行；
-- 终端里红底白字横幅 `⚠ 运行时错误 (RE)`，不再像普通断点一样只有一条 stopped。
-
-### 新增：编译缓存（代码没变就不编译）
-- 终端 `Ctrl+Shift+B` 与 `F5` 调试共用一套缓存：按 `源码+文件名+参数+优化级` 做键，
-  代码/参数没变就直接复用上一版产物，日志显示
-  `[编译缓存命中，跳过编译（代码未变化）]`；
-- 缓存放 `globalState`（重启 VS Code 也有效），LRU 最多 8 条、单条 ≤32MB；
-- 调试版和运行版分开缓存（debugStub/优化级参与键）。
-
-### 测试
-- `dap-flow` 增加回归：别的文件的断点必须未验证，且目标文件断点仍能命中；
-- `debug-vars` / `debug-eval` 修好（暂停快照早已改为分段 `memorySegments`，
-  这两个测试还在用旧的整块 `memory`，导致 `no frame` 误导性报错）。
-
-# Changelog — WebC++ (`web-cpp-tool`)
-
-本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
-
-## [0.2.0] - 2026-10-24
-
-### 新增：桌面版（Node 扩展宿主）真正可用
-桌面 VS Code 的 Web 扩展宿主没有跨源隔离 → 没有 `SharedArrayBuffer` → 交互 stdin 和断点调试都不可用。
-0.2.0 增加 **Node 入口**（`main`），在 Node 宿主里跑同一份源码（平台差异全部收在
-`src/platform-web.js` / `src/platform-node.js`，构建时用 esbuild alias 切换）：
-
-- **worker**：Node 版用 `worker_threads` + 垫片（`src/node/worker-shim.cjs`）跑**同一份** IIFE 产物，
-  垫片补齐 `self` / `postMessage` / `importScripts` / `fetch(file://)`；
-- **交互 stdin / 断点暂停**：Node 里 `SharedArrayBuffer` 与 `Atomics` 原生可用，**无需跨源隔离** → 全部恢复；
-- **DWARF 引擎**：桌面版用上游的 node 版引擎（Emscripten node 分支），
-  wasm 从 `SymbolsBackend.wasm.gz` 首次运行解压到临时目录（`fs` 相对路径重定向，因为 worker 里不能 chdir）；
-- **clangd**：桌面版暂不启动（`vscode-languageclient/browser` 与 emscripten 的 node 分支要另做），
-  编译/运行/调试不受影响；日志里会说明。
-- 宿主入口：`browser` → `dist/web/extension.js`，`main` → `dist/node/extension.js`；
-  同一个 VSIX 两边都能装。
-
-### 踩坑与修复（都记在这里，仍是 0.2.0）
-- **VSIX 不能打 `--target web`**：那会把它标记成 web 专用 → 桌面只给 `LocalWebWorker` 宿主，
-  而该宿主里 `fetch(vscode-file://…)` 悬挂 → `createWorker()` 不返回 → 报"工具链加载超时"。
-  改为通用 target + `extensionKind: ["workspace"]`，桌面走 **Node 扩展宿主**。
-- **Node 端 worker 包装必须支持 `onmessage` 属性**：只实现 `addEventListener` 时消息收不到，
-  同样表现为"工具链加载超时"。新增 `src/node/wrap-worker.js` 两种订阅都支持。
-- `createWorker()` 的 fetch 加 15s 超时，避免宿主静默悬挂。
-
-### 桌面版 clangd：**内置 wasm clangd 跑通了（不依赖外部 clangd）**
-clangd.wasm 是 emscripten 的浏览器构建，在 Node 里需要三处伪装（都在
-`src/node/worker-shim.cjs` 的 `browserEmulation` 模式里，默认关闭，只有 clangd 用）：
-
-1. 载入 glue 时**文本改写** `ENVIRONMENT_IS_NODE=false`（否则运行时断言
-   "node environment detected but not enabled at build time"；不能全局删
-   `process.versions.node`，Node 的 undici 会炸）；
-2. 伪造 `globalThis.WorkerGlobalScope`（`ENVIRONMENT_IS_WORKER` 靠它判断）；
-3. 全局 `Worker` 映射到 `worker_threads.Worker`，并把 `name` 传成 `self.name="em-pthread-N"`
-   （`ENVIRONMENT_IS_PTHREAD` 靠它判断），同时 `parentPort → self.onmessage` 转发，
-   且 `addEventListener("message")` 必须真的接上（emscripten 的 pthread 主线程 mailbox 用它）。
-
-另外补了：`Blob` 同步实现、`URL.createObjectURL` 落盘成 `.mjs`、
-`fetch(file://)` 支持、fd1/fd2 强制 TTY（`put_char`）。
-
-实测（Node，走桌面版真实代码路径）：
-`pthread #1..#4 loaded` → `callMain` → 发 `initialize` → **5.2s 收到完整 capabilities**
-（completion / hover / definition / semanticTokens / inlayHint / documentSymbol …）。
-
-### 旧的原生 clangd 方案（已删除）
-wasm 版 clangd 是 emscripten 的浏览器构建（pthread 用 `new Worker(...,{type:'module'})`），
-Node 里没有对应构建。桌面版改为：从 `PATH`（或设置 `oiCpp.clangdPath`）找原生 `clangd`，
-用 `vscode-languageclient/node` 走 stdio 连接，编译参数通过临时目录里的 `.clangd` 传入。
-找不到 clangd 时只提示、不影响编译运行调试。
-
-### 修复：断点"已验证但程序不停"
-VS Code 会为**每个有断点的文件**各发一次 `setBreakpoints`。以前每次都用本次结果覆盖
-`enabledSites`，于是最后一个文件（通常是别的 `.cpp`，在当前调试目标里查不到站点）
-把集合清空 → 日志里能看到「断点 1/1 已验证」但「启动调试运行 worker（…，断点 0 个）」。
-现在按来源文件分别保存取并集。
-
-### 修复：并发编译导致 `wasm-ld: cannot open /workspace/dbgstub.o`
-compile worker 里只有一个 Toolchain、一份内存 FS，之前两条 compile 消息可以并发
-（例如"调试构建"和终端里的 `Ctrl+Shift+B` 同时触发）→ 互相删掉 out.o/dbgstub.o。
-现在 worker 内部**串行排队**，并且排队任务里的异常也会回报给宿主。
-
-### 验证
-- Node 链路：垫片里 compile worker `ready`、调试版（debugStub）编译成功、node 版 DWARF 引擎 `hello` 成功。
-- Web 链路回归：冒烟 + DAP 全流程（ASCII / 中文文件名）全绿。
 
 ## [0.1.5] - 2026-10-24
 
