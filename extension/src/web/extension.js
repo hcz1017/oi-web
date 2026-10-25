@@ -208,10 +208,10 @@ class OiPty {
   /** 缓存命中：跳过编译直接运行 */
   _startRunnerWithWasm(wasm) {
     if (this.state === "running") { this.wln("\x1b[90m[停止上一个程序]\x1b[0m"); this._killRunner(); }
-    this.state = "compiling";   // 复用状态机：马上转 running
+    this.state = "running";
+    setStatus("run");
     this.sab = typeof SharedArrayBuffer === "undefined" ? null : new SharedArrayBuffer(SAB_SIZE);
     this.queue = []; this.eof = false; this._line = "";
-    this.wln("\x1b[36m[运行中（代码未变化，未重新编译）]\x1b[0m");
     this._startRunner(wasm);
   }
 
@@ -325,6 +325,14 @@ class OiPty {
     if (!this.sab) this.wln("\x1b[33m[注意] 页面未跨源隔离，没有 SharedArrayBuffer → 程序拿到空 stdin\x1b[0m");
 
     if (!this._atLineStart) this.write("\r\n");
+    // ⚠️ 终端运行也要走编译缓存：以前只有 F5 调试（compileForDebug）会读缓存，
+    //    这里只写不读 → 反复 Ctrl+Shift+B 同一个文件永远全量重编。
+    const cachedRun = compileCache.get(cacheKey);
+    if (cachedRun) {
+      this.wln(`\x1b[32m[编译缓存命中（代码未变化，上次耗时 ${cachedRun.ms}ms）→ 开始运行]\x1b[0m`);
+      this._startRunnerWithWasm(cachedRun.wasm.slice().buffer);
+      return;
+    }
     this.wln(`\x1b[36m[编译中… ${fileName}（完成后才能输入）]\x1b[0m`);
 
     try {
