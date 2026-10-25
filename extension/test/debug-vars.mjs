@@ -9,6 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { Toolchain } from "../src/core/toolchain.mjs";
 import { parseWasm, instrumentWasm } from "../../wdb/src/instrument/wasm-bin.mjs";
+import { SparseMem, EMPTY_MEM } from "../../wdb/src/runtime/mem-view.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, "..");
@@ -62,7 +63,8 @@ const host = {
     return snap.read(offset, length);
   },
   getWasmLocal(local) {
-    if (!snap || !frame) throw new Error("no frame");
+    if (!snap) throw new Error("no snapshot");
+    if (!frame) throw new Error("no frame");
     const type = (frame.types || [])[local];
     const dv = snap.dv(frame.base + local * 8, 8);
     switch (type) {
@@ -159,7 +161,10 @@ must(Array.isArray(paused.bodyLocals), `暂停帧的 local 类型表: ${JSON.str
 console.log("   globals:", JSON.stringify(paused.globalTypes), "globalsBase", paused.globalsBase);
 
 // 交给引擎
-snap = paused.memory;
+// ⚠️ 暂停快照现在是**分段**的（memorySegments），不再是整块 memory
+  snap = paused.memorySegments
+    ? new SparseMem(paused.memorySize || 0, paused.memorySegments)
+    : (paused.memory ? new SparseMem(paused.memory.byteLength, [{ offset: 0, bytes: paused.memory }]) : EMPTY_MEM);
 frame = { base: paused.localsBase, types: paused.bodyLocals, globalsBase: paused.globalsBase, globalTypes: paused.globalTypes };
 const rawLoc = { rawModuleId: MOD, codeOffset: bp.origOffset - codeBase, inlineFrameIndex: 0 };
 

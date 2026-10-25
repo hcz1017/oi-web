@@ -96,6 +96,14 @@ wdb/                       （gitignore）调试器仓库，见上表
 6. **栈统一 512MB**（普通与调试构建一致），深递归不再爆栈；调试暂停只做分段快照。
 7. **wasi-shim 的 argv 缓冲区必须按 UTF-8 字节算**（上游 0.4.2 的 bug，`scripts/patch-wasi-shim.mjs` 修）。
 
+## 桌面版（零配置）
+
+同一个扩展也支持**桌面 VS Code**：内置 Clang(WASM) + libc++ + clangd(WASM)，
+**不需要安装任何编译器/语言服务器**，装完就能写、跑、调 C++。
+
+> ⚠️ 内置是 Clang + libc++，与 OJ 常用的 gcc/libstdc++ 有差异；
+> clangd 还可能"自动补"你没写的头文件导致提交 CE。**仅供日常练习**，交卷前用 OJ 编译器复核。
+
 ## 调试（源码级）
 
 `F5` 或命令面板 `WebC++: 调试当前文件`：源码级断点、单步（next / step in / step out）、

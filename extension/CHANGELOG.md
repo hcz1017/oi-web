@@ -1,3 +1,63 @@
+## [0.2.0] - 2026-10-25
+
+线上此前是 0.1.4，这一版把桌面版从"半残"做成"能用"，并修掉一批调试/补全问题。
+
+### 新增：桌面版（Node 扩展宿主）
+**目标：无需任何配置就能写 C++。** 同一个 VSIX 同时适用于网页版与桌面版：
+`browser` 入口给网页版，`main` 入口给桌面版，平台差异全部收在
+`src/platform-web.js` / `src/platform-node.js`，构建时按 esbuild alias 切换。
+
+- **编译 / 运行 / 交互输入**：桌面版在 Node 宿主里跑，`SharedArrayBuffer` 与 `Atomics`
+  原生可用（不需要跨源隔离），所以终端 stdin 与断点暂停都正常。
+- **worker 复用同一份产物**：Node 侧用 `worker_threads` + 垫片（`src/node/worker-shim.cjs`）
+  把 worker_threads 伪装成 Web Worker（`self` / `postMessage` / `importScripts` / `fetch(file://)`）。
+- **clangd(WASM) 在桌面端跑通**（不依赖任何外部 clangd、不使用 webview）：
+  clangd.wasm 是 emscripten 的浏览器构建，在 Node 里需要三处伪装 ——
+  1. 载入 glue 时**文本改写** `ENVIRONMENT_IS_NODE=false`（否则断言
+     "node environment detected but not enabled at build time"；不能全局删
+     `process.versions.node`，Node 的 undici 会炸）；
+  2. 伪造 `globalThis.WorkerGlobalScope`（`ENVIRONMENT_IS_WORKER` 靠它判断）；
+  3. 全局 `Worker` → `worker_threads.Worker`，把 `name` 传成 `self.name="em-pthread-N"`
+     （`ENVIRONMENT_IS_PTHREAD` 靠它判断），并让 `addEventListener("message")` 真正
+     接到 `parentPort`（emscripten 的 pthread 主线程 mailbox 靠它）。
+  另外补了：`Blob` 同步实现、`URL.createObjectURL` 落盘成 `.mjs`、`fetch(file://)`，
+  以及**给 fd 0/1/2 装 `stream_ops`**（fd1/2 用 write/put_char 转发到 worker 的 stdout/stderr）。
+  实测：`initialize` 6ms、`didOpen` 正常、`hover` 4.1s（首次建 preamble）、
+  `completion` 首次 1.6s、之后约 180ms。
+- **头文件虚拟 FS**：桌面版 `assetsBase()` 是文件路径，不能 `fetch` ——
+  改为平台层 `readAssetGzText()`（web 用 fetch+DecompressionStream，桌面用 fs+gunzip），
+  这样 `Ctrl+点击 #include <vector>` 能正常打开头文件。
+
+### 修复
+- **断点"已验证但程序不停"**：VS Code 会为工作区里每个有断点的文件各发一次
+  `setBreakpoints`，以前每次覆盖 `enabledSites`，最后一个文件（别的 `.cpp`）把集合清空。
+  现在按来源文件分别保存取并集。
+- **别的文件的断点导致乱停**：`_resolveLine` 只按行号在当前目标站点表里查，
+  别的文件第 15 行会命中当前文件第 15 行站点并被标成"已验证"。
+  现在校验来源文件（解码后 basename 比较），不匹配一律 `unverified` 且不启用站点。
+- **中文文件名无法调试**：DWARF 引擎返回的源文件 URL 是 percent-encoded，断点查表用的是
+  原始字符串 → 全部未验证。现在按解码后的文件名统一比较（断点表、栈帧 source、用户文件判定）。
+- **`F5` 调试的不是当前文件**：F5 走通用启动路径，不经过命令 → 目标为空退化成 `main.cpp`。
+  现在命令与 F5 共用「取活动编辑器作为调试目标」，并且目标用掉即清。
+- **调试构建 `wasm-ld: cannot open /workspace/dbgstub.o`**：compile worker 里只有一份
+  Toolchain / 一份内存 FS，两条编译消息并发会互相删文件。现在 worker 内部串行排队。
+- **桌面版 DWARF 引擎 `ENOENT …/SymbolsBackend.wasm`**：上游 node 引擎按自己所在目录找
+  wasm，现在把引擎一起拷进临时目录。
+- **`Cannot find package 'vscode-languageclient'` / `Worker is not defined`**：
+  Node bundle 里内联 LSP 客户端（并加 `browser` 解析条件），并给 `Worker` 一个占位符
+  （browser client 的 `instanceof Worker` 在 Node 里连标识符求值都会抛）。
+- **`ioctl_tiocgwinsz` 崩溃**：把 `stream.tty` 设成 `true` 会让 emscripten 的 ioctl 读
+  `stream.tty.ops` 时炸；改为不动 `tty`、只装 `stream_ops`。
+- **`.clangd` 里的 `Tidy` 键不被识别**（报 `Unknown Config key 'Tidy'`）：已删除该键，
+  clang-tidy 本来就用 `--clang-tidy=false` 关着。
+- **激活失败排查**：去掉 `extensionKind`（桌面版等价于"必须跑 Node 宿主"，只有 `browser`
+  入口时永远不会激活），激活流程分步 try/catch + 分环境自述日志，失败写进输出通道。
+
+### 测试
+- `dap-flow` 增加回归：别的文件的断点必须未验证，且目标文件断点仍能命中；
+- `debug-vars` / `debug-eval` 修好（暂停快照早已改为分段 `memorySegments`，
+  这两个测试还在用旧的整块 `memory`，导致 `no frame` 误导性报错）。
+
 # Changelog — WebC++ (`web-cpp-tool`)
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
