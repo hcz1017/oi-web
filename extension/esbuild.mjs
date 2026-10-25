@@ -61,7 +61,11 @@ await esbuild.build({
   minify: true,
   platform: "node",
   alias: { "oi-platform": nodePlatform },
-  external: ["vscode", "vscode-languageclient/browser", "node:worker_threads", "node:fs", "node:path", "node:url", "node:os"],
+  // ⚠️ 不要把 vscode-languageclient 标成 external：VSIX 里没有 node_modules，
+  //    运行时 require 会报 "Cannot find package 'vscode-languageclient'"。
+  external: ["vscode", "node:worker_threads", "node:fs", "node:path", "node:url", "node:os"],
+  // vscode-languageclient 的 "./browser" 只有 browser 条件导出，node 平台默认解析不到
+  conditions: ["browser", "import", "default"],
 });
 
 // 2) 编译 worker：经典 worker（IIFE）。
