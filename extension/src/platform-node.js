@@ -98,6 +98,14 @@ export async function createDwarfEngineWorker(opts = {}) {
   return wrap(new NodeWorker(launcher), opts.log || (() => {}), "dwarfEngine");
 }
 
+/** 读扩展资产里的 .gz 文本（桌面版：直接读文件，不能用 fetch） */
+export async function readAssetGzText(rel) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { gunzipSync } = await import("node:zlib");
+  return gunzipSync(fs.readFileSync(path.join(assetsBase(), rel))).toString("utf8");
+}
+
 export const hasFsAccess = false;   // File System Access API 不存在
 export const extensionPathToUri = (p) => vscode.Uri.file(p);
 export { fileURLToPath };

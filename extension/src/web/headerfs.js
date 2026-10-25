@@ -3,6 +3,7 @@
 // "No file system handle registered (/compat)"。
 // 内容来自扩展资产里的 headers.json.gz（clangd 的 VFS 快照），首次访问时懒加载。
 import * as vscode from "vscode";
+import * as platform from "oi-platform";
 import { HEADER_SCHEME } from "./lsp.js";
 
 const onDidChangeFileEvent = new vscode.EventEmitter().event;
@@ -19,10 +20,15 @@ class HeaderFsProvider {
   async _load() {
     if (this._files) return this._files;
     const base = String(this._getBase() || "").replace(/\/+$/, "");
-    const r = await fetch(`${base}/clangd/headers.json.gz`);
-    if (!r.ok) throw vscode.FileSystemError.Unavailable(`headers.json.gz: HTTP ${r.status}`);
-    const txt = await new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).text();
-    const json = JSON.parse(txt);
+    // ⚠️ 桌面版里 assetsBase() 是**文件路径**（不是 URL），直接 fetch 会报
+    //    "Failed to parse URL from /home/.../headers.json.gz" —— 点 #include <vector> 打不开就是这个。
+    //    平台层各实现一份：web 用 fetch+DecompressionStream，桌面用 fs+gunzip。
+    let json;
+    try {
+      json = JSON.parse(await platform.readAssetGzText("clangd/headers.json.gz"));
+    } catch (e) {
+      throw vscode.FileSystemError.Unavailable(`headers.json.gz 读取失败: ${(e && e.message) || e}`);
+    }
     const files = new Map();
     for (const [p, b64] of Object.entries(json)) {
       const bin = atob(b64);

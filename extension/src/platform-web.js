@@ -25,5 +25,12 @@ export function createNamedWorker(name, opts = {}) {
   return createWorker(workerRef(name), { log: opts.log });
 }
 
+/** 读扩展资产里的 .gz 文本（web：fetch + DecompressionStream） */
+export async function readAssetGzText(rel) {
+  const r = await fetch(`${assetsBase()}/${rel}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).text();
+}
+
 export const hasFsAccess = true;    // File System Access API 可用
 export const _extUri = () => extUri;
