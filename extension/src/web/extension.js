@@ -205,6 +205,16 @@ class OiPty {
     setStatus(kind);
   }
 
+  /** 缓存命中：跳过编译直接运行 */
+  _startRunnerWithWasm(wasm) {
+    if (this.state === "running") { this.wln("\x1b[90m[停止上一个程序]\x1b[0m"); this._killRunner(); }
+    this.state = "compiling";   // 复用状态机：马上转 running
+    this.sab = typeof SharedArrayBuffer === "undefined" ? null : new SharedArrayBuffer(SAB_SIZE);
+    this.queue = []; this.eof = false; this._line = "";
+    this.wln("\x1b[36m[运行中（代码未变化，未重新编译）]\x1b[0m");
+    this._startRunner(wasm);
+  }
+
   // ---- 运行 worker（每次新建） ----
   async _startRunner(wasmBuf) {
     this._killRunner();
@@ -236,6 +246,10 @@ class OiPty {
       case "log": this._log(m.message); break;
       case "ready": this._log("工具链就绪"); this._readyResolve?.(); break;
       case "compiled": {
+        // 写入编译缓存（终端运行也缓存；成功才写）
+        if (m.ok && this.cacheKey && m.wasm) {
+          try { compileCache.put(this.cacheKey, new Uint8Array(m.wasm), m.ms || 0); } catch {}
+        }
         if (m.id !== this.reqId || this.state !== "compiling") return;   // 过期/已被取消
         if (!m.ok) {
           this.busyReset("idle");
@@ -296,7 +310,7 @@ class OiPty {
   }
 
   // ---- 编译 + 运行 ----
-  async runSource(source, fileName) {
+  async runSource(source, fileName, cacheKey) {
     if (this.state === "compiling") { this.wln("\x1b[33m[正在编译，忽略本次请求]\x1b[0m"); return; }
     if (this.state === "running") { this.wln("\x1b[90m[停止上一个程序]\x1b[0m"); this._killRunner(); }
 
@@ -437,12 +451,51 @@ function assetsBase() {
 
 function workerUrl(name) { return platform.workerRef(name); }
 
+// ---------------- 编译缓存：代码/参数没变就直接复用上一版产物 ----------------
+// key = sha1(source + fileName + flags + opt + debugInfo + debugStub)，值 = { wasm(Uint8Array), ms }
+// 放 globalState（随 profile 持久化），重启 VS Code 也有效；单条上限 32MB，总量 8 条。
+const compileCache = (() => {
+  const KEY = "oiCpp.compileCache.v1";
+  let mem = null;    // { entries: {key: {wasm:ArrayBuffer, ms, t}} } —— 启动时从 globalState 读
+  const load = () => {
+    if (mem) return mem;
+    try { mem = ctx.globalState.get(KEY, { entries: {} }); } catch { mem = { entries: {} }; }
+    return mem;
+  };
+  return {
+    get(k) {
+      const e = load().entries[k];
+      if (!e) return null;
+      return { wasm: new Uint8Array(e.wasm), ms: e.ms };
+    },
+    put(k, wasm, ms) {
+      try {
+        const m = load();
+        if (wasm.length > 32 * 1024 * 1024) return;
+        m.entries[k] = { wasm: wasm.buffer.slice(0), ms, t: Date.now() };
+        // LRU：最多 8 条
+        const keys = Object.keys(m.entries).sort((a, b) => (m.entries[b].t || 0) - (m.entries[a].t || 0));
+        while (keys.length > 8) delete m.entries[keys.pop()];
+        ctx.globalState.update(KEY, m);
+      } catch {}
+    },
+  };
+})();
+
 /**
  * 编译一份源码并拿到 wasm 字节（给调试/符号功能用，不走终端）。
  * 用独立的 id 走同一套编译 worker；opt/debugInfo 可覆盖。
+ * ⚠️ 代码/参数没变时直接命中缓存 —— "保存后反复 F5"不再重复编译。
  */
 function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, debugStub = false }) {
+  const key = "dbg:" + hash64(source + "|" + fileName + "|" + flags + "|" + opt + "|" + (debugInfo ? 1 : 0) + "|" + (debugStub ? 1 : 0));
+  const cached = compileCache.get(key);
+  if (cached) {
+    debugLog(`② 编译缓存命中（${fileName}，上次耗时 ${cached.ms}ms，跳过编译）`);
+    return Promise.resolve({ wasm: cached.wasm, log: "[cache] 未重新编译（代码与参数未变化）", exit: 0, ms: 0 });
+  }
   return new Promise(async (resolve, reject) => {
+    let wasmBytes = null, took = 0;
     try {
       await getCompiler();
     } catch (e) {
@@ -846,6 +899,23 @@ function ensureTerminal(fileName = "main.cpp") {
   return p;
 }
 
+/** 轻量 64 位哈希（FNV-1a × 2 通道）：只用于缓存键，不用于安全 */
+function hash64(str) {
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = (h1 ^ c) >>> 0; h1 = Math.imul(h1, 16777619) >>> 0;
+    h2 = (h2 + Math.imul(c + i, 2654435761)) >>> 0;
+  }
+  return (h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0"));
+}
+function compileKey(source, fileName) {
+  const cfg = vscode.workspace.getConfiguration("oiCpp");
+  const flags = String(cfg.get("flags", ""));
+  const opt = cfg.get("opt", 2);
+  return "run:" + hash64(source + "|" + fileName + "|" + flags + "|" + opt);
+}
+
 async function runActive() {
   console.log("[oi-cpp-wasm] runInTerminal 被调用");
   const ed = vscode.window.activeTextEditor;
@@ -855,7 +925,7 @@ async function runActive() {
   if (!/\.(cpp|cc|cxx|c)$/i.test(fileName)) { vscode.window.showWarningMessage("当前文件不是 C/C++ 源文件"); return; }
   const p = ensureTerminal(fileName);
   p.wln("");
-  await p.runSource(doc.getText(), fileName);
+  await p.runSource(doc.getText(), fileName, compileKey(doc.getText(), fileName));
 }
 
 // ⚠️ 模块级日志：区分"扩展 bundle 压根没被加载"和"activate 内部某步抛错"。
