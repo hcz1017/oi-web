@@ -338,6 +338,12 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   worker.addEventListener("messageerror", () => { try { liveReader?.onError.fire([new Error("messageerror"), undefined, 1]); } catch {} });
   // provider 每次新建 reader/writer：lc.stop() 会 dispose reader，复用同一对会让重启后静默丢弃消息
   let clientRef = null;   // middleware 里要发请求，构造完回指
+  // ⚠️ 桌面版（Node 宿主）必须给 Worker 一个占位符：
+  //    vscode-languageclient/browser 的 createMessageTransports 里写着
+  //    `if (result instanceof Worker)`；Node 里连 Worker 这个标识符都不存在，
+  //    求值即抛 "ReferenceError: Worker is not defined"。
+  //    我们返回的是 { reader, writer }（不会命中那个分支），所以给个空类就行。
+  if (typeof globalThis.Worker === "undefined") globalThis.Worker = class Worker {};
   // 用 browser 版 client（它的 Reader/Writer 面向 worker 的 postMessage，
   // 我们的 clangd worker 在 web/桌面两边都是这个协议）。桌面版会把它一起打进 bundle。
   const { LanguageClient } = await import("vscode-languageclient/browser");
