@@ -138,20 +138,25 @@ globalThis.fetch = async (input, init) => {
   //   不能全局删 process.versions.node（Node 的 undici/fetch 会炸），所以在文本层面改。
   if (workerData && workerData.browserEmulation && /clangd\.js$/.test(file)) {
     const t0 = buf.toString("utf8");
+    // 标准流补丁：不动 stream.tty（emscripten 的 ioctl 读 stream.tty.ops.ioctl_tiocgwinsz，
+    // 设成 true 会抛 "Cannot read properties of undefined"），而是给 fd 0/1/2 装 stream_ops：
+    //   fd 0 → get_char 取我们喂的字节；fd 1/2 → write/put_char 把字节交给 worker 的 stdout/stderr 钩子
+    const stdOpsPatch =
+      ";try{" +
+      "for(var __fd of [0,1,2]){var __st=FS.streams[__fd];if(!__st)continue;if(!__st.stream_ops)__st.stream_ops={};" +
+      "(function(fd,st){" +
+      'if(fd===0){if(!st.stream_ops.get_char&&typeof Module["stdin"]==="function"){st.stream_ops.get_char=function(){return Module["stdin"]()}}}' +
+      'else{var __fn=(fd===1)?Module["stdout"]:Module["stderr"];if(typeof __fn==="function"){' +
+      "st.stream_ops.write=function(_s,buf,off,len){for(var i=0;i<len;i++){try{__fn(buf[off+i])}catch(e){}}return len};" +
+      "st.stream_ops.put_char=function(_s,byte){try{__fn(byte)}catch(e){}};" +
+      "}}})(__fd,__st)}}catch(e){console.error('[shim] 标准流安装失败:',e&&e.message)}";
     const patched = t0
       // 关掉 node 环境判定（否则 emscripten 断言 "node environment detected but not enabled at build time"）
       .replace(/ENVIRONMENT_IS_NODE=globalThis\.process\?\.versions\?\.node&&globalThis\.process\?\.type!="renderer"/g, "ENVIRONMENT_IS_NODE=false")
       // 关掉"检测到 node 版本就 throw"的那段
       .replace(/typeof process!=="undefined"&&process\.versions\?\.node/g, "false")
-      // 在 FS.init 里注入调试/修复钩子（作用域内才有 FS / Module）
-      .replace(
-        'FS.initialized=true;input??=Module["stdin"];output??=Module["stdout"];error??=Module["stderr"];FS.createStandardStreams(input,output,error)',
-        'FS.initialized=true;input??=Module["stdin"];output??=Module["stdout"];error??=Module["stderr"];FS.createStandardStreams(input,output,error);'
-        + 'try{var __ow=FS.write;FS.write=function(s,b,o,l,p){try{globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-write",[s&&s.fd,l])}catch(e){}return __ow.apply(FS,arguments)};'
-        + 'var __orr=FS.read;FS.read=function(s,b,o,l,p){var __n=__orr.apply(FS,arguments);try{if(((s&&s.fd)===0)||__true0)globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-read",[s&&s.fd,l,__n])}catch(e){}return __n};'
-        + 'for(var __fd of [1,2]){var __st=FS.streams[__fd];if(__st){__st.tty=true;var __fn=(__fd===1)?Module["stdout"]:Module["stderr"];(function(fd,fn){__st.stream_ops=Object.assign({},__st.stream_ops||{},{put_char:function(_s,_b){try{globalThis.__wdbDbg&&globalThis.__wdbDbg("put-char",[fd,_b])}catch(e){};if(typeof fn==="function")fn(_b)}})})(__fd,__fn)}}'
-        + 'globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-hooks",[typeof Module.stdout,typeof Module.stdin,!!(FS.streams[1]&&FS.streams[1].tty)])}catch(e){globalThis.__wdbDbg&&globalThis.__wdbDbg("fs-hook-fail",String(e))}',
-      );
+      // 在标准流创建之后安装补丁
+      .replace("FS.createStandardStreams(input,output,error)", "FS.createStandardStreams(input,output,error)" + stdOpsPatch);
     if (patched !== t0) console.log("[shim] 已改写 glue 的 node 环境检测");
     buf = Buffer.from(patched);
   }
