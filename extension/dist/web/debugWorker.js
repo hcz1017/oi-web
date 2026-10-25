@@ -1047,6 +1047,8 @@
   var stopLine = -1;
   var running = false;
   var pending = null;
+  var lastSite = null;
+  var trapped = null;
   var scratchBase = 0;
   var bodyLocals = [];
   var globalTypes = [];
@@ -1081,6 +1083,7 @@
   function probe(siteId) {
     const site = siteById.get(siteId);
     if (!site) return 0;
+    lastSite = site;
     const ids = [siteId, ...site.aliases || []];
     const isBreakpoint = !!bp && ids.some((id) => (Atomics.load(bp, id >>> 5) & 1 << (id & 31)) !== 0);
     const sameLine = resumeMode !== 1 && site.line === stopLine;
@@ -1117,6 +1120,29 @@
     pending = null;
     if (!site) return;
     const frames = captureStack();
+    const snap = snapshotMemory(site);
+    post({
+      type: "paused",
+      siteId: site.id,
+      site,
+      frames,
+      memorySegments: snap.memorySegments,
+      memorySize: snap.memorySize,
+      localsBase: scratchBase,
+      body: site.body,
+      bodyLocals: bodyLocals[site.body] || [],
+      globalsBase: scratchBase + (bodyLocals[site.body] || []).length * 8,
+      globalTypes
+    });
+    Atomics.wait(ctrl, 0, 0);
+    const mode = Atomics.load(ctrl, 1) || 1;
+    resumeMode = mode;
+    stopBody = site.body;
+    stopLine = site.line;
+    stopDepth = frames.length;
+    Atomics.store(ctrl, 0, 0);
+  }
+  function snapshotMemory(site) {
     let memorySegments = null;
     let memorySize = 0;
     const LOW_CAP = 16 * 1024 * 1024;
@@ -1144,28 +1170,7 @@
     } catch {
       memorySegments = null;
     }
-    const locals = bodyLocals[site.body] || [];
-    post({
-      type: "paused",
-      siteId: site.id,
-      site,
-      frames,
-      memorySegments,
-      memorySize,
-      localsBase: scratchBase,
-      body: site.body,
-      bodyLocals: locals,
-      // globals 紧跟在 locals 之后；宿主按 globalTypes 解释
-      globalsBase: scratchBase + locals.length * 8,
-      globalTypes
-    });
-    Atomics.wait(ctrl, 0, 0);
-    const mode = Atomics.load(ctrl, 1) || 1;
-    resumeMode = mode;
-    stopBody = site.body;
-    stopLine = site.line;
-    stopDepth = frames.length;
-    Atomics.store(ctrl, 0, 0);
+    return { memorySegments, memorySize };
   }
   async function run() {
     running = true;
@@ -1212,10 +1217,49 @@
     } catch (e) {
       if (e && typeof e.code === "number") code = e.code;
       else if (e && e.name === "WASIProcExit") code = e.code ?? 0;
-      else post({ type: "error", message: "\u8FD0\u884C\u5F02\u5E38: " + (e && (e.stack || e.message) || e) });
+      else if (isTrap(e)) {
+        reportTrap(e);
+        try {
+          Atomics.wait(ctrl, 0, 0);
+        } catch {
+        }
+        code = -1;
+      } else post({ type: "error", message: "\u8FD0\u884C\u5F02\u5E38: " + (e && (e.stack || e.message) || e) });
     }
     running = false;
     post({ type: "exit", code });
+  }
+  var TRAP_RE = /unreachable|out of bounds|divide by zero|remainder by zero|call stack|stack overflow|invalid conversion|invalid value|signature mismatch|table index|indirect call|null function|integer overflow|undefined element/i;
+  function isTrap(e) {
+    if (!e) return false;
+    if (typeof WebAssembly !== "undefined" && e instanceof WebAssembly.RuntimeError) return true;
+    return TRAP_RE.test(String(e && e.message || e));
+  }
+  function reportTrap(e) {
+    const msg = String(e && (e.message || e) || e);
+    const frames = captureStack();
+    const site = lastSite || null;
+    let snap = { memorySegments: null, memorySize: 0 };
+    try {
+      snap = snapshotMemory(site || { body: -1 });
+    } catch {
+    }
+    trapped = { reason: msg, site };
+    post({
+      type: "trap",
+      reason: msg,
+      message: msg,
+      frames,
+      site,
+      siteId: site ? site.id : 0,
+      memorySegments: snap.memorySegments,
+      memorySize: snap.memorySize,
+      // trap 之后栈已展开，locals 不可靠 → 明确给空表，让变量面板显示不可用而不是乱值
+      body: site ? site.body : -1,
+      bodyLocals: [],
+      localsBase: 0,
+      globalTypes
+    });
   }
   var dec = new TextDecoder();
   function decode(b) {

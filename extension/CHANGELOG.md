@@ -28,6 +28,18 @@
   改为平台层 `readAssetGzText()`（web 用 fetch+DecompressionStream，桌面用 fs+gunzip），
   这样 `Ctrl+点击 #include <vector>` 能正常打开头文件。
 
+### 新增：崩溃（trap）自动定位
+以前程序越界 / `unreachable` / 除零 / 栈溢出，只有一个 `exit code`，看不出在哪炸。
+现在调试器会捕获 wasm trap 并**停在崩溃处**：
+
+- 终端里红字给出原因（`divide by zero` / `memory access out of bounds` / `unreachable` …）
+  和「崩溃前最后执行的一句」`文件:行`；
+- 「调用栈」面板显示崩溃所在函数与行（trap 后 wasm 栈已展开，无法还原完整调用链，
+  这里用最后一句合成的帧，见后续计划）；
+- 变量面板仍可看**全局 / 堆上**的值（栈上的 locals 已不可靠，会明确标注）；
+- 崩溃后会话保持暂停，等你按「停止」再结束，不会一闪而过；
+- 单步在崩溃后无意义，统一按 continue 处理。
+
 ### 修复
 - **断点"已验证但程序不停"**：VS Code 会为工作区里每个有断点的文件各发一次
   `setBreakpoints`，以前每次覆盖 `enabledSites`，最后一个文件（别的 `.cpp`）把集合清空。
