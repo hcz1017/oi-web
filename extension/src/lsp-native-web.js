@@ -5,3 +5,4 @@ export const nativeSupported = false;
 export function findClangd() { return null; }
 export async function startNativeClangd() { return null; }
 export async function stopNativeClangd() {}
+export async function offerClangdInstall() {}

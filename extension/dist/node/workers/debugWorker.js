@@ -1,5 +1,5 @@
 (() => {
-  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
   var CLOCKID_REALTIME = 0;
   var CLOCKID_MONOTONIC = 1;
   var ERRNO_SUCCESS = 0;
@@ -156,7 +156,7 @@
   var SDFLAGS_RD = 1 << 0;
   var SDFLAGS_WR = 1 << 1;
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
   var Debug = class Debug2 {
     enable(enabled) {
       this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -181,7 +181,7 @@
   }
   var debug = new Debug(false);
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
   var WASIProcExit = class extends Error {
     constructor(code) {
       super("exit with exit code " + code);
@@ -745,7 +745,7 @@
     }
   };
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
   var Fd = class {
     fd_allocate(offset, len) {
       return ERRNO_NOTSUP;
@@ -845,7 +845,7 @@
   };
   Inode.next_ino = 1n;
 
-  // node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+  // extension/node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
   var OpenFile = class extends Fd {
     fd_allocate(offset, len) {
       if (this.file.size > offset + len) {
@@ -993,7 +993,7 @@
     }
   };
 
-  // ../wdb/src/runtime/debug.worker.js
+  // wdb/src/runtime/debug.worker.js
   var post = (m, transfer) => self.postMessage(m, transfer || []);
   var TermStdin = class extends Fd {
     constructor(sab) {

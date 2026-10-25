@@ -15,7 +15,7 @@ import { registerHeaderFs } from "./headerfs.js";
 import { registerLocalFolder } from "./fsa-folder.js";
 import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
 import * as platform from "oi-platform";
-import { startNativeClangd, stopNativeClangd, nativeSupported } from "oi-lsp-native";
+import { startNativeClangd, stopNativeClangd, offerClangdInstall } from "oi-lsp-native";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 
@@ -114,9 +114,14 @@ function ensureLsp() {
           flags: String(cfgN.get("flags", "-std=c++20")),
           workspaceDir: root,
           outputChannel: logChannel,
+          // 复用官方 clangd 扩展自动下载的二进制（零配置）
+          globalStorageRoot: vscode.Uri.joinPath(ctx.globalStorageUri, "..").fsPath,
           log: (s) => logLine(s),
         });
-        if (!c) logLine("桌面版：没有可用的 clangd —— 补全/诊断不可用（编译/运行/调试不受影响）");
+        if (!c) {
+          logLine("桌面版：没有可用的 clangd —— 补全/诊断不可用（编译/运行/调试不受影响）");
+          if (!ensureLsp._offered) { ensureLsp._offered = true; await offerClangdInstall(logLine); }
+        }
       } catch (e) {
         logLine("桌面版 clangd 启动失败: " + ((e && e.message) || e));
       }
