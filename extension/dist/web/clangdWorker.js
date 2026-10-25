@@ -1,5 +1,5 @@
 (() => {
-  // extension/src/core/flags.mjs
+  // src/core/flags.mjs
   var TRIPLE = "wasm32-wasip1";
   var RESOURCE_DIR = "/lib/clang/22";
   var ISYS = ["/compat", "/include/c++/v1", "/include/wasm32-wasi", "/include", `${RESOURCE_DIR}/include`];
@@ -42,7 +42,7 @@
     return { kept, dropped };
   }
 
-  // extension/src/web/clangd.worker.js
+  // src/web/clangd.worker.js
   var enc = new TextEncoder();
   var stage = (msg) => {
     try {

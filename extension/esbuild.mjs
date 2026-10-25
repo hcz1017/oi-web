@@ -25,8 +25,6 @@ mkdirSync(OUT, { recursive: true });
 
 const webPlatform = path.join(HERE, "src", "platform-web.js");
 const nodePlatform = path.join(HERE, "src", "platform-node.js");
-const webNativeLsp = path.join(HERE, "src", "lsp-native-web.js");
-const nodeNativeLsp = path.join(HERE, "src", "lsp-native-node.js");
 
 const common = {
   bundle: true,
@@ -48,7 +46,7 @@ await esbuild.build({
   outfile: path.join(OUT, "extension.js"),
   format: "cjs",
   minify: true,
-  alias: { "oi-platform": webPlatform, "oi-lsp-native": webNativeLsp },
+  alias: { "oi-platform": webPlatform },
 });
 
 // 1b) 桌面版宿主入口（Node 扩展宿主）：同一份源码，换平台实现
@@ -62,7 +60,7 @@ await esbuild.build({
   format: "cjs",
   minify: true,
   platform: "node",
-  alias: { "oi-platform": nodePlatform, "oi-lsp-native": nodeNativeLsp },
+  alias: { "oi-platform": nodePlatform },
   external: ["vscode", "vscode-languageclient/browser", "node:worker_threads", "node:fs", "node:path", "node:url", "node:os"],
 });
 

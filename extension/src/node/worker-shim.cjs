@@ -33,12 +33,24 @@ if (workerData && workerData.threadName) globalThis.name = workerData.threadName
 globalThis.location = { href: pathToFileURL(__filename).href, origin: "file://" };
 globalThis.postMessage = (m, transfer) => parentPort.postMessage(m, transfer);
 globalThis.close = () => process.exit(0);
+// ⚠️ 不能是空函数：emscripten 的 pthread 运行时用
+//    `self.addEventListener("message", handler)` 挂主线程消息处理器。
+//    以前这里是空的 → pthread 发回主线程的工作项全被丢掉 → clangd 卡住不回包。
+const shimMsgListeners = [];
 globalThis.addEventListener = (type, cb) => {
+  if (typeof cb !== "function") return;
+  if (type === "message") shimMsgListeners.push(cb);
   if (type === "error") process.on("uncaughtException", (e) => cb({ message: e && e.message, error: e }));
   if (type === "unhandledrejection") process.on("unhandledRejection", (r) => cb({ reason: r }));
 };
-globalThis.removeEventListener = () => {};
-parentPort.on("message", (data) => { try { globalThis.onmessage && globalThis.onmessage({ data }); } catch (e) { console.error("worker onmessage 异常", e); } });
+globalThis.removeEventListener = (type, cb) => {
+  const i = shimMsgListeners.indexOf(cb);
+  if (i >= 0) shimMsgListeners.splice(i, 1);
+};
+parentPort.on("message", (data) => {
+  try { globalThis.onmessage && globalThis.onmessage({ data }); } catch (e) { console.error("worker onmessage 异常", e); }
+  for (const cb of [...shimMsgListeners]) { try { cb({ data }); } catch (e) { console.error("message 监听器异常", e && e.message); } }
+});
 
 // ---------------- browser 模式下补 Worker / Blob URL ----------------
 if (workerData && workerData.browserEmulation) {

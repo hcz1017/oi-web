@@ -166,11 +166,6 @@
           "type": "string",
           "default": "",
           "description": "工具链资产（clang/lld/sysroot/clangd）的静态托管根 URL。留空则用扩展自带的 assets/。VSIX 体积超限时可把 assets 外置到这里。"
-        },
-        "oiCpp.clangdPath": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "桌面版使用的 clangd 路径。留空则从 `PATH` 里查找。网页版忽略此项（网页版用内置 wasm clangd）。"
         }
       }
     },

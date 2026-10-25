@@ -1,5 +1,5 @@
 (() => {
-  // wdb/src/symbols/dwarf.worker.js
+  // ../wdb/src/symbols/dwarf.worker.js
   (() => {
     let booted = false;
     const pending = [];

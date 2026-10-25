@@ -15,7 +15,6 @@ import { registerHeaderFs } from "./headerfs.js";
 import { registerLocalFolder } from "./fsa-folder.js";
 import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
 import * as platform from "oi-platform";
-import { startNativeClangd, stopNativeClangd, offerClangdInstall } from "oi-lsp-native";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 
@@ -103,30 +102,15 @@ async function listCppFiles() {
 }
 function ensureLsp() {
   if (lspPromise) return lspPromise;
-  // 桌面版：用**原生 clangd**（wasm 版是 emscripten 浏览器构建，Node 里跑不了）
+  // 桌面版：同样用内置 wasm clangd（不依赖任何外部 clangd）。
+  //   ⚠️ Node 里跑 wasm clangd 需要 worker 垫片的 browserEmulation 模式（见 src/node/worker-shim.cjs），
+  //      目前还在打通 LSP stdout 那一步；先明确告知，避免用户以为坏了。
   if (!platform.isWeb) {
-    const cfgN = vscode.workspace.getConfiguration("oiCpp");
-    lspPromise = (async () => {
-      try {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd();
-        const c = await startNativeClangd({
-          clangdPath: String(cfgN.get("clangdPath", "") || ""),
-          flags: String(cfgN.get("flags", "-std=c++20")),
-          workspaceDir: root,
-          outputChannel: logChannel,
-          // 复用官方 clangd 扩展自动下载的二进制（零配置）
-          globalStorageRoot: vscode.Uri.joinPath(ctx.globalStorageUri, "..").fsPath,
-          log: (s) => logLine(s),
-        });
-        if (!c) {
-          logLine("桌面版：没有可用的 clangd —— 补全/诊断不可用（编译/运行/调试不受影响）");
-          if (!ensureLsp._offered) { ensureLsp._offered = true; await offerClangdInstall(logLine); }
-        }
-      } catch (e) {
-        logLine("桌面版 clangd 启动失败: " + ((e && e.message) || e));
-      }
-    })();
-    return lspPromise;
+    if (!ensureLsp._warnedDesktop) {
+      ensureLsp._warnedDesktop = true;
+      logLine("桌面版 clangd(WASM) 适配中：编译/运行/调试正常，补全暂不可用（不使用外部 clangd）");
+    }
+    return null;
   }
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   if (!cfg.get("lsp", true)) return null;
