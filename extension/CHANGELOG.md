@@ -3,6 +3,57 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.2.2] - 2026-10-26
+
+**修 0.2.1 的三个真 bug：缓存从来没生效过、RE 停了但 VS Code 不知道、以及那个"神秘代码提示"。**
+
+### 修复：编译缓存（三处断点，缺一不可）
+1. **终端运行只写不读**：`runSource` 只在 `compiled` 后写缓存，开头从不查 → `Ctrl+Shift+B`
+   反复跑同一个文件永远全量重编。现在开头就查，命中直接跑；
+2. **终端运行根本没写进去**：`_msg` 里用 `this.cacheKey`，但 `runSource` 忘了赋值 →
+   永远是 `undefined`，`put` 直接被跳掉；
+3. **网页端存了个空对象**：缓存原来把 `ArrayBuffer` 塞进 `globalState`，而 Memento 只保证
+   **JSON 可序列化**——`JSON.stringify(ArrayBuffer) === "{}"`，读回来 wasm 长度 0。
+   改为 base64 字符串存储（key 升到 `compileCache.v2`，旧的坏数据自动丢弃）。
+   同时 `compileForDebug`（F5 路径）以前**只读不写**，现在编译成功也会落缓存。
+   LRU 4 条、单条 ≤12MB；写入失败（配额）静默忽略，不影响编译。
+
+### 修复：RE 后 VS Code 一直显示"运行中"、无调用栈、变量面板空
+- 真因是 `trap` 分支里引用了一个**未定义的变量 `short`**（人类可读原因只在
+  `exceptionInfo` 处理器里定义过）→ 抛 `ReferenceError` → **`stopped` 事件根本没发出去**。
+  终端横幅照旧打印（所以看着"提示了 RE 但没停"），编辑器侧完全没收到停止通知。
+- 现在崩溃原因在 trap 分支里统一定义一次，`stopped`（`reason:"exception"`）正常送达，
+  于是：编辑器停在崩溃行并高亮、调用堆栈有帧、变量面板可读崩溃瞬间的 locals、
+  调试工具条显示"整数除零 / 数组越界 / 栈溢出 / unreachable"。
+
+### 修复：`int` 触发满屏"工作区里所有声明"的补全
+- 那不是 clangd。vscode.dev / Web 版**内置** `ms-vscode.anycode`——基于 tree-sitter 的
+  近似语言服务，官方说明是「Any identifier of the current document and the names of all
+  known declarations are always suggested as completions」，于是敲 `int` 就冒出整个工作区
+  出现过的声明。它在扩展宿主启动时就已经加载，看起来像本扩展的问题。
+- **不擅自改设置**：第一次打开 C/C++ 文件时用 VS Code 官方弹窗（`showInformationMessage`
+  + `MessageOptions.modal`）询问一次「要关闭 anycode 的 C/C++ 代码补全吗？」，
+  按钮为 `关闭 anycode 补全（推荐）` / `保持原样`。选了什么就记住什么（存 `globalState`），
+  **只问一次**，之后不再打扰；不想要这个询问就设 `oiCpp.anycodePrompt: false`。
+- 选择关闭时写入的只是一条语言级设置：
+  `"[cpp]"/"[c]": { "anycode.language.features": { "completions": false } }`。
+  合并写入、保留你 `[cpp]` 段里已有的其它设置；恢复时只删这一个键。
+- **只关补全，其它一律不动**：`definitions`/`references`/`highlights`/`outline`/
+  `workspaceSymbols`/`folding`/`diagnostics` 全部保持 anycode 默认——它们不吵人，而且
+  clangd 首次 preamble（约 5s）期间大纲/面包屑还能顶着用。也不禁用扩展本身（那会连带
+  失去这些功能）。代码高亮与本项无关：anycode 的 package.json 连 `languages`/`grammars`
+  都没贡献，高亮来自内置 cpp 语言基础（TextMate `source.cpp`），完全不受影响。
+- **随时可改**：命令面板 `WebC++: 处理 anycode 补全（网页版）`（同样走官方弹窗），
+  可关闭也可**恢复** anycode 默认补全。
+- **没打开工作区也没问题**：写的是用户（Global）设置，不是工作区设置，空窗口下同样可写；
+  万一被宿主拒绝，不抛错、不阻塞激活，只在输出面板给一次手工写法提示（不弹窗打扰）。
+
+### 回归测试
+- 新增 `test/dap-trap-flow.mjs`：除零程序走**完整 DAP 链**（initialize → launch →
+  stopped → stackTrace → scopes → variables → exceptionInfo），断言 `stopped.reason ===
+  "exception"`、顶帧在除零行且 `source.path` 映射回文档 URI、locals 里 `z === 0`。
+  之前的 trap 测试只测裸 worker，正好漏掉了 `stopped` 发不出去这类适配器层 bug。
+
 ## [0.2.1] - 2026-10-25
 
 ### 新增：RE 在 VS Code 里"像个异常"

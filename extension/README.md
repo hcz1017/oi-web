@@ -91,6 +91,28 @@ int main() {
 - 排障：命令面板 `WebC++: 显示日志`，第一行是环境自述（uiKind / 跨源隔离 / SAB），
   以及 `[stage]` 阶段日志（解压 → glue 加载 → callMain → 已连接）
 
+## 关于补全：网页版内置的 anycode 会问你一次
+
+网页版（vscode.dev / 自托管）内置了一个叫 **anycode** 的扩展。它不是真语言服务，而是用
+tree-sitter 语法树猜的「近似模式」，官方说明写着：**"Any identifier of the current document
+and the names of all known declarations are always suggested as completions"**。
+于是敲个 `int` 就会冒出满屏别的文件里出现过的语句，还和本扩展的 clangd 重复。
+
+所以**第一次打开 C/C++ 文件时**，WebC++ 会用 VS Code 官方弹窗问你一次：
+
+> 要关闭 anycode 的 C/C++ 代码补全吗？　[关闭 anycode 补全（推荐）]　[保持原样]
+
+- **只问一次**，选了什么就记住什么，之后不再打扰；不会擅自改你的设置。
+- **只关补全**（`completions` 一个键）：跳转 / 引用 / 大纲 / 面包屑 / 常量高亮全部保留
+  —— clangd 首次预热约 5 秒，这期间它们还能顶着用；也**没有**禁用 anycode 扩展本身。
+- **代码高亮不受影响**：高亮来自内置 cpp 语言基础（TextMate `source.cpp`），
+  anycode 的 package.json 连 `languages` / `grammars` 都没贡献，结构上无关。
+- 想改主意：命令面板 `WebC++: 处理 anycode 补全（网页版）`，或手动在 settings.json 里
+  增删 `"[cpp]": { "anycode.language.features": { "completions": false } }`。
+- 完全不想看到这个弹窗：把 `oiCpp.anycodePrompt` 设为 `false`（默认 `true`）。
+- 没打开工作区也能生效：写的是**用户（Global）设置**，不是工作区设置；万一被宿主拒绝，
+  会在输出面板给出手工写法提示。
+
 ## ⚠️ 重要提示：clangd ≠ gcc，请只在日常练习时使用
 
 本插件内置的是 **clangd / Clang 22**，而你比赛或 OJ 上用的多半是 **gcc/libstdc++**。

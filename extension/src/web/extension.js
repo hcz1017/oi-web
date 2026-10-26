@@ -17,6 +17,7 @@ import { DwarfEngine } from "../../../wdb/src/symbols/dwarf.js";
 import * as platform from "oi-platform";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
+import { createCompileCache } from "./compile-cache.js";
 
 const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -461,35 +462,22 @@ function assetsBase() {
 function workerUrl(name) { return platform.workerRef(name); }
 
 // ---------------- 编译缓存：代码/参数没变就直接复用上一版产物 ----------------
-// key = sha1(source + fileName + flags + opt + debugInfo + debugStub)，值 = { wasm(Uint8Array), ms }
-// 放 globalState（随 profile 持久化），重启 VS Code 也有效；单条上限 32MB，总量 8 条。
-const compileCache = (() => {
-  const KEY = "oiCpp.compileCache.v1";
-  let mem = null;    // { entries: {key: {wasm:ArrayBuffer, ms, t}} } —— 启动时从 globalState 读
-  const load = () => {
-    if (mem) return mem;
-    try { mem = ctx.globalState.get(KEY, { entries: {} }); } catch { mem = { entries: {} }; }
-    return mem;
-  };
-  return {
-    get(k) {
-      const e = load().entries[k];
-      if (!e) return null;
-      return { wasm: new Uint8Array(e.wasm), ms: e.ms };
-    },
-    put(k, wasm, ms) {
-      try {
-        const m = load();
-        if (wasm.length > 32 * 1024 * 1024) return;
-        m.entries[k] = { wasm: wasm.buffer.slice(0), ms, t: Date.now() };
-        // LRU：最多 8 条
-        const keys = Object.keys(m.entries).sort((a, b) => (m.entries[b].t || 0) - (m.entries[a].t || 0));
-        while (keys.length > 8) delete m.entries[keys.pop()];
-        ctx.globalState.update(KEY, m);
-      } catch {}
-    },
-  };
-})();
+// 实现放在 ./compile-cache.js（纯逻辑、有回归测试 test/compile-cache.mjs）：
+// 那个文件里详细记录了这块曾经被写坏过的三种方式，尤其是"ArrayBuffer 进 globalState
+// 在 Web 端会被 JSON 序列化成 {}"这个只有 vscode.dev 才暴露的坑。
+// ⚠️ 必须懒创建：ctx（extension context）是 activate() 里才有的，模块加载时还是 null。
+//    直接在这里建就等于把缓存接到一个假的 memento 上 → 又是"缓存永远不命中"。
+let _compileCache = null;
+const realCompileCache = () => {
+  if (!_compileCache) {
+    _compileCache = createCompileCache(ctx.globalState, { log: (s) => debugLog("[缓存] " + s) });
+  }
+  return _compileCache;
+};
+const compileCache = {
+  get: (k) => realCompileCache().get(k),
+  put: (k, wasm, ms) => realCompileCache().put(k, wasm, ms),
+};
 
 /**
  * 编译一份源码并拿到 wasm 字节（给调试/符号功能用，不走终端）。
@@ -665,6 +653,134 @@ function debugLog(s) {
 function showDebugLog() {
   if (!debugChannel) debugChannel = vscode.window.createOutputChannel("WebC++ 调试");
   try { debugChannel.show(true); } catch {}
+}
+
+// ---------------- anycode（网页版内置的"近似语言服务"）----------------
+// 只处理它的 **C/C++ 标识符补全**：它会把工作区里所有出现过的声明都塞进补全候选，
+// 和本扩展的 clangd 重复且不准。其它功能（跳转/引用/大纲/面包屑/常量高亮）一律不动，
+// 也**不禁用扩展本身**；代码高亮与本项无关（anycode 没有 languages/grammars 贡献点，
+// 高亮来自内置 cpp 语言基础 TextMate 语法）。
+//
+// ⚠️ 原则：**不擅自改用户设置**。首次在 C/C++ 语境下询问一次（推荐关闭），
+//    用户选什么就记住什么，之后不再打扰；随时可用命令面板
+//    「WebC++: 处理 anycode 补全」重新选择。
+const ANYCODE_ASKED_KEY = "oiCpp.anycodeAsked.v1";
+const anycodeState = { asking: false };
+
+function anycodeExt() {
+  try { return vscode.extensions.getExtension("ms-vscode.anycode") || null; } catch { return null; }
+}
+function anycodeAnswered() {
+  try { return ctx.globalState.get(ANYCODE_ASKED_KEY, false) === true; } catch { return true; }
+}
+async function anycodeMarkAnswered() {
+  try { await ctx.globalState.update(ANYCODE_ASKED_KEY, true); } catch {}
+}
+/** 读当前 anycode 的 completions 是否已关（以 cpp 为准） */
+function anycodeCompletionsOff() {
+  try {
+    const c = vscode.workspace.getConfiguration("", { languageId: "cpp" });
+    const v = c.get("anycode.language.features") || {};
+    return v.completions === false;
+  } catch { return false; }
+}
+/**
+ * 关（off=true）或恢复（off=false）anycode 在 c/cpp 的补全。
+ * 只改 completions 这一个键，并把已有的 [语言] 段展开合并，保留用户其它自定义。
+ * 恢复时把该键删掉（写 undefined 即"移除语言级覆盖"）。
+ */
+async function anycodeSetCompletions(off) {
+  const res = [];
+  for (const lang of ["cpp", "c"]) {
+    const c = vscode.workspace.getConfiguration("", { languageId: lang });
+    const insp = c.inspect("anycode.language.features") || {};
+    const cur = insp.globalLanguageValue || insp.workspaceLanguageValue || {};
+    try {
+      if (off) {
+        await c.update("anycode.language.features", { ...cur, completions: false },
+          vscode.ConfigurationTarget.Global, true);
+        logLine(`anycode: 已关闭 [${lang}] 的标识符补全（completions=false）`);
+        res.push(`${lang}:off`);
+      } else {
+        const next = { ...cur };
+        delete next.completions;
+        await c.update("anycode.language.features", Object.keys(next).length ? next : undefined,
+          vscode.ConfigurationTarget.Global, true);
+        logLine(`anycode: 已恢复 [${lang}] 的补全（移除 completions 覆盖，其它键保留）`);
+        res.push(`${lang}:on`);
+      }
+    } catch (e) {
+      logLine(`anycode: 写 [${lang}] 设置失败: ${(e && e.message) || e}`);
+      res.push(`${lang}:fail`);
+    }
+  }
+  return res;
+}
+
+/**
+ * 首次询问（只问一次，结果记住）。trigger 仅用于日志。
+ * 什么时候问：激活时已有 C/C++ 编辑器，或之后第一次打开 C/C++ 文件。
+ * 不满足条件（没 anycode / 已问过 / 用户关掉询问 / 已经是关闭状态）就静默返回。
+ */
+async function maybeAskAnycode(trigger = "activate") {
+  if (anycodeState.asking) return;
+  if (!vscode.workspace.getConfiguration("oiCpp").get("anycodePrompt", true)) return;
+  if (anycodeAnswered()) return;
+  if (!anycodeExt()) return;
+  if (anycodeCompletionsOff()) { await anycodeMarkAnswered(); return; }   // 已经是关的，不打扰
+  anycodeState.asking = true;
+  const CLOSE = "关闭 anycode 补全（推荐）";
+  const KEEP = "保持原样";
+  let pick = undefined;
+  try {
+    // 用官方消息框（MessageOptions.modal = 真正的模态弹窗），由 VS Code 自己渲染
+    pick = await vscode.window.showInformationMessage(
+      "要关闭 anycode 的 C/C++ 代码补全吗？",
+      {
+        modal: true,
+        detail: "网页版（vscode.dev 等）内置的 anycode 是「按标识符猜」的近似语言服务：" +
+          "它把工作区里所有出现过的声明都塞进补全候选，所以输入 int 会冒出满屏别的文件的语句，" +
+          "与 WebC++ 内置的 clangd 重复且不准确。\n\n" +
+          "· 只会关闭它的一项功能：补全（completions）\n" +
+          "· 代码高亮、跳转、引用、大纲、面包屑全部保持原样\n" +
+          "· 不会禁用 anycode 扩展本身，随时可用命令「WebC++: 处理 anycode 补全」改回来",
+      },
+      CLOSE, KEEP);
+  } catch (e) {
+    logLine("anycode: 询问失败: " + ((e && e.message) || e));
+  } finally {
+    anycodeState.asking = false;
+    await anycodeMarkAnswered();          // 只弹一次：选了什么（或直接关掉）都算已处理
+  }
+  logLine(`anycode: 用户选择 ${pick === CLOSE ? "关闭补全" : pick === KEEP ? "保持原样" : "未选择"}（触发: ${trigger}）`);
+  if (pick === CLOSE) {
+    const r = await anycodeSetCompletions(true);
+    if (r.some((x) => x.endsWith(":fail"))) {
+      vscode.window.showWarningMessage("写入设置失败，可手动在 settings.json 添加：" +
+        '"[cpp]": { "anycode.language.features": { "completions": false } }');
+    }
+  }
+}
+
+/** 命令：随时切换（不受"只问一次"限制） */
+async function cmdAnycodeCompletions() {
+  if (!anycodeExt()) {
+    vscode.window.showInformationMessage("当前环境没有内置 anycode（桌面版通常没有），无需处理。");
+    return;
+  }
+  const off = anycodeCompletionsOff();
+  const CLOSE = "关闭 anycode 补全（推荐）";
+  const OPEN = "恢复 anycode 默认补全";
+  const pick = await vscode.window.showInformationMessage(
+    `anycode 的 C/C++ 补全当前：${off ? "已关闭" : "开启"}`,
+    {
+      modal: true,
+      detail: "anycode 是网页版内置的近似语言服务（按标识符猜）：补全里会混进工作区所有声明，" +
+        "和 WebC++ 的 clangd 重复。\n\n只影响「补全」这一个功能，代码高亮、跳转、引用、大纲不受影响。",
+    },
+    ...(off ? [OPEN, CLOSE] : [CLOSE, OPEN]));
+  if (pick === CLOSE) { await anycodeSetCompletions(true); vscode.window.setStatusBarMessage("$(check) anycode C/C++ 补全已关闭", 4000); }
+  else if (pick === OPEN) { await anycodeSetCompletions(false); vscode.window.setStatusBarMessage("$(check) anycode C/C++ 补全已恢复", 4000); }
 }
 
 /**
@@ -988,6 +1104,7 @@ export async function activate(c) {
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runTerminal", () => ensureTerminal("main.cpp")));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.symbolsProbe", symbolsProbe));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.debug", startDebugging));
+    c.subscriptions.push(vscode.commands.registerCommand("oiCpp.anycodeCompletions", cmdAnycodeCompletions));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.toggleBreakpoint", toggleBreakpoint));
     registerDebugAdapter(c);
     // 双保险：contributes.breakpoints 让行号凹槽可用；再把 allowBreakpointsEverywhere 也打开，
@@ -995,6 +1112,11 @@ export async function activate(c) {
     // ⚠️ 必须单独 try：某些宿主（虚拟工作区/桌面 web 宿主）里改配置会抛错，
     //    以前它抛出去会把后面的 clangd 初始化、文件夹注册全带崩 → 表现为"扩展没激活"。
     try { ensureBreakpointsEnabled(); } catch (e) { logLine("⚠ 打开断点凹槽开关失败（不影响使用）: " + ((e && e.message) || e)); }
+    // 网页版内置 anycode 的补全很吵：**询问用户**是否关闭（只问一次，不擅自改设置）
+    const acEd = vscode.window.activeTextEditor;
+    if (acEd && (acEd.document.languageId === "cpp" || acEd.document.languageId === "c")) {
+      try { await maybeAskAnycode("activate"); } catch (e) { logLine("⚠ anycode 询问失败（不影响使用）: " + ((e && e.message) || e)); }
+    }
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.restartLsp", async () => {
       resetClangdFatal();          // 手动重启时清掉"已停用"标记
       await stopClangd().catch(() => {});
@@ -1014,6 +1136,11 @@ export async function activate(c) {
     catch (e) {
       logLine("本地文件夹注册失败（网页版专属功能，桌面端可忽略）: " + ((e && e.message) || e));
     }
+
+    // 第一次打开 C/C++ 文件时再问一次（激活时可能还没打开任何 cpp）
+    c.subscriptions.push(vscode.workspace.onDidOpenTextDocument((d) => {
+      if (d.languageId === "cpp" || d.languageId === "c") maybeAskAnycode("open-document").catch(() => {});
+    }));
 
     const maybeLsp = () => {
       const doc = vscode.window.activeTextEditor?.document;
