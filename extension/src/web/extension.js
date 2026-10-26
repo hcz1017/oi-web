@@ -313,6 +313,7 @@ class OiPty {
   async runSource(source, fileName, cacheKey) {
     if (this.state === "compiling") { this.wln("\x1b[33m[正在编译，忽略本次请求]\x1b[0m"); return; }
     if (this.state === "running") { this.wln("\x1b[90m[停止上一个程序]\x1b[0m"); this._killRunner(); }
+    this.cacheKey = cacheKey;   // ⚠️ 以前漏了这行：compiled 消息回来自取 this.cacheKey 永远是 undefined → 缓存永远写不进
 
     const myId = shared.nextId++;   // 全局唯一 id（不用实例级 reqId）
     this.reqId = myId;
@@ -516,6 +517,10 @@ function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, d
     shared.byId.set(id, {
       _msg(m) {
         clearTimeout(timer);
+        // ⚠️ 编译成功要写缓存：以前 F5 调试路径只读不写 → 第二次 F5 还是全量重编
+        if (m.ok && m.wasm) {
+          try { compileCache.put(key, new Uint8Array(m.wasm), m.ms || 0); } catch {}
+        }
         if (m.ok) resolve(m);
         else reject(new Error("编译失败: " + String(m.log || "").split("\n").slice(0, 8).join(" | ")));
       },
