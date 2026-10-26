@@ -114,15 +114,25 @@ int main() {
     printf("%d\\n", x);
     return 0;
 }`;
-const FILE_NAME = "trapd.cpp";
-const target = { source: SRC, fileName: FILE_NAME, sourceUri: "vscode-test-web://mount/trapd.cpp", flags: "-std=c++20" };
+// 文件名可用环境变量覆盖（中文文件名曾在终端/调用栈里显示成 percent-encoded 的乱码）
+const FILE_NAME = process.env.DAP_TRAP_FILE || "trapd.cpp";
+const ENC = encodeURIComponent(FILE_NAME);
+const target = { source: SRC, fileName: FILE_NAME, sourceUri: `vscode-test-web://mount/${ENC}`, flags: "-std=c++20" };
 
+// 假调试终端：把适配器写进终端的所有文案捞出来（用户就是在这里看到
+// "st%E8%A1%A8.cpp" 这种 percent-encoded 乱码的）
+const termText = [];
+const fakeTerminal = {
+  write: (t) => termText.push(String(t)),
+  onInput: () => {}, onEof: () => {}, show: () => {},
+};
 let modIdOut = null;
 const adapter = new WasmDebugAdapter({
   target,
   getEngine: async () => engine,
   compile: async (args) => tc.compile(args),
   workerUrl: path.join(EXT, "dist/web/debugWorker.js"),
+  terminal: fakeTerminal,
   log: (s) => { console.log("   [adapter]", s); const mm = /rawModuleId: (\d+)/.exec(s); if (mm) modIdOut = Number(mm[1]); },
   onSnapshot: (m) => { snap = m; },
   onFrame: (f) => { frame = f; },
@@ -160,6 +170,13 @@ const frames = st && st.body && st.body.stackFrames || [];
 must(frames.length > 0, `stackTrace 有帧（${frames.length}）`);
 must(frames[0].source && String(frames[0].source.path).startsWith("vscode-test-web://"), `顶帧 source.path 已映射（${frames[0] && frames[0].source && frames[0].source.path}）`);
 must(frames[0].line >= 5 && frames[0].line <= 6, `顶帧行号在除零语句（实际 ${frames[0].line}）`);
+must(frames[0].source && frames[0].source.name === FILE_NAME,
+  `栈帧显示名是解码后的文件名（期望 ${FILE_NAME}，实际 ${frames[0] && frames[0].source && frames[0].source.name}）`);
+// 终端横幅里的"崩溃前最后执行的一句"也必须是解码后的名字
+const banner = termText.join("");
+must(banner.includes("运行时错误 (RE)"), "终端里有 RE 横幅");
+must(banner.includes(`${FILE_NAME}:`), `终端横幅文件名已解码（含「${FILE_NAME}:」）`);
+must(!/%[0-9A-F]{2}/i.test(banner), "终端横幅里没有 percent-encoded 乱码");
 
 send("scopes", { frameId: 1 }, 5);
 const sc = await waitFor((m) => m.type === "response" && m.command === "scopes");

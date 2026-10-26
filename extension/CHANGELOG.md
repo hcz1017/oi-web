@@ -3,6 +3,33 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.2.3] - 2026-10-26
+
+### 新增：调试启动横幅（仿 gdb 起手那几行）
+开始编译前，调试终端先打印一段出处信息——第一次用的人能立刻知道这是自己写的调试器、
+什么许可证、源码在哪：
+
+```
+wdb 0.1.3 —— WebAssembly 源码级调试器（gdb 的 w 版）｜WebC++ 0.2.3
+Copyright (C) 2026 hcz1017 及贡献者
+License AGPL-3.0-or-later：GNU Affero 通用公共许可证第 3 版或更新 <https://www.gnu.org/licenses/agpl-3.0.html>
+桩文件（wdb-stub.c / LICENSE.exception）另有链接例外，随作品分发不受 AGPL 传染。
+这是自由软件：你可以自由修改与再分发；不提供任何担保。
+源码与反馈：https://github.com/hcz1017/wdb　｜　WebC++ 扩展：https://github.com/hcz1017/oi-web
+```
+
+- 版本、许可证、仓库地址统一放在 `wdb/src/version.js`，宿主扩展版本由 WebC++ 传入（不硬编码）；
+- 新增 `wdb/test/version-banner.mjs`：钉住 `version.js` 与 `wdb/package.json` 一致，并用假终端
+  真跑一次 `_banner()` 断言六项关键内容都在、换行是 CRLF（VS Code 终端要求）。
+
+### 修复：中文文件名在终端/调用栈里显示成 `st%E8%A1%A8.cpp`
+- DWARF 里的文件名是 **percent-encoded** 的（`st表.cpp` → `st%E8%A1%A8.cpp`）。之前只有
+  「路径比较」走了 `sourceBaseName()`（会解码），**显示**却直接 `split("/").pop()`，
+  于是 RE 横幅写成「崩溃前最后执行的一句：st%E8%A1%A8.cpp:7」、调用栈帧名也是乱码。
+- 现在 4 处显示（RE 横幅 / 异常详情 / 普通暂停横幅 / 调用栈帧名）统一解码。
+- 回归：`dap-trap-flow` 支持 `DAP_TRAP_FILE` 覆盖文件名，`test:all` 会额外用
+  `二分图判定.cpp` 再跑一趟，断言栈帧名与终端横幅都是解码后的名字、横幅里没有 `%XX`。
+
 ## [0.2.2] - 2026-10-26
 
 **修 0.2.1 的三个真 bug：缓存从来没生效过、RE 停了但 VS Code 不知道、以及那个"神秘代码提示"。**

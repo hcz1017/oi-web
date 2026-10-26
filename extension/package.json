@@ -2,7 +2,7 @@
   "name": "web-cpp-tool",
   "displayName": "WebC++ — C++ in the Browser (WASM)",
   "description": "在 VS Code for the Web（vscode.dev / 自托管）里写、跑、调试 C++：WASM Clang 编译、真实终端交互运行、clangd 补全，以及源码级断点调试（wdb）。",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "web-cpp-tool",
   "license": "AGPL-3.0-or-later",
   "engines": {
@@ -231,7 +231,7 @@
     "test:client": "node test/dap-trap-flow.mjs && node test/dwarf-client.mjs",
     "test:dwarf": "node test/dwarf-browser-env.mjs",
     "test:eval": "node test/debug-eval.mjs",
-    "test:all": "node test/compile-cache.mjs && node test/lineedit.mjs && node test/smoke.mjs && node test/debug-instr.mjs && node test/debug-session.mjs && node test/debug-eval.mjs && node test/debug-vars.mjs && node test/debug-stl.mjs && node test/dap-flow.mjs && node test/dwarf-client.mjs && node test/dwarf-browser-env.mjs",
+    "test:all": "node test/compile-cache.mjs && node ../wdb/test/version-banner.mjs && node test/lineedit.mjs && node test/smoke.mjs && node test/debug-instr.mjs && node test/debug-session.mjs && node test/debug-eval.mjs && node test/debug-vars.mjs && node test/debug-stl.mjs && node test/dap-flow.mjs && node test/dap-trap-flow.mjs && DAP_TRAP_FILE=\"二分图判定.cpp\" node test/dap-trap-flow.mjs && node test/dwarf-client.mjs && node test/dwarf-browser-env.mjs",
     "test:vars": "node test/debug-vars.mjs",
     "test:lineedit": "node test/lineedit.mjs",
     "test:stl": "node test/debug-stl.mjs",

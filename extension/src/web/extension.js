@@ -921,6 +921,8 @@ function registerDebugAdapter(c) {
       const terminal = getDebugTerminal(target.fileName);
       const adapter = new WasmDebugAdapter({
         target,
+        // 横幅里显示 "wdb x.y.z ｜ WebC++ 0.2.x"（自己的版本从 package.json 读，别硬编码）
+        version: (c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?", 
         getEngine: () => getSymbolsEngine(),
         compile: (args) => compileForDebug(args),
         workerUrl: workerUrl("debugWorker.js"),
