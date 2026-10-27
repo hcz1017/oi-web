@@ -18,6 +18,7 @@ import * as platform from "oi-platform";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 import { createCompileCache } from "./compile-cache.js";
+import { preloadAssets } from "./preload.js";
 
 const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -460,6 +461,34 @@ function assetsBase() {
 }
 
 function workerUrl(name) { return platform.workerRef(name); }
+
+/**
+ * 首次激活时**后台**把编译/调试要用的资产预拉一遍（灌 HTTP 缓存）。
+ *
+ * 要点（详见 src/web/preload.js 的注释）：
+ *   · fire-and-forget：不 await、不阻塞任何命令；延迟 1.5s 让激活先跑完；
+ *   · 不设超时；单个失败只记日志；全程不抛异常；
+ *   · 不含 clangd（26M，打开 .cpp 时它自己会加载）；
+ *   · 桌面版跳过（资产在本地磁盘，fetch 没意义）。
+ */
+let preloadStarted = false;
+function startPreload() {
+  if (preloadStarted) return;
+  preloadStarted = true;
+  try {
+    if (!platform.isWeb) { logLine("预加载: 桌面版跳过（资产在本地磁盘，直接 fs 读取）"); return; }
+    if (vscode.workspace.getConfiguration("oiCpp").get("preload", true) !== true) {
+      logLine("预加载: 已被设置关闭（oiCpp.preload=false）"); return;
+    }
+    const base = assetsBase();
+    logLine(`预加载: 开始（后台进行，不影响使用）${base}`);
+    // 故意不 await：这是纯预热，跟任何功能都不耦合
+    preloadAssets({ base, log: (m) => logLine(m) })
+      .catch((e) => logLine("预加载: 意外失败（忽略）: " + ((e && e.message) || e)));
+  } catch (e) {
+    logLine("预加载: 启动失败（忽略）: " + ((e && e.message) || e));
+  }
+}
 
 // ---------------- 编译缓存：代码/参数没变就直接复用上一版产物 ----------------
 // 实现放在 ./compile-cache.js（纯逻辑、有回归测试 test/compile-cache.mjs）：
@@ -1157,6 +1186,8 @@ export async function activate(c) {
     // 切换/关闭工作区文件夹 → 彻底重启，避免旧实例残留（内存 5G+ 的根因之一）
     c.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { restartLspClean(); }));
     try { maybeLsp(); } catch (e) { logLine("⚠ 启动 clangd 失败（不影响编译运行）: " + ((e && e.message) || e)); }
+    // 首次启动就后台预热编译/调试资产（不影响任何操作，纯网络请求）
+    startPreload();
     logLine("activate 完成");
     console.log(`[oi-cpp-wasm] activate 完成 v${(c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?"}（命令: runInTerminal/debug/openFolder/restartLsp 已注册）`);
   } catch (e) {
