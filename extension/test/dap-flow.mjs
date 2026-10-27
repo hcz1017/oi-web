@@ -109,7 +109,7 @@ int main() {
   return 0;
 }
 `;
-// 文件名可用环境变量覆盖：DAP_FILE_NAME="二分图判定.cpp" node dap-flow.mjs
+// 文件名可用环境变量覆盖：DAP_FILE_NAME="中文名.cpp" node dap-flow.mjs
 // （中文文件名曾经让断点全部"未验证"——引擎给的 sourceFileURL 是 percent-encoded）
 const FILE_NAME = process.env.DAP_FILE_NAME || "main.cpp";
 const target = { source: SRC, fileName: FILE_NAME, sourceUri: `vscode-test-web://mount/${encodeURIComponent(FILE_NAME)}`, flags: "-std=c++20" };
@@ -158,6 +158,18 @@ send("setBreakpoints", { source: { path: target.sourceUri || ("vscode-test-web:/
 const bpResp = await waitFor((m) => m.type === "response" && m.command === "setBreakpoints");
 const bps = bpResp && bpResp.body && bpResp.body.breakpoints;
 must(!!bps && bps.length === 1 && bps[0].verified === true, `断点已验证: ${JSON.stringify(bps)}`);
+
+// 回归：**同一个文件的不同写法**也必须认出来。
+//   宿主给的 path 可能是工作区相对形态 "<mount>/main.cpp"（反斜杠、无 scheme），
+//   而我们手里的 target.sourceUri 是完整 URI。只比字符串曾导致"断点全灰、程序不停"。
+{
+  const alt = "\\mount\\" + FILE_NAME;   // 模拟宿主那种反斜杠形态
+  send("setBreakpoints", { source: { name: FILE_NAME, path: alt }, breakpoints: [{ line: 10 }] }, 32);
+  await waitFor((m) => m.type === "response" && m.command === "setBreakpoints" && m.request_seq === 32);
+  const r = msgs.filter((m) => m.type === "response" && m.command === "setBreakpoints" && m.request_seq === 32).pop();
+  must(!!r && r.body.breakpoints.every((b) => b.verified === true),
+    `同一文件的另一种路径写法仍验证通过（${alt}）: ${JSON.stringify(r && r.body.breakpoints)}`);
+}
 
 // 回归：**别的文件**的断点不能被验证（VS Code 会为工作区里每个有断点的文件都发 setBreakpoints，
 // 以前按行号硬查，别的文件第 10 行会命中当前文件第 10 行 → 程序在莫名其妙的地方停下）
