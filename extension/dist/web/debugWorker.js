@@ -1153,7 +1153,13 @@
         scratchBase = 0;
       }
     }
-    pending = site;
+    let report = site;
+    if (isBreakpoint) {
+      const markId = ids.find((id) => (Atomics.load(bp, id >>> 5) & 1 << (id & 31)) !== 0);
+      const rep = markId != null ? siteById.get(markId) : null;
+      if (rep && rep.id !== site.id) report = { ...rep, body: site.body };
+    }
+    pending = report;
     return scratchBase;
   }
   function pause() {
