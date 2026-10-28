@@ -18,7 +18,7 @@ import * as platform from "oi-platform";
 import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 import { createCompileCache } from "./compile-cache.js";
-import { preloadAssets } from "./preload.js";
+import { preloadAssets, NOTIFY_AFTER_MS } from "./preload.js";
 
 const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -471,23 +471,143 @@ function workerUrl(name) { return platform.workerRef(name); }
  *   · 不含 clangd（26M，打开 .cpp 时它自己会加载）；
  *   · 桌面版跳过（资产在本地磁盘，fetch 没意义）。
  */
-let preloadStarted = false;
-function startPreload() {
-  if (preloadStarted) return;
-  preloadStarted = true;
+// 预加载状态：每次打开 .cpp 都重新预热一遍（浏览器可能已经把缓存挤掉了），
+// 但同一时刻只允许一轮；上一轮还在跑就直接跳过（"没有在加载才触发"）。
+const preloadState = { running: false, lastDoneAt: 0 };
+/** 字节数格式化：给用户看的（MB 一位小数） */
+const fmtMB = (n) => `${(Number(n || 0) / 1048576).toFixed(1)}MB`;
+
+/**
+ * 后台预热编译/调试资产（灌 HTTP 缓存）。
+ *
+ * 用户可见行为（按需求确认过的）：
+ *   · **只有一轮**：同时只跑一个预加载；上一轮没结束就不再开新的（每次打开 .cpp 会尝试触发）；
+ *   · **只弹一个进度条**，数值是**全部文件的合计**（已下载/缓存 ÷ 总大小），不按文件分开；
+ *   · **超过 10 秒还没下完才弹**通知 —— 缓存全命中时几乎瞬间结束，不该闪一下；
+ *   · 通知可取消；结束后状态栏给一句结果（取消/失败/完成）。
+ *
+ * 工程约束（详见 src/web/preload.js）：不阻塞任何命令、不设超时、单项失败只记日志、
+ * 不含 clangd（打开 .cpp 时它自己会加载）、桌面版跳过、`oiCpp.preload=false` 可整体关闭。
+ */
+function startPreload(trigger = "activate") {
   try {
-    if (!platform.isWeb) { logLine("预加载: 桌面版跳过（资产在本地磁盘，直接 fs 读取）"); return; }
+    if (!platform.isWeb) { if (trigger === "activate") logLine("预加载: 桌面版跳过（资产在本地磁盘，直接 fs 读取）"); return; }
     if (vscode.workspace.getConfiguration("oiCpp").get("preload", true) !== true) {
-      logLine("预加载: 已被设置关闭（oiCpp.preload=false）"); return;
+      if (trigger === "activate") logLine("预加载: 已被设置关闭（oiCpp.preload=false）");
+      return;
     }
+    if (preloadState.running) { logLine(`预加载: 上一轮还在进行，跳过本次触发（${trigger}）`); return; }
+    preloadState.running = true;
+
     const base = assetsBase();
-    logLine(`预加载: 开始（后台进行，不影响使用）${base}`);
-    // 故意不 await：这是纯预热，跟任何功能都不耦合
-    preloadAssets({ base, log: (m) => logLine(m) })
-      .catch((e) => logLine("预加载: 意外失败（忽略）: " + ((e && e.message) || e)));
+    const t0 = Date.now();
+    logLine(`预加载: 开始（${trigger}，后台进行，不影响使用）${base}`);
+    const ac = new AbortController();
+    const status = { loaded: 0, total: 0, cached: 0, cancelled: false, finished: false };
+    let notify = null;          // 只有真的超过 10s 才创建（保证全程只有一个条）
+    let lastPct = 0;
+    let doneSignal = null;
+    const doneP = new Promise((r) => { doneSignal = r; });
+
+    // 通知里的文字：合计大小（+ 缓存命中量），不显示单个文件名
+    const text = () => {
+      const size = status.total
+        ? `${fmtMB(status.loaded)} / ${fmtMB(status.total)}`
+        : (status.loaded ? fmtMB(status.loaded) : "正在测量大小…");
+      return status.cached ? `${size} · 缓存 ${fmtMB(status.cached)}` : size;
+    };
+    const flush = () => {
+      if (!notify || status.finished) return;
+      const pct = status.total ? Math.min(100, Math.floor((status.loaded / status.total) * 100)) : null;
+      try {
+        notify.progress.report({
+          message: text(),
+          increment: pct == null ? undefined : Math.max(0, pct - lastPct),
+        });
+      } catch { }
+      if (pct != null) lastPct = pct;
+    };
+
+    // 10 秒还没完 → 弹官方通知进度条（整轮只有一个）
+    const timer = setTimeout(() => {
+      if (status.finished || notify) return;
+      try {
+        vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: "WebC++ 预加载编译/调试资产",
+          cancellable: true,
+        }, (progress, token) => {
+          notify = { progress };
+          token.onCancellationRequested(() => { try { ac.abort(); } catch { } });
+          flush();                       // 把已经走过的百分比一次性补上
+          return doneP;                  // 预加载结束时这个通知自动收起
+        });
+      } catch (e) { logLine("预加载: 打开进度通知失败（忽略）: " + ((e && e.message) || e)); }
+    }, NOTIFY_AFTER_MS);
+
+    preloadAssets({
+      base,
+      log: (m) => logLine(m),
+      signal: ac.signal,
+      lookupTransferSize: makeCacheLookup(),
+      onProgress: (e) => {
+        status.loaded = e.loaded || 0;
+        status.total = e.total || 0;
+        status.cached = e.cached || 0;
+        if (e.cancelled) status.cancelled = true;
+        flush();
+      },
+    }).then((r) => {
+      status.finished = true;
+      clearTimeout(timer);
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      if (r && r.cancelled) {
+        logLine(`预加载: 已取消（完成 ${fmtMB(r.bytes)}，${secs}s）`);
+        vscode.window.setStatusBarMessage(`$(circle-slash) WebC++ 预加载已取消（完成 ${fmtMB(r.bytes)}）`, 6000);
+      } else if (r && r.ok) {
+        logLine(`预加载完成 ${fmtMB(r.bytes)} / ${fmtMB(r.total)} / ${secs}s`);
+        // 只有弹过通知（说明真的慢）才在状态栏再报一句，快速命中缓存时保持安静
+        if (notify) {
+          const hit = r.cachedBytes ? `（其中缓存命中 ${fmtMB(r.cachedBytes)}）` : "";
+          vscode.window.setStatusBarMessage(`$(check) WebC++ 预加载完成 ${fmtMB(r.bytes)}${hit}`, 6000);
+        }
+      } else if (r) {
+        logLine(`预加载: 部分失败（${fmtMB(r.bytes)}/${fmtMB(r.total)}），用到时会重试`);
+        vscode.window.setStatusBarMessage(`$(warning) WebC++ 预加载部分失败，用到时会重试`, 8000);
+      }
+    }).catch((e) => {
+      status.finished = true;
+      clearTimeout(timer);
+      logLine("预加载: 意外失败（忽略）: " + ((e && e.message) || e));
+    }).finally(() => {
+      clearTimeout(timer);
+      status.finished = true;
+      preloadState.running = false;
+      preloadState.lastDoneAt = Date.now();
+      try { doneSignal(); } catch { }    // 收起通知
+    });
   } catch (e) {
+    preloadState.running = false;
     logLine("预加载: 启动失败（忽略）: " + ((e && e.message) || e));
   }
+}
+
+/**
+ * 判断某个资源这次是否**来自缓存**（浏览器 Resource Timing 的 transferSize 为 0 即命中）。
+ * 拿不到就返回 null（不谎报"缓存命中"）。
+ */
+function makeCacheLookup() {
+  try {
+    if (typeof performance === "undefined" || typeof performance.getEntriesByName !== "function") return null;
+    return (url) => {
+      try {
+        const es = performance.getEntriesByName(url);
+        const e = es && es[es.length - 1];
+        if (!e || typeof e.transferSize !== "number") return null;
+        return e.transferSize;
+      } catch { return null; }
+    };
+  } catch { return null; }
 }
 
 // ---------------- 编译缓存：代码/参数没变就直接复用上一版产物 ----------------
@@ -1170,7 +1290,11 @@ export async function activate(c) {
 
     // 第一次打开 C/C++ 文件时再问一次（激活时可能还没打开任何 cpp）
     c.subscriptions.push(vscode.workspace.onDidOpenTextDocument((d) => {
-      if (d.languageId === "cpp" || d.languageId === "c") maybeAskAnycode("open-document").catch(() => {});
+      if (d.languageId !== "cpp" && d.languageId !== "c") return;
+      maybeAskAnycode("open-document").catch(() => {});
+      // 每次打开 C/C++ 文件都重新预热一遍资产（浏览器可能已经把 HTTP 缓存挤掉了）；
+      // startPreload 内部保证"上一轮没结束就跳过"，不会叠加。
+      startPreload("open-document");
     }));
 
     const maybeLsp = () => {
@@ -1187,7 +1311,7 @@ export async function activate(c) {
     c.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { restartLspClean(); }));
     try { maybeLsp(); } catch (e) { logLine("⚠ 启动 clangd 失败（不影响编译运行）: " + ((e && e.message) || e)); }
     // 首次启动就后台预热编译/调试资产（不影响任何操作，纯网络请求）
-    startPreload();
+    startPreload("activate");
     logLine("activate 完成");
     console.log(`[oi-cpp-wasm] activate 完成 v${(c.extension && c.extension.packageJSON && c.extension.packageJSON.version) || "?"}（命令: runInTerminal/debug/openFolder/restartLsp 已注册）`);
   } catch (e) {
