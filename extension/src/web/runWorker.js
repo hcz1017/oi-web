@@ -70,6 +70,28 @@ class TermStdin extends Fd {
   }
 }
 
+/**
+ * 一次性输入 Fd：对拍（测试用例）用。
+ * 与 TermStdin 的区别：输入是**预置字符串**，读完直接 EOF，不阻塞、不等用户。
+ */
+class StringStdin extends Fd {
+  constructor(text) {
+    super();
+    this.buf = new TextEncoder().encode(String(text ?? ""));
+    this.off = 0;
+  }
+  fd_fdstat_get() {
+    return { ret: 0, fdstat: { fs_filetype: 2, fs_flags: 0, fs_rights_base: 0xffffffffn, fs_rights_inheriting: 0xffffffffn } };
+  }
+  fd_read(size) {
+    if (this.off >= this.buf.length) return { ret: 0, data: new Uint8Array(0) };   // EOF
+    const n = Math.min(size, this.buf.length - this.off);
+    const data = this.buf.slice(this.off, this.off + n);
+    this.off += n;
+    return { ret: 0, data };
+  }
+}
+
 let running = false;
 
 self.onmessage = async (ev) => {
@@ -84,6 +106,33 @@ self.onmessage = async (ev) => {
       const onErr = (b) => { const c = b.slice(); post({ type: "out", stream: "stderr", bytes: c.buffer }, [c.buffer]); };
       const code = await runWasi(bytes, { stdin, onOut, onErr });
       post({ type: "exited", code });
+      running = false;
+      return;
+    }
+    if (m.type === "runTest") {
+      // 对拍用：一次性把 stdin 喂完，收集 stdout/stderr，跑完回一条 testDone。
+      // 超时由宿主决定（worker 里 wasm 是同步执行，JS 定时器插不进去 → 宿主直接 terminate）。
+      if (running) throw new Error("already running");
+      running = true;
+      const t0 = Date.now();
+      const decOut = new TextDecoder("utf-8", { fatal: false });
+      const decErr = new TextDecoder("utf-8", { fatal: false });
+      let out = "", err = "";
+      const stdin = new StringStdin(m.input);
+      let code = 0, trap = null;
+      try {
+        code = await runWasi(m.bytes, {
+          stdin,
+          onOut: (b) => { out += decOut.decode(b, { stream: true }); },
+          onErr: (b) => { err += decErr.decode(b, { stream: true }); },
+        });
+      } catch (e) {
+        trap = String((e && (e.message || e)) || e);
+        code = -1;
+      }
+      out += decOut.decode();
+      err += decErr.decode();
+      post({ type: "testDone", out, err, code, trap, ms: Date.now() - t0 });
       running = false;
       return;
     }

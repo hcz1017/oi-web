@@ -31,3 +31,6 @@ extension/assets/dwarf/
 .npm-cache/
 .pw/
 extension/.dev/
+
+# onetake 宣传片工作区（工具链/venv/浏览器/素材，全部本地装入，不入库）
+.onetake/

@@ -1935,6 +1935,23 @@
       }
     }
   };
+  var StringStdin = class extends Fd {
+    constructor(text) {
+      super();
+      this.buf = new TextEncoder().encode(String(text ?? ""));
+      this.off = 0;
+    }
+    fd_fdstat_get() {
+      return { ret: 0, fdstat: { fs_filetype: 2, fs_flags: 0, fs_rights_base: 0xffffffffn, fs_rights_inheriting: 0xffffffffn } };
+    }
+    fd_read(size) {
+      if (this.off >= this.buf.length) return { ret: 0, data: new Uint8Array(0) };
+      const n = Math.min(size, this.buf.length - this.off);
+      const data = this.buf.slice(this.off, this.off + n);
+      this.off += n;
+      return { ret: 0, data };
+    }
+  };
   var running = false;
   self.onmessage = async (ev) => {
     const m = ev.data || {};
@@ -1954,6 +1971,35 @@
         };
         const code = await runWasi(bytes, { stdin, onOut, onErr });
         post({ type: "exited", code });
+        running = false;
+        return;
+      }
+      if (m.type === "runTest") {
+        if (running) throw new Error("already running");
+        running = true;
+        const t0 = Date.now();
+        const decOut = new TextDecoder("utf-8", { fatal: false });
+        const decErr = new TextDecoder("utf-8", { fatal: false });
+        let out = "", err = "";
+        const stdin = new StringStdin(m.input);
+        let code = 0, trap = null;
+        try {
+          code = await runWasi(m.bytes, {
+            stdin,
+            onOut: (b) => {
+              out += decOut.decode(b, { stream: true });
+            },
+            onErr: (b) => {
+              err += decErr.decode(b, { stream: true });
+            }
+          });
+        } catch (e) {
+          trap = String(e && (e.message || e) || e);
+          code = -1;
+        }
+        out += decOut.decode();
+        err += decErr.decode();
+        post({ type: "testDone", out, err, code, trap, ms: Date.now() - t0 });
         running = false;
         return;
       }

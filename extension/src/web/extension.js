@@ -19,6 +19,9 @@ import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 import { createCompileCache } from "./compile-cache.js";
 import { preloadAssets, NOTIFY_AFTER_MS } from "./preload.js";
+import { TestCaseStore } from "./testcases.js";
+import { createRunner } from "./testrunner.js";
+import { createTestPanel } from "./testpanel.js";
 
 const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -1166,6 +1169,43 @@ function onCompileWorkerMessage(m0) {
     if (m.type === "log") { for (const p of shared.ptys) p._log?.(m.message); return; }
 }
 
+// ---------------------------------------------------------------- 测试用例（仿 CPH 的最小版）
+let testStore = null;        // TestCaseStore
+let testRunner = null;       // createRunner 的实例（惰性创建）
+let testPanel = null;        // createTestPanel 的返回值
+
+/** 惰性拿对拍运行器：复用同一个 runWorker，避免每个用例起一个 worker */
+async function getTestRunner() {
+  if (testRunner) return testRunner;
+  testRunner = createRunner({
+    createWorker: () => platform.createNamedWorker("runWorker.js", { log: (m) => debugLog("[wdb] " + m) }),
+    log: (m) => debugLog("[对拍] " + m),
+  });
+  return testRunner;
+}
+
+function setupTestPanel(c) {
+  testStore = new TestCaseStore(c.globalState);
+  testPanel = createTestPanel({
+    store: testStore,
+    // 对拍用普通构建（不插桩、不开 -g），走同一套编译缓存：改代码才重编
+    compile: (args) => compileForDebug({ ...args, debugInfo: false, debugStub: false }),
+    getRunner: () => getTestRunner(),
+    log: debugLog,
+    activeTarget: () => {
+      const t = targetFromActiveEditor();
+      if (!t) return null;
+      return { ...t, opt: vscode.workspace.getConfiguration("oiCpp").get("opt", 2) };
+    },
+    getTimeoutMs: () => {
+      const n = Number(vscode.workspace.getConfiguration("oiCpp").get("testTimeout", 2000));
+      return Number.isFinite(n) && n >= 200 ? n : 2000;
+    },
+  });
+  c.subscriptions.push(vscode.commands.registerCommand("oiCpp.testPanel", () => testPanel.open()));
+  c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runTestcases", () => testPanel.openAndRun()));
+}
+
 // ---------------------------------------------------------------- 会话（一个文件一个终端）
 const sessions = new Map();   // fileName -> { pty, term }
 
@@ -1255,6 +1295,9 @@ export async function activate(c) {
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runTerminal", () => ensureTerminal("main.cpp")));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.symbolsProbe", symbolsProbe));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.debug", startDebugging));
+    // 测试用例面板（仿 CPH 最小版）：打开面板 / 一键跑全部
+    try { setupTestPanel(c); logLine("测试用例面板已就绪（命令：WebC++: 打开测试面板 / 运行全部用例）"); }
+    catch (e) { logLine("⚠ 测试用例面板初始化失败: " + ((e && e.message) || e)); }
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.anycodeCompletions", cmdAnycodeCompletions));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.toggleBreakpoint", toggleBreakpoint));
     registerDebugAdapter(c);
@@ -1323,6 +1366,8 @@ export async function activate(c) {
 }
 
 export function deactivate() {
+  try { testRunner?.dispose(); } catch { }
+  try { testPanel?.dispose(); } catch { }
   for (const s of sessions.values()) { try { s.pty._dispose(); } catch {} }
   sessions.clear();
   resetCompiler();
