@@ -11,96 +11,85 @@
 import * as vscode from "vscode";
 import { VERDICT, judgeCase, nextCaseName, newCaseId, summarize } from "./testcases.js";
 
-const PANEL_TITLE = "WebC++ 测试";
+const VIEW_ID = "oiCpp.testsView";
 
 /**
+ * 侧栏（活动栏）里的测试视图：`WebviewViewProvider`。
+ *
+ * 为什么用活动栏视图而不是"侧边编辑器标签"：用户要的是**固定在左边、常驻可见**的一块地方，
+ * 编辑器标签会被别的文件顶掉、还占一个 tab。VS Code 的 `WebviewView` 正好是这个形态
+ * （自带折叠/拉伸/关掉后从活动栏图标点回来）。
+ *
  * @param {object} deps
  * @param {import("./testcases.js").TestCaseStore} deps.store
- * @param {(args:{source:string,fileName:string,flags:string,opt:number})=>Promise<{wasm:Uint8Array}>} deps.compile
- * @param {()=>object} deps.getRunner            惰性拿运行器（createRunner 的返回值）
+ * @param {(args:object)=>Promise<{wasm:Uint8Array}>} deps.compile
+ * @param {()=>Promise<object>} deps.getRunner
  * @param {(s:string)=>void} deps.log
  * @param {()=>{source:string,fileName:string,flags:string,opt:number}|null} deps.activeTarget
  * @param {()=>number} deps.getTimeoutMs
  */
-export function createTestPanel(deps) {
-  let panel = null;
-  let current = null;      // { fileName, target }
+export function createTestViewProvider(deps) {
+  let view = null;          // 当前 webviewView
+  let current = null;       // { fileName, source, flags, opt }
   let running = false;
+  let pendingRunAll = false;
 
-  const post = (m) => { try { panel?.webview.postMessage(m); } catch { } };
+  const post = (m) => { try { view?.webview.postMessage(m); } catch { } };
 
   function stateOf(fileName) {
-    const cases = deps.store.get(fileName);
-    return { type: "init", fileName, cases, timeoutMs: deps.getTimeoutMs() };
+    return { type: "init", fileName, cases: deps.store.get(fileName), timeoutMs: deps.getTimeoutMs() };
   }
 
-  async function ensurePanel() {
-    if (panel) { panel.reveal(undefined, true); return panel; }
-    panel = vscode.window.createWebviewPanel(
-      "oiCpp.testPanel", PANEL_TITLE,
-      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-      { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
-    );
-    panel.webview.html = html(panel.webview);
-    panel.onDidDispose(() => { panel = null; current = null; });
-    panel.webview.onDidReceiveMessage((m) => onMessage(m));
-    return panel;
-  }
-
-  async function openAndShow(runAll = false) {
+  /** 视图被打开/恢复时：绑定当前活动文件；没有 cpp 就提示 */
+  function syncTarget() {
     const t = deps.activeTarget();
-    if (!t) { vscode.window.showWarningMessage("先打开一个 C/C++ 源文件（.cpp/.cc/.cxx/.c）"); return; }
+    if (!t) {
+      post({ type: "noFile", text: "先打开一个 C/C++ 源文件，再来这里跑用例。" });
+      return false;
+    }
     current = t;
-    const p = await ensurePanel();
-    const s = stateOf(t.fileName);
-    // 第一次打开没有用例 → 直接给一个空用例，省一次点击
-    if (!s.cases.length) s.cases = [deps.store.add(t.fileName, {})];
-    post(s);
-    if (runAll) await runAll(s.cases);
-    return p;
+    let cases = deps.store.get(t.fileName);
+    if (!cases.length) { deps.store.add(t.fileName, {}); cases = deps.store.get(t.fileName); }
+    post(stateOf(t.fileName));
+    return true;
   }
 
   async function onMessage(m) {
     if (!m || !m.type) return;
-    if (m.type === "ready") { if (current) post(stateOf(current.fileName)); return; }
-    if (m.type === "save") {
-      if (!current) return;
-      deps.store.set(current.fileName, m.cases || []);
-      return;
-    }
-    if (m.type === "add") {
-      if (!current) return;
-      const c = deps.store.add(current.fileName, {});
-      post({ type: "added", case: c });
-      return;
-    }
-    if (m.type === "delete") {
-      if (!current) return;
-      deps.store.remove(current.fileName, m.id);
-      return;
-    }
-    if (m.type === "clear") {
-      if (!current) return;
-      deps.store.clear(current.fileName);
-      post({ type: "cleared" });
-      return;
-    }
-    if (m.type === "runOne") {
-      if (!current) return;
-      deps.store.set(current.fileName, m.cases || []);
-      const one = (m.cases || []).find((c) => c.id === m.id);
-      if (one) await execute([{ case: one }], true);
-      return;
-    }
-    if (m.type === "runAll") {
-      if (!current) return;
-      deps.store.set(current.fileName, m.cases || []);
-      await execute((m.cases || []).map((c) => ({ case: c })), false);
-      return;
+    switch (m.type) {
+      case "ready": syncTarget(); return;
+      case "refresh": syncTarget(); return;
+      case "save":
+        if (current) deps.store.set(current.fileName, m.cases || []);
+        return;
+      case "add": {
+        if (!current) return;
+        post({ type: "added", case: deps.store.add(current.fileName, {}) });
+        return;
+      }
+      case "delete":
+        if (current) deps.store.remove(current.fileName, m.id);
+        return;
+      case "clear":
+        if (current) deps.store.clear(current.fileName);
+        return;
+      case "runOne": {
+        if (!current) return;
+        deps.store.set(current.fileName, m.cases || []);
+        const one = (m.cases || []).find((c) => c.id === m.id);
+        if (one) await execute([{ case: one }], true);
+        return;
+      }
+      case "runAll": {
+        if (!current) return;
+        deps.store.set(current.fileName, m.cases || []);
+        await execute((m.cases || []).map((c) => ({ case: c })), false);
+        return;
+      }
     }
   }
 
-  /** 编译一次，然后逐例跑 */
+  /** 编译一次，逐例跑 */
   async function execute(items, single) {
     if (running) { post({ type: "log", text: "正在运行，已忽略本次请求" }); return; }
     if (!current) return;
@@ -124,12 +113,15 @@ export function createTestPanel(deps) {
         post({ type: "caseRunning", id: it.case.id });
         const run = await runner.run(r.wasm, it.case.input, deps.getTimeoutMs());
         const j = judgeCase(run, it.case.expected);
-        const res = { verdict: j.verdict, detail: j.detail, firstDiff: j.firstDiff, out: run.out || "", err: run.err || "", ms: run.ms || 0 };
-        results.push({ case: it.case, ...res });
+        const res = {
+          verdict: j.verdict, detail: j.detail, firstDiff: j.firstDiff,
+          out: run.out || "", err: run.err || "", ms: run.ms || 0,
+        };
+        results.push({ verdict: j.verdict });
         post({ type: "result", id: it.case.id, result: res });
         deps.log(`对拍 ${it.case.name}: ${j.verdict}${j.detail ? "（" + j.detail + "）" : ""} ${res.ms}ms`);
       }
-      const sum = summarize(results.map((x) => ({ verdict: x.verdict })));
+      const sum = summarize(results);
       post({ type: "summary", text: sum.text, allPass: sum.allPass });
       deps.log(`对拍完成：${sum.text}`);
     } catch (e) {
@@ -140,18 +132,40 @@ export function createTestPanel(deps) {
     }
   }
 
-  const runAll = async (cases) => { await execute((cases || []).map((c) => ({ case: c })), false); };
-
   return {
-    open: () => openAndShow(false),
-    openAndRun: () => openAndShow(true),
-    /** 面板开着且是同一个文件时，重跑全部（保存时自动跑用） */
-    rerunIfOpen(fileName) {
-      if (!panel || !current || current.fileName !== fileName || running) return;
-      execute(deps.store.get(fileName).map((c) => ({ case: c })), false);
+    /** 注册用：resolveWebviewView 的回调 */
+    resolveWebviewView(webviewView) {
+      view = webviewView;
+      webviewView.webview.options = { enableScripts: true };
+      webviewView.webview.html = html(webviewView.webview);
+      webviewView.onDidDispose(() => { view = null; });
+      webviewView.onDidChangeVisibility?.((...a) => { /* 保持状态即可 */ });
+      webviewView.webview.onDidReceiveMessage((m) => onMessage(m));
+      // 视图第一次显示时如果已经有 pending（命令里触发的"运行全部"），这里补上
+      if (pendingRunAll) { pendingRunAll = false; setTimeout(() => runAllNow(), 300); }
     },
-    dispose() { try { panel?.dispose(); } catch { } panel = null; },
+    /** 【打开面板】命令：把侧栏视图聚焦出来 */
+    async open() {
+      if (view) { try { view.show?.(true); } catch { } syncTarget(); return; }
+      await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+    },
+    /** 【运行全部】命令：聚焦视图 +（视图就绪后）跑全部 */
+    async openAndRun() {
+      if (!deps.activeTarget()) {
+        vscode.window.showWarningMessage("先打开一个 C/C++ 源文件（.cpp/.cc/.cxx/.c）");
+        return;
+      }
+      if (view) { await this.open(); await runAllNow(); return; }
+      pendingRunAll = true;
+      await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+    },
+    dispose() { view = null; },
   };
+
+  async function runAllNow() {
+    if (!current && !syncTarget()) return;
+    await execute(deps.store.get(current.fileName).map((c) => ({ case: c })), false);
+  }
 }
 
 // ---------------------------------------------------------------- 前端
@@ -194,6 +208,8 @@ function html(webview) {
   .CE { color: var(--vscode-errorForeground, #f14c4c); }
   .spacer { margin-left: auto; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  /* 侧栏通常很窄：低于 430px 时改成上下两栏，避免文本框挤成一条缝 */
+  @media (max-width: 430px) { .grid { grid-template-columns: 1fr; } .pane + .pane { border-left: 0; border-top: 1px solid var(--vscode-panel-border, #8884); } }
   .pane { padding: 6px 8px; }
   .pane + .pane { border-left: 1px solid var(--vscode-panel-border, #8884); }
   .pane label { display: block; font-size: 11px; opacity: .7; margin-bottom: 4px; }
@@ -215,8 +231,9 @@ function html(webview) {
 <div class="bar">
   <span class="file" id="file">—</span>
   <button class="primary" id="runAll">▶ 运行全部</button>
-  <button id="add">+ 新用例</button>
-  <button id="clear">清空</button>
+  <button id="add">+ 用例</button>
+  <button id="refresh" title="重新载入当前文件的用例">⟳</button>
+  <button id="clear" title="清空当前文件的用例">清空</button>
 </div>
 <div id="banner"></div>
 <div id="list"></div>
@@ -304,6 +321,7 @@ $("runAll").addEventListener("click", () => {
   vscode.postMessage({ type: "runAll", cases: collect() });
 });
 $("add").addEventListener("click", () => vscode.postMessage({ type: "add" }));
+$("refresh").addEventListener("click", () => vscode.postMessage({ type: "refresh" }));
 $("clear").addEventListener("click", () => {
   if (!confirm("清空这个文件的所有用例？")) return;
   results.clear();
@@ -340,6 +358,11 @@ window.addEventListener("message", (ev) => {
     pre.className = "err";
     pre.textContent = m.text;
     list.prepend(pre);
+  } else if (m.type === "noFile") {
+    state.cases = []; results.clear();
+    $("file").textContent = "未打开 C/C++ 文件";
+    $("banner").textContent = m.text || "";
+    render();
   } else if (m.type === "log") {
     $("banner").textContent = m.text;
   } else if (m.type === "idle") {

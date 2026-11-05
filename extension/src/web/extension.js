@@ -21,7 +21,7 @@ import { createCompileCache } from "./compile-cache.js";
 import { preloadAssets, NOTIFY_AFTER_MS } from "./preload.js";
 import { TestCaseStore } from "./testcases.js";
 import { createRunner } from "./testrunner.js";
-import { createTestPanel } from "./testpanel.js";
+import { createTestViewProvider } from "./testpanel.js";
 
 const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -1186,7 +1186,7 @@ async function getTestRunner() {
 
 function setupTestPanel(c) {
   testStore = new TestCaseStore(c.globalState);
-  testPanel = createTestPanel({
+  const provider = createTestViewProvider({
     store: testStore,
     // 对拍用普通构建（不插桩、不开 -g），走同一套编译缓存：改代码才重编
     compile: (args) => compileForDebug({ ...args, debugInfo: false, debugStub: false }),
@@ -1202,8 +1202,13 @@ function setupTestPanel(c) {
       return Number.isFinite(n) && n >= 200 ? n : 2000;
     },
   });
-  c.subscriptions.push(vscode.commands.registerCommand("oiCpp.testPanel", () => testPanel.open()));
-  c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runTestcases", () => testPanel.openAndRun()));
+  testPanel = provider;
+  // 侧栏（活动栏）里的常驻视图：图标 + WebviewView
+  c.subscriptions.push(vscode.window.registerWebviewViewProvider("oiCpp.testsView", provider, {
+    webviewOptions: { retainContextWhenHidden: true },
+  }));
+  c.subscriptions.push(vscode.commands.registerCommand("oiCpp.testPanel", () => provider.open()));
+  c.subscriptions.push(vscode.commands.registerCommand("oiCpp.runTestcases", () => provider.openAndRun()));
 }
 
 // ---------------------------------------------------------------- 会话（一个文件一个终端）
