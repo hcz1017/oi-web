@@ -78,6 +78,18 @@ try {
   must(elapsed >= 700 && elapsed < 5000, `超时在设定时间附近返回（${elapsed}ms，阈值 800ms）`);
   must(judgeCase(tle, "任意").verdict === VERDICT.TLE, "judgeCase 把超时判成 TLE");
 
+  // ---- wasm 既有可能是 Uint8Array（缓存命中）也可能是 ArrayBuffer（缓存未命中）----
+  //      以前 runner 里写 `wasm.slice(0).buffer`，对 ArrayBuffer 得到 undefined →
+  //      postMessage 抛 "Failed to convert value to 'object'" → 面板上全变 RE。
+  {
+    const asArrayBuffer = r.wasm instanceof Uint8Array
+      ? r.wasm.slice(0).buffer                     // 模拟 compileWorker 返回的 ArrayBuffer
+      : r.wasm;
+    const viaAB = await runner.run(asArrayBuffer, "3 4\n", 5000);
+    must(judgeCase(viaAB, "7").verdict === VERDICT.AC,
+      `ArrayBuffer 形态的产物也能跑（实际输出 ${JSON.stringify((viaAB.out || "").trim())}）`);
+  }
+
   // ---- 超时后 worker 已被杀掉，下一个用例仍能正常工作（自动重建） ----
   const again = await runner.run(r.wasm, "7 8\n", 5000);
   must(judgeCase(again, "15").verdict === VERDICT.AC, "超时杀掉 worker 之后，新用例仍能跑（自动重建 worker）");

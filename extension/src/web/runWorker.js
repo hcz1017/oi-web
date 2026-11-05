@@ -119,20 +119,34 @@ self.onmessage = async (ev) => {
       const decErr = new TextDecoder("utf-8", { fatal: false });
       let out = "", err = "";
       const stdin = new StringStdin(m.input);
+      // ⚠️ 输出必须设上限：死循环里 `while(1) cout<<1;` 在 2 秒内能产出上百 MB 字符串，
+      //    整份 structured-clone 回宿主再发给 webview，会把标签页/面板撑爆（那就不叫 TLE 了）。
+      //    超过上限就停止累积并标记 truncated；运行本身仍由宿主的超时去打断。
+      const OUT_CAP = Number(m.outCap) > 0 ? Number(m.outCap) : 1024 * 1024;   // 1MB
+      let truncated = false, outLen = 0, errLen = 0;
+      const push = (isErr, chunk) => {
+        if (truncated) return;
+        if (isErr) {
+          if (errLen + chunk.length > OUT_CAP) { truncated = true; return; }
+          errLen += chunk.length; err += chunk;
+        } else {
+          if (outLen + chunk.length > OUT_CAP) { truncated = true; return; }
+          outLen += chunk.length; out += chunk;
+        }
+      };
       let code = 0, trap = null;
       try {
         code = await runWasi(m.bytes, {
           stdin,
-          onOut: (b) => { out += decOut.decode(b, { stream: true }); },
-          onErr: (b) => { err += decErr.decode(b, { stream: true }); },
+          onOut: (b) => push(false, decOut.decode(b, { stream: true })),
+          onErr: (b) => push(true, decErr.decode(b, { stream: true })),
         });
       } catch (e) {
         trap = String((e && (e.message || e)) || e);
         code = -1;
       }
-      out += decOut.decode();
-      err += decErr.decode();
-      post({ type: "testDone", out, err, code, trap, ms: Date.now() - t0 });
+      if (!truncated) { push(false, decOut.decode()); push(true, decErr.decode()); }
+      post({ type: "testDone", out, err, code, trap, truncated, ms: Date.now() - t0 });
       running = false;
       return;
     }

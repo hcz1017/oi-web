@@ -1982,24 +1982,42 @@
         const decErr = new TextDecoder("utf-8", { fatal: false });
         let out = "", err = "";
         const stdin = new StringStdin(m.input);
+        const OUT_CAP = Number(m.outCap) > 0 ? Number(m.outCap) : 1024 * 1024;
+        let truncated = false, outLen = 0, errLen = 0;
+        const push = (isErr, chunk) => {
+          if (truncated) return;
+          if (isErr) {
+            if (errLen + chunk.length > OUT_CAP) {
+              truncated = true;
+              return;
+            }
+            errLen += chunk.length;
+            err += chunk;
+          } else {
+            if (outLen + chunk.length > OUT_CAP) {
+              truncated = true;
+              return;
+            }
+            outLen += chunk.length;
+            out += chunk;
+          }
+        };
         let code = 0, trap = null;
         try {
           code = await runWasi(m.bytes, {
             stdin,
-            onOut: (b) => {
-              out += decOut.decode(b, { stream: true });
-            },
-            onErr: (b) => {
-              err += decErr.decode(b, { stream: true });
-            }
+            onOut: (b) => push(false, decOut.decode(b, { stream: true })),
+            onErr: (b) => push(true, decErr.decode(b, { stream: true }))
           });
         } catch (e) {
           trap = String(e && (e.message || e) || e);
           code = -1;
         }
-        out += decOut.decode();
-        err += decErr.decode();
-        post({ type: "testDone", out, err, code, trap, ms: Date.now() - t0 });
+        if (!truncated) {
+          push(false, decOut.decode());
+          push(true, decErr.decode());
+        }
+        post({ type: "testDone", out, err, code, trap, truncated, ms: Date.now() - t0 });
         running = false;
         return;
       }

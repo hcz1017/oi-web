@@ -22,7 +22,10 @@ export function createRunner({ createWorker, log = () => { } }) {
   const onMessage = (ev) => {
     const m = (ev && ev.data) || {};
     if (m.type === "testDone") {
-      settle({ out: m.out || "", err: m.err || "", code: m.code || 0, trap: m.trap || null, ms: m.ms || 0 });
+      settle({
+        out: m.out || "", err: m.err || "", code: m.code || 0,
+        trap: m.trap || null, ms: m.ms || 0, truncated: !!m.truncated,
+      });
     } else if (m.type === "error") {
       settle({ out: "", err: m.message || "运行出错", code: -1, trap: m.message || "运行出错" });
     }
@@ -46,9 +49,17 @@ export function createRunner({ createWorker, log = () => { } }) {
         w.onerror = onError;
         log("对拍: 已创建运行 worker");
       }
-      // wasm 是缓存里的 Uint8Array，postMessage 转移所有权会把它拿走 → 拷一份
+      // ⚠️ wasm 的**类型不固定**：编译（缓存未命中）回来的是 ArrayBuffer
+      //    （compileWorker 里 `wasm: r.wasm.buffer`），缓存命中回来的是 Uint8Array。
+      //    以前直接 `wasm.slice(0).buffer`：ArrayBuffer 没有 .buffer → 得到 undefined
+      //    → postMessage 抛 "Failed to convert value to 'object'"（面板上全变 RE）。
+      //    另外 postMessage 转移所有权会把缓冲区拿走，所以要**拷一份**。
       let buf;
-      try { buf = wasm.slice(0).buffer; } catch { buf = wasm.buffer.slice(0); }
+      const u8 = wasm instanceof Uint8Array ? wasm : new Uint8Array(wasm);
+      buf = u8.slice(0).buffer;
+      if (!(buf instanceof ArrayBuffer)) {
+        return { out: "", err: "", code: -1, trap: "内部错误：编译产物的类型不对" };
+      }
       return await new Promise((resolve) => {
         const timer = setTimeout(() => {
           if (!cur) return;

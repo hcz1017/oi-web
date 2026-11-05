@@ -82,7 +82,7 @@ if (existsSync(nmSrc)) {
 // ---------- 2) 扩展（只带运行所需） ----------
 console.log("[2/4] 复制扩展 …");
 const extOut = path.join(OUT, "static/devextensions");
-for (const item of ["package.json", "package.nls.json", "LICENSE", "README.md", "dist", "assets", "notices"]) {
+for (const item of ["package.json", "package.nls.json", "LICENSE", "README.md", "dist", "assets", "media", "notices"]) {
   const src = path.join(EXT, item);
   if (existsSync(src)) cpSync(src, path.join(extOut, item), { recursive: true });
 }

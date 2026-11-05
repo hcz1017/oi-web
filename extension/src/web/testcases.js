@@ -85,6 +85,59 @@ export function nextCaseName(cases) {
   for (let i = 1; ; i++) if (!used.has(`用例 ${i}`)) return `用例 ${i}`;
 }
 
+/**
+ * 超时时间（毫秒）归一化：面板里可以直接编辑，写回设置前必须夹紧，
+ * 免得用户输入 0 / 负数 / 999999 把对拍搞成"秒退"或"卡死"。
+ * @param {any} v 用户输入
+ * @param {number} [fallback] 无法解析时用这个（默认 2000）
+ * @returns {number} 200..60000 之间的整数
+ */
+export function normalizeTimeout(v, fallback = 2000) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(200, Math.min(60000, Math.round(n)));
+}
+
+/**
+ * 运行前决定"用哪份源码"。
+ *
+ * ⚠️ 真实事故：面板里的 target 是**同步那一刻**的快照（含源码文本），编辑文件后不会更新，
+ *    于是对拍拿旧源码去编译 → 命中旧缓存 → 明明改了代码还判 WA，而终端运行（每次现读
+ *    doc.getText()）是正常的。
+ * 结论：运行前必须用**当前编辑器的最新内容**，绝不能复用快照。
+ *
+ * @param {{fileName:string, source:string}|null} current 面板当前绑定（快照）
+ * @param {{fileName:string, source:string}|null} active  现读的当前编辑器
+ * @returns {{target:object|null, switched:boolean, reason:string}}
+ */
+export function pickRunTarget(current, active) {
+  if (!active) return { target: null, switched: false, reason: "no-file" };
+  if (!current) return { target: active, switched: true, reason: "no-current" };
+  if (active.fileName !== current.fileName) return { target: active, switched: true, reason: "other-file" };
+  // 同一个文件：**用 active（刚读的）**，源码/参数才是最新的
+  return { target: active, switched: false, reason: "same-file" };
+}
+
+/**
+ * 面板发来的载荷该不该被接受（防"跨文件串写"）。
+ *
+ * ⚠️ 真实风险：webview 的消息和"编辑器切换事件"是两条不同的 IPC 路径，顺序不保证。
+ *    切文件时如果那条 `save`（还带着 A 的用例）晚到，宿主会用 `current = B` 去落盘，
+ *    结果 **A 的用例被写进 B**、A 的内容同时丢失。
+ * 所以每条载荷都必须自带文件名 + 版本号，只接受"就是当前这个文件 + 同一版本"的。
+ *
+ * @param {{msgFile?:string, msgRev?:number, currentFile?:string, currentRev?:number}} o
+ */
+export function shouldAcceptPayload({ msgFile, msgRev, currentFile, currentRev } = {}) {
+  if (!currentFile || !msgFile) return { ok: false, reason: "no-file" };
+  if (String(msgFile) !== String(currentFile)) return { ok: false, reason: "other-file" };
+  // rev 只在两边都是数字时比较（老版本消息没有 rev 时宽容放行，避免直接丢用户数据）
+  if (typeof msgRev === "number" && typeof currentRev === "number" && msgRev !== currentRev) {
+    return { ok: false, reason: "stale-version" };
+  }
+  return { ok: true, reason: "" };
+}
+
 // ---------------------------------------------------------------- 存储
 export const TEST_CASES_KEY = "oiCpp.testCases.v1";
 
@@ -93,10 +146,20 @@ export const TEST_CASES_KEY = "oiCpp.testCases.v1";
  * 只依赖 { get, update } 两个方法的 Memento，方便测试用 JSON 往返的假实现。
  */
 export class TestCaseStore {
-  constructor(memento, key = TEST_CASES_KEY) {
+  /**
+   * @param {{get:Function, update:Function}} memento
+   * @param {string} [key]
+   * @param {{onError?:(msg:string)=>void}} [opts] 写盘失败的出口（宿主接上后能提示用户）
+   */
+  constructor(memento, key = TEST_CASES_KEY, opts = {}) {
     this.memento = memento;
     this.key = key;
     this._mem = null;
+    this.onError = opts.onError || null;
+    // ⚠️ 写盘必须**串行**：以前每个 set() 各自调用一次异步 update()，两次快速编辑可能
+    //    后发起的先落地 → 旧内容反而胜出（重启后看到的是上一版）。
+    this._writeChain = Promise.resolve();
+    this._dirty = false;
   }
   _load() {
     if (this._mem) return this._mem;
@@ -118,13 +181,24 @@ export class TestCaseStore {
     }
     return this._mem;
   }
+  /** 把当前内容排队写入（串行 + 失败上报）。返回本次写入的 promise。 */
   _persist() {
-    try {
-      const p = this.memento.update(this.key, this._load());
-      if (p && typeof p.catch === "function") p.catch(() => {});
-      return true;
-    } catch { return false; }
+    this._dirty = true;
+    const snapshot = JSON.parse(JSON.stringify(this._load()));   // 写盘用快照，避免后续修改影响在途写入
+    this._writeChain = this._writeChain.then(async () => {
+      try {
+        await this.memento.update(this.key, snapshot);
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        try { this.onError?.(msg); } catch { }
+        throw e;
+      }
+    }).catch(() => { /* 链式保活：单次失败不阻断后续写入 */ });
+    return this._writeChain.then(() => { this._dirty = false; });
   }
+
+  /** 等所有在途写入落地（测试/退出前用） */
+  async flush() { try { await this._writeChain; } catch { } return !this._dirty; }
   /** @returns {Array<{id,name,input,expected}>} */
   get(fileName) { return (this._load()[fileName] || []).map((c) => ({ ...c })); }
   has(fileName) { return (this._load()[fileName] || []).length > 0; }
@@ -151,6 +225,30 @@ export class TestCaseStore {
   clear(fileName) { this.set(fileName, []); }
   /** 所有有自定义用例的文件名（用于诊断/清理） */
   files() { return Object.keys(this._load()); }
+}
+
+/**
+ * 面板提交的用例能不能写回存储（防误清空）。
+ *
+ * 真实事故：面板刚打开、还没收到 init 就点了「运行全部」/「+ 用例」，
+ * webview 的 collect() 拿到空数组 → 写回存储 → **已有用例全被清空**。
+ * 所以这里统一判定：不合法/可疑的提交一律拒绝，由宿主把权威状态推回去。
+ *
+ * @param {{incoming:any, existing:Array, ready:boolean}} o
+ * @returns {{ok:boolean, reason:string}}
+ */
+export function shouldAcceptCases({ incoming, existing = [], ready = false } = {}) {
+  if (!Array.isArray(incoming)) return { ok: false, reason: "not-array" };
+  const hasExisting = Array.isArray(existing) && existing.length > 0;
+  if (!ready && incoming.length === 0 && hasExisting) return { ok: false, reason: "not-ready-empty" };
+  if (incoming.length === 0 && hasExisting) return { ok: false, reason: "empty-overwrite" };
+  // 形状校验：必须是 {id,input,expected} 的对象
+  for (const c of incoming) {
+    if (!c || typeof c !== "object" || typeof c.input !== "string" || typeof c.expected !== "string") {
+      return { ok: false, reason: "bad-shape" };
+    }
+  }
+  return { ok: true, reason: "" };
 }
 
 // ---------------------------------------------------------------- 批量运行

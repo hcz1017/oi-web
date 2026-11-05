@@ -41,6 +41,9 @@ fi
 #    都是幂等的，重复执行安全。
 echo "== [4/4] 注入中文自愈脚本 + 打开文件夹补丁 =="
 node "$ROOT/scripts/patch-test-web.mjs" >/dev/null 2>&1 || true
+# webview 同源放行：本机没有通配 DNS，webview iframe 走同源加载，但 VS Code 的
+# pre/index.html 会校验 hostname 必须是 base32(sha256(parentOrigin)) 的子域 → 不补就全空白
+node "$ROOT/scripts/patch-webview-same-origin.mjs" >/dev/null 2>&1 || true
 if [ -n "$WEB_DIR" ]; then
   node "$ROOT/scripts/patch-open-folder.mjs" \
     "$WEB_DIR/out/vs/workbench/workbench.web.main.internal.js" >/dev/null 2>&1 || true

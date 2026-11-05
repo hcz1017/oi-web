@@ -68,7 +68,7 @@ const log = (s) => logs.push(s);
 {
   const cache = createCompileCache(fakeMemento(), { log });
   for (let i = 0; i < 7; i++) cache.put("k" + i, new Uint8Array([i]), i);
-  must(cache.size() === 4, `LRU 只保留 4 条（实际 ${cache.size()}）`);
+  must(cache.size() === 3, `LRU 只保留 3 条（实际 ${cache.size()}）`);
   must(cache.get("k6") !== null, "最新的那条在");
   must(cache.get("k0") === null, "最老的被淘汰");
 }

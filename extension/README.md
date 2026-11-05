@@ -82,6 +82,9 @@ int main() {
 | `debugInfo` | `true` | 生成 DWARF（调试与外部工具需要） |
 | `verbose` | `false` | 终端里显示工具链加载日志 |
 | `lsp` | `true` | 是否启用 clangd |
+| `preload` | `true` | 启动时后台预加载编译/调试资产（约 41MB，不含 clangd） |
+| `testTimeout` | `2000` | 对拍单个用例的超时（毫秒，200–60000；面板里也能直接改） |
+| `anycodePrompt` | `true` | 首次打开 C/C++ 时询问是否关闭网页版 anycode 的补全 |
 
 ## 桌面版：**零配置**写 C++
 

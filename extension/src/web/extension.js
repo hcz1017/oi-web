@@ -19,7 +19,7 @@ import { WasmDebugAdapter } from "../../../wdb/src/adapters/dap/adapter.js";
 import { createLineEditor } from "./lineedit.mjs";
 import { createCompileCache } from "./compile-cache.js";
 import { preloadAssets, NOTIFY_AFTER_MS } from "./preload.js";
-import { TestCaseStore } from "./testcases.js";
+import { TestCaseStore, normalizeTimeout } from "./testcases.js";
 import { createRunner } from "./testrunner.js";
 import { createTestViewProvider } from "./testpanel.js";
 
@@ -45,6 +45,11 @@ function setStatus(kind) {
 
 // ---------------------------------------------------------------- 语言服务
 let lspPromise = null;
+// clangd 启动失败后冷却：失败的那个 client 可能已经把命令（如 clangd.applyFix）注册上了，
+// 立刻再起一个就会 "command 'clangd.applyFix' already exists"（日志里刷屏的那个）。
+// 冷却期间不再自动启动，等用户手动"重启 clangd"或超时后再试。
+let lspFailedAt = 0;
+const CLANGD_RETRY_COOLDOWN_MS = 60_000;
 /** 「WebC++」输出面板：clangd 阶段日志 / stderr / 生命周期都记这里（网页版控制台不好翻） */
 let logChannel = null;
 const logRing = [];
@@ -86,6 +91,7 @@ async function silentRestartClangd(info) {
     return;
   }
   lastSilentRestart = now;
+  lspFailedAt = 0;               // 主动重启不受失败冷却影响
   logLine(`[restart] ${force ? "强制" : "冷却"}重启 clangd（workers=${info && info.workers}）`);
   lspPromise = null;
   try { await stopClangd(); } catch { /* ignore */ }
@@ -107,6 +113,11 @@ async function listCppFiles() {
 }
 function ensureLsp() {
   if (lspPromise) return lspPromise;
+  if (lspFailedAt && Date.now() - lspFailedAt < CLANGD_RETRY_COOLDOWN_MS) {
+    const left = Math.ceil((CLANGD_RETRY_COOLDOWN_MS - (Date.now() - lspFailedAt)) / 1000);
+    logLine(`[clangd] 上次启动失败，${left}s 冷却中（避免重复注册命令）。可运行「WebC++: 重启 clangd」立即重试`);
+    return null;
+  }
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   if (!cfg.get("lsp", true)) return null;
   // 只给"真正打开着的 cpp 文件"启语言服务：没有打开就不启动，省内存/CPU
@@ -133,9 +144,13 @@ function ensureLsp() {
       return c;
     } catch (e) {
       busy?.dispose(); busy = null;
-      vscode.window.showErrorMessage("clangd 启动失败: " + ((e && e.message) || e));
-      stopClangd();
+      logLine("[clangd] 启动失败: " + ((e && e.message) || e));
+      // ⚠️ 必须 await：stop 没做完就允许重试，会残留已注册的命令/worker
+      try { await stopClangd(); } catch { }
+      lspFailedAt = Date.now();
       lspPromise = null;
+      vscode.window.showErrorMessage("clangd 启动失败: " + ((e && e.message) || e) +
+        "（60 秒内不会自动重试，可运行「WebC++: 重启 clangd」立即重试）");
       return null;
     }
   })();
@@ -637,7 +652,7 @@ const compileCache = {
  * ⚠️ 代码/参数没变时直接命中缓存 —— "保存后反复 F5"不再重复编译。
  */
 function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, debugStub = false }) {
-  const key = "dbg:" + hash64(source + "|" + fileName + "|" + flags + "|" + opt + "|" + (debugInfo ? 1 : 0) + "|" + (debugStub ? 1 : 0));
+  const key = "dbg:" + hash64(source + "|" + fileName + "|" + flags + "|" + opt + "|" + (debugInfo ? 1 : 0) + "|" + (debugStub ? 1 : 0) + "|" + toolchainId());
   const cached = compileCache.get(key);
   if (cached) {
     debugLog(`② 编译缓存命中（${fileName}，上次耗时 ${cached.ms}ms，跳过编译）`);
@@ -662,7 +677,7 @@ function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, d
           try { compileCache.put(key, new Uint8Array(m.wasm), m.ms || 0); } catch {}
         }
         if (m.ok) resolve(m);
-        else reject(new Error("编译失败: " + String(m.log || "").split("\n").slice(0, 8).join(" | ")));
+        else reject(Object.assign(new Error("编译失败: " + String(m.log || "").split("\n").slice(0, 40).join("\n")), { log: m.log }));
       },
       _fail(msg) { clearTimeout(timer); reject(new Error(msg)); },
     });
@@ -1185,7 +1200,13 @@ async function getTestRunner() {
 }
 
 function setupTestPanel(c) {
-  testStore = new TestCaseStore(c.globalState);
+  testStore = new TestCaseStore(c.globalState, undefined, {
+    // 写盘失败不能静默：否则"编辑后重启回来发现没保存"完全查不到原因
+    onError: (msg) => {
+      logLine("[对拍] 保存用例失败: " + msg);
+      try { vscode.window.setStatusBarMessage("$(error) WebC++: 测试用例保存失败（" + msg.slice(0, 60) + "）", 8000); } catch { }
+    },
+  });
   const provider = createTestViewProvider({
     store: testStore,
     // 对拍用普通构建（不插桩、不开 -g），走同一套编译缓存：改代码才重编
@@ -1197,10 +1218,8 @@ function setupTestPanel(c) {
       if (!t) return null;
       return { ...t, opt: vscode.workspace.getConfiguration("oiCpp").get("opt", 2) };
     },
-    getTimeoutMs: () => {
-      const n = Number(vscode.workspace.getConfiguration("oiCpp").get("testTimeout", 2000));
-      return Number.isFinite(n) && n >= 200 ? n : 2000;
-    },
+    // 读侧也夹紧到 200..60000（手动改 settings.json 写 999999 时不会真的等 16 分钟）
+    getTimeoutMs: () => normalizeTimeout(vscode.workspace.getConfiguration("oiCpp").get("testTimeout", 2000), 2000),
   });
   testPanel = provider;
   // 侧栏（活动栏）里的常驻视图：图标 + WebviewView
@@ -1234,11 +1253,19 @@ function hash64(str) {
   }
   return (h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0"));
 }
+/** 工具链身份：换 assets 源 / 换扩展版本后旧产物必须失效 */
+function toolchainId() {
+  const v = (ctx && ctx.extension && ctx.extension.packageJSON && ctx.extension.packageJSON.version) || "?";
+  return v + "@" + String(vscode.workspace.getConfiguration("oiCpp").get("assetsBaseUrl", "") || "local");
+}
+
 function compileKey(source, fileName) {
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   const flags = String(cfg.get("flags", ""));
   const opt = cfg.get("opt", 2);
-  return "run:" + hash64(source + "|" + fileName + "|" + flags + "|" + opt);
+  const debugInfo = cfg.get("debugInfo", true) ? 1 : 0;
+  // ⚠️ 以前漏了 debugInfo（改了它仍命中旧产物）和工具链身份（换资产/升级后还用旧货）
+  return "run:" + hash64(source + "|" + fileName + "|" + flags + "|" + opt + "|" + debugInfo + "|" + toolchainId());
 }
 
 async function runActive() {
@@ -1318,6 +1345,7 @@ export async function activate(c) {
     }
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.restartLsp", async () => {
       resetClangdFatal();          // 手动重启时清掉"已停用"标记
+      lspFailedAt = 0;             // 也清掉失败冷却
       await stopClangd().catch(() => {});
       lspPromise = null;
       await ensureLsp();
@@ -1350,6 +1378,16 @@ export async function activate(c) {
       if (doc && doc.languageId === "cpp") ensureLsp();
     };
     c.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(maybeLsp));
+    // 切换/关闭编辑器时，测试面板自动跟着变：
+    //   · 切到另一个 C/C++ 文件 → 换成那个文件的用例；
+    //   · 关光文件（没有活动编辑器）→ 回到起始页。
+    c.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => {
+      try { testPanel?.syncIfNeeded?.(); } catch { }
+    }));
+    c.subscriptions.push(vscode.workspace.onDidCloseTextDocument(() => {
+      // 关文件的瞬间 activeEditor 可能还没更新，延一帧再看
+      setTimeout(() => { try { testPanel?.syncIfNeeded?.(); } catch { } }, 0);
+    }));
     c.subscriptions.push(vscode.workspace.onDidOpenTextDocument((d) => {
       if (d.languageId === "cpp" || d.languageId === "c") ensureLsp();
     }));
@@ -1371,6 +1409,8 @@ export async function activate(c) {
 }
 
 export function deactivate() {
+  // 关窗口前把测试用例的写盘队列冲掉（防抖窗口里的最后几个字不能丢）
+  try { testPanel?.flush?.(); } catch { }
   try { testRunner?.dispose(); } catch { }
   try { testPanel?.dispose(); } catch { }
   for (const s of sessions.values()) { try { s.pty._dispose(); } catch {} }

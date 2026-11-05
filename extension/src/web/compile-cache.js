@@ -30,7 +30,7 @@ export function b64dec(b64) {
 }
 
 export const CACHE_KEY = "oiCpp.compileCache.v2";   // v1 存的是 ArrayBuffer（永远是坏的）
-const MAX_ENTRIES = 4;
+const MAX_ENTRIES = 3;
 const MAX_BYTES = 12 * 1024 * 1024;
 
 /**

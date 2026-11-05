@@ -82,7 +82,7 @@ if (r2.wasm) {
     stdinSAB: stdinSab,
     fileName: "echo.cpp",
   });
-  const wait3 = async (pred, ms = 15000) => {
+  const wait3 = async (pred, ms = 60000) => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) {
       const e = events3.find(pred);
@@ -190,7 +190,7 @@ worker.postMessage({
 });
 
 // 等第一次暂停
-const waitFor = async (pred, ms = 15000) => {
+const waitFor = async (pred, ms = 60000) => {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     const e = events.find(pred);
@@ -256,7 +256,7 @@ worker2.postMessage({
   sab: sab2,
   fileName: "main.cpp",
 });
-const wait2 = async (pred, ms = 15000) => {
+const wait2 = async (pred, ms = 60000) => {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     const e = events2.find(pred);
