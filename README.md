@@ -59,6 +59,28 @@ npx wrangler pages deploy dist-cf --project-name vscode
 - 详见产物里的 `README-deploy.md`
 - **所有构建产物都用固定文件名**（不做内容哈希），靠 `_headers` 的 `Cache-Control: no-cache` 保证更新生效
 
+### ⚠️ 部署踩坑：`wrangler pages deploy` 可能只推成了"预览"
+
+Cloudflare Pages 的**生产分支**（Settings → Builds & deployments → Production branch）如果不是你
+当前所在的分支，`wrangler pages deploy` 只会生成一个 **Preview 部署**：
+命令行照样打印 `Deployment complete`，还会给你 `main.<project>.pages.dev` 这种预览别名，
+但**自定义域名仍然指向旧的生产部署**（现象：线上版本号一直是旧的）。
+
+自查（`<project>` 形如 `vscode-7fh`）：
+
+```bash
+curl -s https://<project>.pages.dev/static/devextensions/package.json | grep version   # 生产：应为最新
+curl -s https://main.<project>.pages.dev/static/devextensions/package.json | grep version  # 预览：刚推的
+```
+
+两个不一样就说明推成预览了。两种解法：
+
+1. **立刻生效**：Dashboard → 项目 → Deployments → 选中最新那次 → `⋯` → **Promote to production**；
+2. **一劳永逸**：把 Production branch 改成 `main`（或部署时加 `--branch <生产分支名>`）。
+
+更新后如果界面还是旧的：硬刷新 `Ctrl+Shift+R`；仍不行就在 DevTools → Application →
+Service Workers **Unregister** 并清一次站点存储（我们注册了 `coi-serviceworker` 做跨源隔离）。
+
 ## 其它脚本
 
 ```bash
