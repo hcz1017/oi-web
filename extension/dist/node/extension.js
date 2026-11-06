@@ -90,8 +90,18 @@ License ${Jh}\uFF1AGNU Affero \u901A\u7528\u516C\u5171\u8BB8\u53EF\u8BC1\u7B2C 3
 <meta http-equiv="Content-Security-Policy" content="${["default-src 'none'","img-src data:","style-src 'unsafe-inline'",`script-src 'nonce-${r}'`].join("; ")}" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 13px/1.45 var(--vscode-font-family); color: var(--vscode-foreground); padding: 10px 12px 40px; }
+  /* \u6CE8\u610F\uFF1A\u4E0D\u8981\u7528 color-scheme: light dark \u2014\u2014 \u90A3\u8DDF\u968F\u7684\u662F\u64CD\u4F5C\u7CFB\u7EDF\u800C\u4E0D\u662F VS Code \u4E3B\u9898\u3002
+     \u7CFB\u7EDF\u6DF1\u8272 + VS Code \u6D45\u8272\u4E3B\u9898\u65F6\uFF0C\u8868\u5355\u63A7\u4EF6/\u6EDA\u52A8\u6761\u4F1A\u6E32\u67D3\u6210\u6DF1\u8272\u5757
+     \uFF08"\u6D45\u8272\u4E3B\u9898\u4E0B\u5927\u5757\u9ED1\u8272\u3001\u5B57\u4E5F\u662F\u9ED1\u7684"\u5C31\u662F\u8FD9\u4E48\u6765\u7684\uFF09\u3002
+     VS Code \u4F1A\u7ED9 webview \u7684 body \u6302 vscode-light / vscode-dark / vscode-high-contrast* \u7C7B\uFF0C
+     \u6309\u8FD9\u4E9B\u7C7B\u51B3\u5B9A\u914D\u8272\u65B9\u6848\uFF0C\u624D\u662F"\u5B8C\u5168\u8DDF\u968F VS Code"\u3002 */
+  html, body {
+    background: var(--vscode-editor-background, Canvas);
+    color: var(--vscode-editor-foreground, CanvasText);
+  }
+  body.vscode-light, body.vscode-high-contrast-light { color-scheme: light; }
+  body.vscode-dark, body.vscode-high-contrast { color-scheme: dark; }
+  body { font: 13px/1.45 var(--vscode-font-family); padding: 10px 12px 40px; }
   .bar { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; align-items: center;
          padding: 8px 0 10px; background: var(--vscode-editor-background); flex-wrap: wrap; }
   .bar .file { font-family: var(--vscode-editor-font-family, monospace); opacity: .8; margin-right: auto; }
@@ -101,8 +111,11 @@ License ${Jh}\uFF1AGNU Affero \u901A\u7528\u516C\u5171\u8BB8\u53EF\u8BC1\u7B2C 3
   button:hover { background: var(--vscode-button-secondaryHoverBackground); }
   button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   button.primary:hover { background: var(--vscode-button-hoverBackground); }
-  button:disabled { opacity: .5; cursor: default; }
-  .case { border: 1px solid var(--vscode-panel-border, #8884); border-radius: 6px; margin: 0 0 10px; overflow: hidden; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.primary:disabled { background: var(--vscode-button-background); }
+  .case { background: var(--vscode-editor-background, Canvas);
+          border: 1px solid var(--vscode-panel-border, color-mix(in srgb, CanvasText 25%, transparent));
+          border-radius: 6px; margin: 0 0 10px; overflow: hidden; }
   .case.run { border-color: var(--vscode-focusBorder); }
   .head { display: flex; gap: 8px; align-items: center; padding: 6px 8px;
           background: var(--vscode-editorWidget-background); }
@@ -122,10 +135,16 @@ License ${Jh}\uFF1AGNU Affero \u901A\u7528\u516C\u5171\u8BB8\u53EF\u8BC1\u7B2C 3
   .pane label { display: block; font-size: 11px; opacity: .7; margin-bottom: 4px; }
   textarea { width: 100%; box-sizing: border-box; min-height: 74px; resize: vertical;
              font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
-             color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-             border: 1px solid var(--vscode-input-border, #8884); border-radius: 4px; padding: 6px; }
-  .out { border-top: 1px solid var(--vscode-panel-border, #8884); padding: 6px 8px;
-         background: var(--vscode-textCodeBlock-background); }
+             color: var(--vscode-input-foreground, FieldText);
+             background: var(--vscode-input-background, Field);
+             caret-color: var(--vscode-editorCursor-foreground, currentColor);
+             border: 1px solid var(--vscode-input-border, color-mix(in srgb, CanvasText 25%, transparent));
+             border-radius: 4px; padding: 6px; }
+  textarea::placeholder { color: var(--vscode-input-placeholderForeground, GrayText); }
+  .out { border-top: 1px solid var(--vscode-panel-border, color-mix(in srgb, CanvasText 25%, transparent));
+         padding: 6px 8px;
+         background: var(--vscode-textCodeBlock-background, color-mix(in srgb, CanvasText 6%, transparent));
+         color: var(--vscode-editor-foreground, CanvasText); }
   .out pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-all;
              font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
   .diff { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
@@ -135,15 +154,18 @@ License ${Jh}\uFF1AGNU Affero \u901A\u7528\u516C\u5171\u8BB8\u53EF\u8BC1\u7B2C 3
   .err { color: var(--vscode-errorForeground); }
   #banner { margin: 0 0 8px; font-weight: 600; }
   #errbox { display: none; margin: 0 0 10px; padding: 8px; border-radius: 6px;
-            border: 1px solid var(--vscode-errorForeground, #f14c4c); }
+            background: var(--vscode-inputValidation-errorBackground, color-mix(in srgb, CanvasText 6%, transparent));
+            border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground, #f14c4c)); }
   #errbox.show { display: block; }
   #errbox .t { color: var(--vscode-errorForeground); font-weight: 600; margin-bottom: 4px; }
   #errbox pre { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all;
                 font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
   .tout { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; opacity: .9; }
   .tout input { width: 68px; padding: 2px 4px; font: inherit;
-                color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-                border: 1px solid var(--vscode-input-border, #8884); border-radius: 4px; }
+                color: var(--vscode-input-foreground, FieldText);
+                background: var(--vscode-input-background, Field);
+                border: 1px solid var(--vscode-input-border, color-mix(in srgb, CanvasText 25%, transparent));
+                border-radius: 4px; }
   #start { padding: 28px 12px; text-align: center; }
   #start .icon { font-size: 34px; opacity: .5; margin-bottom: 8px; }
   #start .t { font-weight: 600; margin-bottom: 6px; }

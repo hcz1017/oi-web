@@ -359,8 +359,18 @@ function html() {
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 13px/1.45 var(--vscode-font-family); color: var(--vscode-foreground); padding: 10px 12px 40px; }
+  /* 注意：不要用 color-scheme: light dark —— 那跟随的是操作系统而不是 VS Code 主题。
+     系统深色 + VS Code 浅色主题时，表单控件/滚动条会渲染成深色块
+     （"浅色主题下大块黑色、字也是黑的"就是这么来的）。
+     VS Code 会给 webview 的 body 挂 vscode-light / vscode-dark / vscode-high-contrast* 类，
+     按这些类决定配色方案，才是"完全跟随 VS Code"。 */
+  html, body {
+    background: var(--vscode-editor-background, Canvas);
+    color: var(--vscode-editor-foreground, CanvasText);
+  }
+  body.vscode-light, body.vscode-high-contrast-light { color-scheme: light; }
+  body.vscode-dark, body.vscode-high-contrast { color-scheme: dark; }
+  body { font: 13px/1.45 var(--vscode-font-family); padding: 10px 12px 40px; }
   .bar { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; align-items: center;
          padding: 8px 0 10px; background: var(--vscode-editor-background); flex-wrap: wrap; }
   .bar .file { font-family: var(--vscode-editor-font-family, monospace); opacity: .8; margin-right: auto; }
@@ -370,8 +380,11 @@ function html() {
   button:hover { background: var(--vscode-button-secondaryHoverBackground); }
   button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   button.primary:hover { background: var(--vscode-button-hoverBackground); }
-  button:disabled { opacity: .5; cursor: default; }
-  .case { border: 1px solid var(--vscode-panel-border, #8884); border-radius: 6px; margin: 0 0 10px; overflow: hidden; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.primary:disabled { background: var(--vscode-button-background); }
+  .case { background: var(--vscode-editor-background, Canvas);
+          border: 1px solid var(--vscode-panel-border, color-mix(in srgb, CanvasText 25%, transparent));
+          border-radius: 6px; margin: 0 0 10px; overflow: hidden; }
   .case.run { border-color: var(--vscode-focusBorder); }
   .head { display: flex; gap: 8px; align-items: center; padding: 6px 8px;
           background: var(--vscode-editorWidget-background); }
@@ -391,10 +404,16 @@ function html() {
   .pane label { display: block; font-size: 11px; opacity: .7; margin-bottom: 4px; }
   textarea { width: 100%; box-sizing: border-box; min-height: 74px; resize: vertical;
              font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
-             color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-             border: 1px solid var(--vscode-input-border, #8884); border-radius: 4px; padding: 6px; }
-  .out { border-top: 1px solid var(--vscode-panel-border, #8884); padding: 6px 8px;
-         background: var(--vscode-textCodeBlock-background); }
+             color: var(--vscode-input-foreground, FieldText);
+             background: var(--vscode-input-background, Field);
+             caret-color: var(--vscode-editorCursor-foreground, currentColor);
+             border: 1px solid var(--vscode-input-border, color-mix(in srgb, CanvasText 25%, transparent));
+             border-radius: 4px; padding: 6px; }
+  textarea::placeholder { color: var(--vscode-input-placeholderForeground, GrayText); }
+  .out { border-top: 1px solid var(--vscode-panel-border, color-mix(in srgb, CanvasText 25%, transparent));
+         padding: 6px 8px;
+         background: var(--vscode-textCodeBlock-background, color-mix(in srgb, CanvasText 6%, transparent));
+         color: var(--vscode-editor-foreground, CanvasText); }
   .out pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-all;
              font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
   .diff { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
@@ -404,15 +423,18 @@ function html() {
   .err { color: var(--vscode-errorForeground); }
   #banner { margin: 0 0 8px; font-weight: 600; }
   #errbox { display: none; margin: 0 0 10px; padding: 8px; border-radius: 6px;
-            border: 1px solid var(--vscode-errorForeground, #f14c4c); }
+            background: var(--vscode-inputValidation-errorBackground, color-mix(in srgb, CanvasText 6%, transparent));
+            border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground, #f14c4c)); }
   #errbox.show { display: block; }
   #errbox .t { color: var(--vscode-errorForeground); font-weight: 600; margin-bottom: 4px; }
   #errbox pre { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all;
                 font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
   .tout { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; opacity: .9; }
   .tout input { width: 68px; padding: 2px 4px; font: inherit;
-                color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-                border: 1px solid var(--vscode-input-border, #8884); border-radius: 4px; }
+                color: var(--vscode-input-foreground, FieldText);
+                background: var(--vscode-input-background, Field);
+                border: 1px solid var(--vscode-input-border, color-mix(in srgb, CanvasText 25%, transparent));
+                border-radius: 4px; }
   #start { padding: 28px 12px; text-align: center; }
   #start .icon { font-size: 34px; opacity: .5; margin-bottom: 8px; }
   #start .t { font-weight: 600; margin-bottom: 6px; }

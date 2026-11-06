@@ -3,6 +3,22 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.4.1] - 2026-11-06
+
+### 修复：测试面板在浅色主题下有大块黑色、字也是黑的
+原因是面板 CSS 里写了 `color-scheme: light dark` —— 那个跟随的是**操作系统**偏好，
+而不是 VS Code 主题。系统是深色 + VS Code 用浅色主题时，表单控件、滚动条、
+文本框内侧等"系统绘制"的区域会按深色渲染，于是浅色面板上出现黑块、文字也变黑。
+
+改成**完全跟随 VS Code**：
+- 去掉 `color-scheme: light dark`，改为按 VS Code 注入到 `body` 的类来定：
+  `body.vscode-light` → `light`，`body.vscode-dark` → `dark`，高对比度主题同理；
+- `html/body` 显式使用 `--vscode-editor-background` / `--vscode-editor-foreground`；
+- 所有"面"（用例卡片、输入框、输出区、编译错误框、超时输入框）都显式绑定主题变量，
+  缺变量时用系统色（`Canvas`/`CanvasText`/`Field`/`FieldText`）兜底，
+  不再退化成浏览器默认的黑/白；
+- 顺手补了禁用按钮的对比度、`::placeholder` 颜色、输入框光标色。
+
 ## [0.4.0] - 2026-11-05
 
 ### 新增：测试用例面板（仿 CPH 的最小版）—— 样例对拍
