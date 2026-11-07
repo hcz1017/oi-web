@@ -2,7 +2,7 @@
   "name": "web-cpp-tool",
   "displayName": "WebC++ — C++ in the Browser (WASM)",
   "description": "在 VS Code for the Web（vscode.dev / 自托管）里写、跑、调试 C++：WASM Clang 编译、真实终端交互运行、clangd 补全，以及源码级断点调试（wdb）。",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "publisher": "web-cpp-tool",
   "license": "AGPL-3.0-or-later",
   "engines": {
@@ -155,8 +155,8 @@
       "properties": {
         "oiCpp.flags": {
           "type": "string",
-          "default": "-std=c++20 -DLOCAL",
-          "description": "传给编译器的参数"
+          "default": "-std=c++14 -DLOCAL",
+          "description": "传给编译器的参数（clangd 也用同一份）。默认 -std=c++14，和多数 OI 判题机一致；要用 C++17/20 自己改。"
         },
         "oiCpp.opt": {
           "type": "number",

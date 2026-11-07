@@ -261,7 +261,7 @@ let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自�
 export function resetClangdFatal() { fatal = false; }
 
 export async function startClangd(ctx, opts = {}) {
-  const merged = { files: ["main.cpp"], flags: "-std=c++20", opt: 2, debug: true, base: "", verbose: false, log: undefined, onRestart: undefined, ...opts };
+  const merged = { files: ["main.cpp"], flags: "-std=c++14", opt: 2, debug: true, base: "", verbose: false, log: undefined, onRestart: undefined, ...opts };
   // ⚠️ 只用 module worker（ESM glue 要求）。不再"降级经典 worker"：
   //    经典 worker + ESM glue 会抛 "Module scripts don't support importScripts()"，
   //    降级只会把错误变成另一种错误，掩盖真正原因。

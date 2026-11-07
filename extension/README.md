@@ -77,7 +77,7 @@ int main() {
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `flags` | `-std=c++20 -DLOCAL` | 传给编译器的参数（clangd 也用同一份） |
+| `flags` | `-std=c++14 -DLOCAL` | 传给编译器的参数（clangd 也用同一份）。默认对齐多数 OI 判题机；要用 C++17/20 自己改 |
 | `opt` | `2` | 优化级别 0–3 |
 | `debugInfo` | `true` | 生成 DWARF（调试与外部工具需要） |
 | `verbose` | `false` | 终端里显示工具链加载日志 |

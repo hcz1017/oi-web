@@ -68,10 +68,37 @@ function openCppCount() {
   ).length;
 }
 
-/** 没有 cpp 文件打开时释放 clangd（worker + wasm 内存一起回收） */
-async function releaseLspIfIdle() {
+// ⚠️ 关文件后**不要立刻**释放 clangd：用户常见操作是"关掉 a.cpp → 打开 b.cpp"，
+//    立刻释放会让 clangd 重启一次（121MB wasm 重新加载，白等十几秒）。
+//    这里改成宽限期：25 秒内没有 C/C++ 文件才真正回收；期间打开任何 cpp 就取消。
+const LSP_RELEASE_GRACE_MS = 25000;
+let releaseTimer = null;
+
+function cancelLspRelease() {
+  if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
+}
+
+/** 安排一次"空闲后释放"（已经有 C/C++ 文件就不排） */
+function scheduleReleaseLsp() {
+  cancelLspRelease();
   if (openCppCount() > 0) return;
-  if (!lspPromise && !vscode.workspace.getConfiguration("oiCpp").get("lsp", true)) return;
+  releaseTimer = setTimeout(async () => {
+    releaseTimer = null;
+    if (openCppCount() > 0) return;                 // 期间又打开了文件 → 放弃释放
+    if (!lspPromise) return;
+    lspPromise = null;
+    try { await stopClangd(); } catch { /* ignore */ }
+    logLine("[clangd] 已释放（宽限期内没有 C/C++ 文件）");
+    vscode.window.setStatusBarMessage("$(circle-slash) WebC++: clangd 已释放（无打开的 C++ 文件）", 4000);
+  }, LSP_RELEASE_GRACE_MS);
+  logLine(`[clangd] 将在 ${Math.round(LSP_RELEASE_GRACE_MS / 1000)}s 后释放（期间打开 C/C++ 文件即取消）`);
+}
+
+/** 兼容旧调用点：立即释放（仅手动命令用） */
+async function releaseLspIfIdle() {
+  cancelLspRelease();
+  if (openCppCount() > 0) return;
+  if (!lspPromise) return;
   lspPromise = null;
   try { await stopClangd(); } catch { /* ignore */ }
   vscode.window.setStatusBarMessage("$(circle-slash) WebC++: clangd 已释放（无打开的 C++ 文件）", 4000);
@@ -98,11 +125,29 @@ async function silentRestartClangd(info) {
   if (openCppCount() > 0) ensureLsp();
 }
 
-/** 工作区变了（切换/关闭文件夹）→ 彻底重启，避免旧实例泄漏 */
-async function restartLspClean() {
-  lspPromise = null;
-  try { await stopClangd(); } catch { /* ignore */ }
-  if (openCppCount() > 0) ensureLsp();
+/**
+ * 工作区变了（切换/关闭文件夹）→ 彻底重启，避免旧实例泄漏。
+ * ⚠️ 但 onDidChangeWorkspaceFolders 在网页版里也会因为"注册本地文件夹"而触发；
+ *    文件集没变时重启纯属浪费（又是一次 121MB 加载）。所以记下文件夹签名，变了才重启。
+ */
+let lastWorkspaceSig = null;
+let wsRestartTimer = null;
+async function restartLspClean(reason = "workspace-change") {
+  const sig = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.toString()).sort().join("|");
+  if (sig === lastWorkspaceSig) {
+    logLine(`[clangd] 工作区文件夹未变化，跳过重启（${reason}）`);
+    return;
+  }
+  lastWorkspaceSig = sig;
+  // 去抖：文件夹变化常常连着触发多次
+  if (wsRestartTimer) clearTimeout(wsRestartTimer);
+  wsRestartTimer = setTimeout(async () => {
+    wsRestartTimer = null;
+    logLine(`[clangd] 工作区变化 → 重启（${reason}）`);
+    lspPromise = null;
+    try { await stopClangd(); } catch { /* ignore */ }
+    if (openCppCount() > 0) ensureLsp();
+  }, 400);
 }
 
 async function listCppFiles() {
@@ -112,6 +157,7 @@ async function listCppFiles() {
   } catch { return []; }
 }
 function ensureLsp() {
+  cancelLspRelease();              // 要启动/复用 clangd 了，取消待执行的释放
   if (lspPromise) return lspPromise;
   if (lspFailedAt && Date.now() - lspFailedAt < CLANGD_RETRY_COOLDOWN_MS) {
     const left = Math.ceil((CLANGD_RETRY_COOLDOWN_MS - (Date.now() - lspFailedAt)) / 1000);
@@ -128,7 +174,7 @@ function ensureLsp() {
     let busy = null;
     try {
       const files = await listCppFiles();
-      const flags = String(cfg.get("flags", "-std=c++20"));
+      const flags = String(cfg.get("flags", "-std=c++14"));
       busy = vscode.window.setStatusBarMessage("$(sync~spin) WebC++: 启动 clangd(WASM)…", 600000);
       const c = await startClangd(ctx, {
         files: files.length ? files : ["main.cpp"], flags,
@@ -767,7 +813,7 @@ async function symbolsProbe() {
     const t0 = Date.now();
     const r = await compileForDebug({
       source: doc.getText(), fileName,
-      flags: String(cfg.get("flags", "-std=c++20")),
+      flags: String(cfg.get("flags", "-std=c++14")),
       opt: 0, debugInfo: true,
     });
     log(`编译 OK，wasm ${(r.wasm.byteLength / 1024).toFixed(0)}KB，${Date.now() - t0}ms`);
@@ -1011,7 +1057,7 @@ function targetFromActiveEditor() {
     source: doc.getText(),
     fileName,
     sourceUri: doc.uri.toString(),
-    flags: String(cfg.get("flags", "-std=c++20")),
+    flags: String(cfg.get("flags", "-std=c++14")),
   };
 }
 
@@ -1392,9 +1438,11 @@ export async function activate(c) {
       if (d.languageId === "cpp" || d.languageId === "c") ensureLsp();
     }));
     // 关闭文件后若已经没有 cpp 文档 → 释放 clangd（worker + 121MB wasm 内存一起回收）
-    c.subscriptions.push(vscode.workspace.onDidCloseTextDocument(() => { releaseLspIfIdle(); }));
+    // 关文件后进入宽限期（不再立刻杀掉 clangd，否则"关一个开一个"会重复加载）
+    c.subscriptions.push(vscode.workspace.onDidCloseTextDocument(() => { scheduleReleaseLsp(); }));
     // 切换/关闭工作区文件夹 → 彻底重启，避免旧实例残留（内存 5G+ 的根因之一）
     c.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { restartLspClean(); }));
+    lastWorkspaceSig = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.toString()).sort().join("|");
     try { maybeLsp(); } catch (e) { logLine("⚠ 启动 clangd 失败（不影响编译运行）: " + ((e && e.message) || e)); }
     // 首次启动就后台预热编译/调试资产（不影响任何操作，纯网络请求）
     startPreload("activate");

@@ -214,9 +214,14 @@ async function loadGlueModule(glueUrl) {
   //    URL.createObjectURL 后再 new Worker(..., {type:"module"})。
   //    参考实现默认就走 blob（useBlobModule），我们跟随它，避免子 worker 的
   //    加载路径受部署/缓存/MIME 影响。
-  // ⚠️ pthread 预建池大小：默认 8，每个 worker 都会实例化一份 wasm（几十 MB 级），
-  //    而 clangd 稳态只用 -j(=2) 个线程。按用户要求降到 4：既覆盖"线程退出/新任务进来"
-  //    的交接，又比 8 少一半空闲内存。极端突发时 emscripten 会现场再建（慢一次，不会死锁）。
+  // ⚠️ pthread 预建池大小：glue 默认 8，而**每个池 worker 都会实例化一份 121MB 的 wasm 内存**，
+  //    8 个就是几百 MB 白白占着，所以往小里调。
+  //
+  //    但**不能太小**：实测设成 2 时，clangd 稳态要用 -j=2 个后台线程 + 主线程，
+  //    一旦要开第 3 个线程，emscripten 只能现场新建 worker（每个都要再实例化 121MB wasm），
+  //    日志表现为 `[warn] clangd 线程池暂时耗尽` + 连续 `pthread #3/#4/#5 创建`，
+  //    首次提示变慢、内存峰值上来，还容易撞上看门狗（累计 12 个 worker 就重启 clangd）。
+  //    → 取 4：既比默认 8 省一半闲置内存，又覆盖稳态线程数 + 少量突发。
   let patched = text.replace(/var pthreadPoolSize\s*=\s*8/, "var pthreadPoolSize=4");
 
   // ⚠️ 曾经尝试过"池空时复用正在加载的 worker"来硬性封顶 worker 数量，
@@ -224,7 +229,6 @@ async function loadGlueModule(glueUrl) {
   //    复用会导致 "Aborted(Assertion failed: Internal error!)" 直接崩掉 clangd。
   //    → 已回滚。worker 数量的控制改为：池子别太小（4）+ 减少线程突发（didChange 合并）。
 
-  if (patched === text) stage("⚠ glue 里没找到 pthreadPoolSize=8（版本变了？池大小保持默认）");
   if (patched === text) stage("⚠ glue 里没找到 pthreadPoolSize=8（版本变了？池大小保持默认）");
   const blobUrl = URL.createObjectURL(new Blob([patched], { type: "text/javascript" }));
   stage("import() glue blob");
@@ -476,7 +480,7 @@ if (!isPthreadWorker) {
     try {
       // 注意：start() 因 callMain 阻塞而不会 resolve，这里不能依赖它返回后的逻辑
       await start({
-        base: cfg.base, files: cfg.files || ["main.cpp"], flags: cfg.flags || "-std=c++20",
+        base: cfg.base, files: cfg.files || ["main.cpp"], flags: cfg.flags || "-std=c++14",
         opt: cfg.opt ?? 2, debug: cfg.debug !== false,
       });
     } catch (e) {
