@@ -175,16 +175,53 @@ class FsaFolderProvider {
   }
 
   async rename(from, to, options) {
-    const data = await this.readFile(from);
-    await this.writeFile(to, data);
+    // ⚠️ overwrite=false 时目标已存在必须报错：旧实现只是"stat 一下成功也不抛"，
+    //    调用方明确要求不覆盖，目标却仍被下面的 writeFile 静默覆盖（数据丢失）。
     if (!(options && options.overwrite)) {
-      try { await this.stat(to); } catch { /* 目标不存在，正常 */ }
+      try {
+        await this.stat(to);
+        // stat 成功 = 目标存在
+        throw vscode.FileSystemError.FileExists(to);
+      } catch (e) {
+        // 只有"目标不存在"（FileNotFound）才是我们想要的结果，其它原样抛
+        if (e && e instanceof vscode.FileSystemError && e.code === "FileExists") throw e;
+        if (!e || !(e instanceof vscode.FileSystemError) || e.code !== "FileNotFound") {
+          throw vscode.FileSystemError.NoPermissions(String((e && e.message) || e));
+        }
+      }
     }
-    await this.delete(from, { recursive: false });
+    // ⚠️ 目录也能改名：旧实现先 readFile（目录会抛 FSA 原始异常）。
+    //    FSA 没有原子 rename，这里统一走"递归复制 + 删除"。
+    const srcStat = await this.stat(from);
+    if (srcStat.type === vscode.FileType.Directory) {
+      await this._copyDirRecursive(from, to);
+      await this.delete(from, { recursive: true });
+    } else {
+      const data = await this.readFile(from);
+      await this.writeFile(to, data);
+      await this.delete(from, { recursive: false });
+    }
     this._emitter.fire([
       { type: vscode.FileChangeType.Deleted, uri: from },
       { type: vscode.FileChangeType.Created, uri: to },
     ]);
+  }
+
+  /** 递归复制目录（FSA 没有目录 rename，只能复制+删除） */
+  async _copyDirRecursive(from, to) {
+    await this.createDirectory(to);
+    const entries = await this.readDirectory(from);
+    const join = (base, name) => base.with({ path: base.path.replace(/\/+$/, "") + "/" + name });
+    for (const [name, type] of entries) {
+      const childFrom = join(from, name);
+      const childTo = join(to, name);
+      if (type === vscode.FileType.Directory) {
+        await this._copyDirRecursive(childFrom, childTo);
+      } else {
+        const data = await this.readFile(childFrom);
+        await this.writeFile(childTo, data);
+      }
+    }
   }
 }
 

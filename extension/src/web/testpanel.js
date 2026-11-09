@@ -48,11 +48,16 @@ export function createTestViewProvider(deps) {
 
   const post = (m) => {
     try {
-      const ok = view?.webview.postMessage(m);
-      // 返回 false 说明消息没投递出去（webview 正在销毁等）—— 以前静默吞掉，
-      // 于是面板会永久停在旧快照上。至少留一行日志方便排查。
-      if (ok === false) deps.log(`[对拍] 消息未投递（${m && m.type}）`);
-      return ok;
+      const r = view?.webview.postMessage(m);
+      // ⚠️ webview.postMessage 返回 **Promise<boolean>**（旧代码当同步 boolean 用，
+      //    `ok === false` 永远不成立 → "消息未投递"日志是死代码）。这里真正 await 它，
+      //    false/异常都留日志（面板变哑巴时至少能从输出面板看出来）。
+      Promise.resolve(r).then((ok) => {
+        if (ok === false) deps.log(`[对拍] 消息未投递（${m && m.type}）`);
+      }).catch((e) => {
+        deps.log(`[对拍] 消息发送失败（${m && m.type}）: ${(e && e.message) || e}`);
+      });
+      return true;
     } catch (e) {
       deps.log(`[对拍] 消息发送失败（${m && m.type}）: ${(e && e.message) || e}`);
       return false;
@@ -223,26 +228,29 @@ export function createTestViewProvider(deps) {
   async function execute(items, single) {
     if (running) { post({ type: "log", text: "正在运行，已忽略本次请求" }); return; }
     if (!current) { post({ type: "noFile", text: START_TEXT }); return; }
-
-    // 运行前现读编辑器（面板里 current 是快照；改完代码不刷新会命中旧缓存）
-    await askFlush();
-    const pick = pickRunTarget(current, deps.activeTarget());
-    if (!pick.target) { current = null; post({ type: "noFile", text: START_TEXT }); return; }
-    if (pick.switched) {
-      // 换文件了：用**那个文件**的用例重来，别拿旧列表跑新源码
-      current = pick.target;
-      await pushInit();
-      items = deps.store.get(keyOf(current)).map((c) => ({ case: c }));
-      if (!items.length) { post({ type: "log", text: "这个文件还没有用例" }); return; }
-    } else {
-      current = pick.target;               // 同文件：只更新源码/参数
-    }
-
+    // ⚠️ 标志必须**同步**置位：旧实现放在两次 await 之后，快速双击「运行全部」
+    //    会趁第一个 await（askFlush 最长 400ms）把第二次 execute 放进来 → 并发跑两轮，
+    //    第二轮的 runGen 作废第一轮、第一轮的 finally 又把 running 置回 false。
     running = true;
-    const gen = ++runGen;
-    const file = keyOf(current);
-    post({ type: "runStart", gen, file, single, count: items.length });
+    let gen = 0;
     try {
+      // 运行前现读编辑器（面板里 current 是快照；改完代码不刷新会命中旧缓存）
+      await askFlush();
+      const pick = pickRunTarget(current, deps.activeTarget());
+      if (!pick.target) { current = null; post({ type: "noFile", text: START_TEXT }); return; }
+      if (pick.switched) {
+        // 换文件了：用**那个文件**的用例重来，别拿旧列表跑新源码
+        current = pick.target;
+        await pushInit();
+        items = deps.store.get(keyOf(current)).map((c) => ({ case: c }));
+        if (!items.length) { post({ type: "log", text: "这个文件还没有用例" }); return; }
+      } else {
+        current = pick.target;               // 同文件：只更新源码/参数
+      }
+
+      gen = ++runGen;
+      const file = keyOf(current);
+      post({ type: "runStart", gen, file, single, count: items.length });
       const t0 = Date.now();
       const r = await deps.compile({
         source: current.source, fileName: current.fileName,
@@ -281,7 +289,8 @@ export function createTestViewProvider(deps) {
       post({ type: "compileError", gen, file, text: text.slice(0, 8000) });
     } finally {
       running = false;
-      post({ type: "runEnd", gen });
+      // gen 为 0 说明在 runStart 之前就提前返回（没开过一轮），不给面板发 runEnd
+      if (gen) post({ type: "runEnd", gen });
     }
   }
 

@@ -106,11 +106,17 @@ class LspWorkerProxy {
         else if (msg.id != null) {
           const t = Math.round(performance.now() - T0);
           const st = this._sentAt.get(msg.id);
-          this._sentAt.delete(msg.id);
-          if (this._sentAt.size === 0 && this._pumpTimer) { clearTimeout(this._pumpTimer); this._pumpTimer = null; }
           const dt = st == null ? "?" : Math.round(performance.now() - st) + "ms";
           console.log(`[lsp←] resp #${msg.id} @${t}ms (+${dt})`, msg.error ? "ERROR " + (msg.error.message || "") : "ok");
         }
+      }
+      // ⚠️ 任何响应（对请求的回复）都必须从在途表里移除，不能只在 verbose 分支做：
+      //    否则 _sentAt 永远非空 → flush pump 永不停止（每 150ms 永久发 $/setTrace 空转），
+      //    且 Map 随请求数无限增长。表里可能残留服务器主动请求的 id（我们没有发出去过），
+      //    delete 不存在的键是无操作，安全。
+      if (msg && typeof msg === "object" && msg.id != null && !msg.method) {
+        this._sentAt.delete(msg.id);
+        if (this._sentAt.size === 0 && this._pumpTimer) { clearTimeout(this._pumpTimer); this._pumpTimer = null; }
       }
       for (const cb of this._listeners) {
         try { cb(msg); } catch (e) { console.error("[oi clangd] 消息分发异常:", e && (e.stack || e.message)); }
@@ -203,6 +209,10 @@ class Writer {
     this.opts = opts || {};            // { flags, opt, debug }：didOpen 时同步给 clangd
     this.onError = makeEvent();
     this.onClose = makeEvent();
+    // ⚠️ didChange 合并槽按**文档 URI** 分桶（旧实现是单槽 _pendingChange，
+    //    150ms 窗口内编辑第二个文件会把第一个文件的同步覆盖掉）
+    this._pendingChanges = new Map();  // uri -> 待发的全量 didChange
+    this._flushTimer = null;
   }
   // ⚠️ vscode-jsonrpc 的 MessageWriter 契约：write() 必须返回 Promise。
   //
@@ -222,31 +232,45 @@ class Writer {
         const changes = (msg.params && msg.params.contentChanges) || [];
         const isFull = changes.length > 0 && changes.every((c) => !c || c.range === undefined);
         if (!isFull) {
-          this._flushChange();
+          this._flushChange(msg);
           this.proxy.postMessage(msg);
           return Promise.resolve();
         }
-        this._pendingChange = msg;
+        // ⚠️ 合并必须按文档区分：待发槽里存的是 A 文档的全量同步时，
+        //    B 文档的 didChange 不能覆盖它（否则 A 永远停在旧文本，
+        //    clangd 对 A 的诊断/补全/跳转全部基于过期代码）。
+        //    槽是 "uri -> 消息"，flush 时按原顺序逐个发出。
+        const uri = String(msg.params && msg.params.textDocument && msg.params.textDocument.uri || "");
+        this._pendingChanges.set(uri, msg);
         if (!this._flushTimer) {
-          this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushChange(); }, 150);
+          this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushAllChanges(); }, 150);
         }
         return Promise.resolve();
       }
-      this._flushChange();          // 其它消息前先冲掉待发变更，保证顺序
+      this._flushAllChanges();      // 其它消息前先冲掉待发变更，保证顺序
       this.proxy.postMessage(msg);
     } catch (e) { try { this.onError.fire([e, msg, 1]); } catch {} return Promise.reject(e); }
 
     return Promise.resolve();
   }
-  _flushChange() {
-    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
-    const m = this._pendingChange;
-    if (!m) return;
-    this._pendingChange = null;
-    try { this.proxy.postMessage(m); } catch (e) { try { this.onError.fire([e, m, 1]); } catch {} }
+  /** [兼容旧签名] 只冲掉指定文档的待发变更（增量 didChange 直发前调用，保证顺序） */
+  _flushChange(msg) {
+    if (msg && msg.method === "textDocument/didChange") {
+      const uri = String(msg.params && msg.params.textDocument && msg.params.textDocument.uri || "");
+      const pending = this._pendingChanges.get(uri);
+      if (pending) { this._pendingChanges.delete(uri); try { this.proxy.postMessage(pending); } catch (e) { try { this.onError.fire([e, pending, 1]); } catch {} } }
+    }
   }
-  end() { this._flushChange(); }
-  dispose() { this._flushChange(); }
+  /** 冲掉全部待发变更（保持 set 顺序） */
+  _flushAllChanges() {
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    for (const m of this._pendingChanges.values()) {
+      try { this.proxy.postMessage(m); } catch (e) { try { this.onError.fire([e, m, 1]); } catch {} }
+    }
+    this._pendingChanges.clear();
+  }
+  end() { this._flushAllChanges(); }
+  dispose() { this._flushAllChanges(); }
 }
 
 let client = null;
@@ -396,12 +420,16 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   try {
     await Promise.race([started, timeout, workerFailed]);
   } catch (e) {
+    if (initTimer) { clearTimeout(initTimer); initTimer = null; }
     // lc 可能已处于 startFailed/starting，stop() 会同步抛，必须吞掉
     try { await Promise.resolve(lc.stop()).catch(() => {}); } catch {}
     try { worker.terminate(); } catch {}
     try { proxy.dispose(); } catch {}
     throw e;
   }
+  // 启动成功后清掉初始化定时器：留着它会在 120s 后触发一次注定失败的
+  // initReject（initReject 已无人消费），徒增一个 pending 计时器 + unhandled rejection 风险。
+  if (initTimer) { clearTimeout(initTimer); initTimer = null; }
   client = lc;
   current = { worker, proxy, lc };
   return client;

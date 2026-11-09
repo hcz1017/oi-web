@@ -312,11 +312,14 @@ class OiPty {
       case "log": this._log(m.message); break;
       case "ready": this._log("工具链就绪"); this._readyResolve?.(); break;
       case "compiled": {
+        // ⚠️ 过期检查必须在写缓存之前：Ctrl+C（reqId++ 作废在途编译）后改代码再跑，
+        //    迟到的旧编译结果不能把旧产物写进【新代码】的缓存键 —— 否则下次"缓存命中
+        //    （代码未变化）"跑的其实是上一版程序，结果错且极难察觉。
+        if (m.id !== this.reqId || this.state !== "compiling") return;   // 过期/已被取消
         // 写入编译缓存（终端运行也缓存；成功才写）
         if (m.ok && this.cacheKey && m.wasm) {
           try { compileCache.put(this.cacheKey, new Uint8Array(m.wasm), m.ms || 0); } catch {}
         }
-        if (m.id !== this.reqId || this.state !== "compiling") return;   // 过期/已被取消
         if (!m.ok) {
           this.busyReset("idle");
           if (!this._atLineStart) this.write("\r\n");
