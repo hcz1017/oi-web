@@ -718,12 +718,18 @@ function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, d
     shared.byId.set(id, {
       _msg(m) {
         clearTimeout(timer);
-        // ⚠️ 编译成功要写缓存：以前 F5 调试路径只读不写 → 第二次 F5 还是全量重编
+        // worker 级异常走的是 {type:"error", message}（没有 log 字段），以前一律读 m.log
+        // → 报错变成"编译失败: "空文本，用户完全看不出原因。
+        const text = String(m.log || m.message || "");
         if (m.ok && m.wasm) {
-          try { compileCache.put(key, new Uint8Array(m.wasm), m.ms || 0); } catch {}
+          // ⚠️ 产物类型不固定：编译回来是 ArrayBuffer，缓存命中是 Uint8Array。
+          //    在这里统一成 Uint8Array，调用方（调试/对拍/符号）就不用各自猜。
+          const u8 = m.wasm instanceof Uint8Array ? m.wasm : new Uint8Array(m.wasm);
+          try { compileCache.put(key, u8, m.ms || 0); } catch { }
+          resolve({ wasm: u8, log: text, exit: 0, ms: m.ms || 0 });
+          return;
         }
-        if (m.ok) resolve(m);
-        else reject(Object.assign(new Error("编译失败: " + String(m.log || "").split("\n").slice(0, 40).join("\n")), { log: m.log }));
+        reject(Object.assign(new Error("编译失败: " + (text.split("\n").slice(0, 40).join("\n") || "未知错误")), { log: text }));
       },
       _fail(msg) { clearTimeout(timer); reject(new Error(msg)); },
     });

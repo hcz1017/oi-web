@@ -62,6 +62,12 @@ export function createCompileCache(memento, opts = {}) {
       try {
         const wasm = b64dec(e.b64);
         if (!wasm.length) return null;
+        // 校验 wasm magic（\0asm）：缓存被截断/写坏时，坏字节直接喂给 WebAssembly.compile
+        // 会让所有用例报 RE，症状和"编译产物有问题"一模一样。宁可当未命中重编一次。
+        if (!(wasm.length >= 4 && wasm[0] === 0x00 && wasm[1] === 0x61 && wasm[2] === 0x73 && wasm[3] === 0x6d)) {
+          log(`缓存条目损坏（不是 wasm），按未命中处理：${k}`);
+          return null;
+        }
         log(`缓存命中 ${k}（${(wasm.length / 1048576).toFixed(1)}MB，上次编译 ${e.ms}ms）`);
         return { wasm, ms: e.ms || 0 };
       } catch (e2) {
