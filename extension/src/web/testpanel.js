@@ -233,6 +233,7 @@ export function createTestViewProvider(deps) {
     //    第二轮的 runGen 作废第一轮、第一轮的 finally 又把 running 置回 false。
     running = true;
     let gen = 0;
+    let file = "";                 // ⚠️ 必须在 try 外：catch 里也要用它给面板报错
     try {
       // 运行前现读编辑器（面板里 current 是快照；改完代码不刷新会命中旧缓存）
       await askFlush();
@@ -249,7 +250,7 @@ export function createTestViewProvider(deps) {
       }
 
       gen = ++runGen;
-      const file = keyOf(current);
+      file = keyOf(current);
       post({ type: "runStart", gen, file, single, count: items.length });
       const t0 = Date.now();
       const r = await deps.compile({

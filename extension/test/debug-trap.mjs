@@ -107,7 +107,7 @@ const worker = new Worker(path.join(HERE, "node-worker-self.cjs"), {
 });
 const events = [];
 worker.on("message", (m) => events.push(m));
-const sab = new SharedArrayBuffer(8);
+const sab = new SharedArrayBuffer(16);
 const ctrl = new Int32Array(sab);
 worker.postMessage({
   type: "init", wasm: instr.wasm.buffer, sites: useSites,

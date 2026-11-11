@@ -78,7 +78,7 @@ if (r2.wasm) {
     wasm: instr2.wasm.buffer,
     sites: [],
     breakpointSab: new SharedArrayBuffer(4),
-    sab: new SharedArrayBuffer(8),
+    sab: new SharedArrayBuffer(16),
     stdinSAB: stdinSab,
     fileName: "echo.cpp",
   });
@@ -167,7 +167,7 @@ const instr = instrumentWasm(orig, sites.map((s) => ({ id: s.id, offset: s.origO
 must(instr.sites.length === sites.length, `插桩点 ${instr.sites.length}/${sites.length}`);
 
 // ---------- 启动 debugWorker ----------
-const sab = new SharedArrayBuffer(8);
+const sab = new SharedArrayBuffer(16);
 const ctrl = new Int32Array(sab);
 const bpSab = new SharedArrayBuffer((Math.ceil(Math.max(...sites.map((x) => x.id)) / 32) + 1) * 4);
 const bp = new Int32Array(bpSab);
@@ -240,7 +240,7 @@ if (!exited) console.log("   事件类型:", JSON.stringify(events.map((e) => e.
 const events2 = [];
 worker.removeAllListeners("message");
 worker.on("message", (m) => events2.push(m));
-const sab2 = new SharedArrayBuffer(8);
+const sab2 = new SharedArrayBuffer(16);
 const bp2Sab = new SharedArrayBuffer((Math.ceil(Math.max(...sites.map((x) => x.id)) / 32) + 1) * 4);
 const bp2 = new Int32Array(bp2Sab);
 for (const id of [bpSite.id]) { const w = id >>> 5; Atomics.store(bp2, w, Atomics.load(bp2, w) | (1 << (id & 31))); }
