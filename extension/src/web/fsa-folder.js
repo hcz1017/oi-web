@@ -180,13 +180,14 @@ class FsaFolderProvider {
     if (!(options && options.overwrite)) {
       try {
         await this.stat(to);
-        // stat 成功 = 目标存在
-        throw vscode.FileSystemError.FileExists(to);
+        throw vscode.FileSystemError.FileExists(to);   // stat 成功 = 目标存在
       } catch (e) {
-        // 只有"目标不存在"（FileNotFound）才是我们想要的结果，其它原样抛
-        if (e && e instanceof vscode.FileSystemError && e.code === "FileExists") throw e;
-        if (!e || !(e instanceof vscode.FileSystemError) || e.code !== "FileNotFound") {
-          throw vscode.FileSystemError.NoPermissions(String((e && e.message) || e));
+        // 只要 FileExists（我们自己抛的）就继续往上抛；FileNotFound 才是"目标不存在"的正常路径
+        if (e instanceof vscode.FileSystemError && e.code === "FileExists") throw e;
+        if (!(e instanceof vscode.FileSystemError) || e.code !== "FileNotFound") {
+          // ⚠️ 其它异常（权限被撤、句柄失效、目录未就绪…）**原样抛**，保留原始 message。
+          //    以前统一包成 NoPermissions，会把"句柄失效"误导成"没有权限"，排查走偏。
+          throw e;
         }
       }
     }

@@ -30,9 +30,13 @@ if [ -z "$WEB_DIR" ]; then
   WEB_DIR="$(ls -d "$ROOT"/.vscode-test-web/vscode-web-stable-* 2>/dev/null | sort | tail -1 || true)"
 fi
 
-if [ -n "$WEB_DIR" ] && [ ! -f "$WEB_DIR/out/nls.messages.zh-cn.js" ]; then
+# 中文 NLS 是可选项：新版 vscode-web 的产物里可能没有 out/nls.messages.js
+# （上游改了打包布局）。缺文件就跳过，界面退回英文，但开发服必须能起来。
+if [ -n "$WEB_DIR" ] && [ ! -f "$WEB_DIR/out/nls.messages.js" ]; then
+  echo "== [3/4] 跳过中文 NLS：该 vscode-web 版本没有 out/nls.messages.js（界面为英文） =="
+elif [ -n "$WEB_DIR" ] && [ ! -f "$WEB_DIR/out/nls.messages.zh-cn.js" ]; then
   echo "== [3/4] 生成中文 NLS =="
-  node "$ROOT/scripts/build-zh-nls.mjs" >/dev/null || exit 1
+  node "$ROOT/scripts/build-zh-nls.mjs" >/dev/null || echo "⚠ 中文 NLS 生成失败（继续，界面英文）"
 fi
 
 # ⚠️ 这两个补丁都是"每次启动重新打"的：
@@ -55,9 +59,33 @@ echo "中文:     nls.messages.js 已中文化（scripts/build-zh-nls.mjs）"
 echo "工作区:   空工作区（不打开任何文件夹）"
 echo "打开:     http://$HOST:$PORT/"
 echo
+# ⚠️ 固定使用**已经下载好**的那个 VS Code 构建：
+#    不传 --commit 时 test-web 每次都会去查"最新 stable"并重新下载 80MB，
+#    网络一抖（ECONNRESET）就直接起不来。目录名里就带着 commit，取出来传进去即可。
+# ⚠️ test-web 判断"装好了没"的依据是目录里的 version 文件（还要内容匹配）：
+#    解压成功但缺这个文件时，它会把整个目录 rm -rf 再重下 80MB —— 网络一抖就永远起不来。
+#    这里自愈：目录里有 out/ 就补写 version，之后启动直接复用。
+if [ -n "${WEB_DIR:-}" ] && [ -d "$WEB_DIR/out" ] && [ ! -f "$WEB_DIR/version" ]; then
+  echo "$(basename "$WEB_DIR")" > "$WEB_DIR/version"
+  echo "== 补写 version 标记（避免重复下载）：$(basename "$WEB_DIR") =="
+fi
+
+COMMIT=""
+if [ -n "${WEB_DIR:-}" ]; then
+  COMMIT="$(basename "$WEB_DIR" | sed -E 's/^vscode-web-[a-z]+-//')"
+fi
+
+echo "构建:     ${COMMIT:-（未下载，将获取最新 stable）}"
+echo
+
+EXTRA_ARGS=()
+[ -n "$COMMIT" ] && EXTRA_ARGS+=(--commit "$COMMIT")
+
 exec node "$TW" \
   --browser none \
   --host "$HOST" --port "$PORT" \
   --coi \
   --quality "$QUALITY" \
+  "${EXTRA_ARGS[@]}" \
+  --testRunnerDataDir "$ROOT/.vscode-test-web" \
   --extensionDevelopmentPath "$EXT"

@@ -111,7 +111,7 @@ must(Array.isArray(instr.bodyLocals) && instr.bodyLocals.some((l) => l.length > 
   `插桩返回 bodyLocals（例：${JSON.stringify(instr.bodyLocals.find((l) => l.length) || [])}）`);
 
 // ---------- 跑起来，命中断点 ----------
-const sab = new SharedArrayBuffer(8);
+const sab = new SharedArrayBuffer(16);
 const ctrl = new Int32Array(sab);
 const bpSab = new SharedArrayBuffer((Math.ceil(Math.max(...sites.map((x) => x.id)) / 32) + 1) * 4);
 const bpmap = new Int32Array(bpSab);
