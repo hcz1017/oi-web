@@ -401,64 +401,67 @@ vscode.postMessage({ type: "ready" });
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="${["default-src 'none'",`img-src data: blob: ${r.cspSource}`,`style-src 'unsafe-inline' ${r.cspSource}`,`script-src 'nonce-${t}' 'wasm-unsafe-eval' ${r.cspSource}`,`worker-src blob: ${r.cspSource}`,`font-src data: ${r.cspSource}`,`connect-src ${r.cspSource}`].join("; ")}" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="${n("app/codicon.css")}" />
 <link rel="stylesheet" href="${n("app/client.css")}" />
 <title>PDF</title>
 </head><body class="pdfbody">
 <div id="toolbar">
-  <span id="docName">\u2014</span><span id="docMeta"></span>
+  <span class="docTitle"><i class="codicon codicon-file-pdf"></i><span id="docName">\u2014</span></span>
+  <span id="docMeta"></span>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnThumbs" title="\u7F29\u7565\u56FE">\u25A4</button>
-    <button id="btnOutline" title="\u5927\u7EB2">\u2630</button>
+    <button id="btnThumbs" class="iconBtn" title="\u7F29\u7565\u56FE"><i class="codicon codicon-layout"></i></button>
+    <button id="btnOutline" class="iconBtn" title="\u5927\u7EB2"><i class="codicon codicon-list-tree"></i></button>
   </div>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnPrev" title="\u4E0A\u4E00\u9875 (PageUp)">\u2039</button>
+    <button id="btnPrev" class="iconBtn" title="\u4E0A\u4E00\u9875\uFF08PageUp\uFF09"><i class="codicon codicon-chevron-left"></i></button>
     <input id="pageInput" type="text" value="1" title="\u9875\u7801\uFF08\u53EF\u8F93\u5165 3 \u6216 3-5\uFF09" />
     <span id="pageTotal">/ ?</span>
-    <button id="btnNext" title="\u4E0B\u4E00\u9875 (PageDown)">\u203A</button>
+    <button id="btnNext" class="iconBtn" title="\u4E0B\u4E00\u9875\uFF08PageDown\uFF09"><i class="codicon codicon-chevron-right"></i></button>
   </div>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnZoomOut" title="\u7F29\u5C0F (Ctrl+-)">\u2212</button>
+    <button id="btnZoomOut" class="iconBtn" title="\u7F29\u5C0F\uFF08Ctrl+-\uFF09"><i class="codicon codicon-zoom-out"></i></button>
     <span id="zoomValue">100%</span>
-    <button id="btnZoomIn" title="\u653E\u5927 (Ctrl+=)">+</button>
-    <button id="btnFitWidth" title="\u9002\u5E94\u5BBD\u5EA6">\u2194</button>
-    <button id="btnFitPage" title="\u9002\u5E94\u9875\u9762">\u2922</button>
-    <button id="btnRotate" title="\u65CB\u8F6C 90\xB0">\u27F3</button>
+    <button id="btnZoomIn" class="iconBtn" title="\u653E\u5927\uFF08Ctrl+=\uFF09"><i class="codicon codicon-zoom-in"></i></button>
+    <button id="btnFitWidth" class="iconBtn" title="\u9002\u5E94\u5BBD\u5EA6"><i class="codicon codicon-arrow-both"></i></button>
+    <button id="btnFitPage" class="iconBtn" title="\u9002\u5E94\u9875\u9762"><i class="codicon codicon-screen-full"></i></button>
+    <button id="btnRotate" class="iconBtn" title="\u65CB\u8F6C 90\xB0"><i class="codicon codicon-sync"></i></button>
   </div>
   <span class="sep"></span>
-  <div class="group">
-    <button class="toolBtn" data-tool="select" title="\u9009\u62E9 / \u6587\u672C\u9009\u62E9">\u2725</button>
-    <button class="toolBtn" data-tool="highlight" title="\u9AD8\u4EAE\uFF08\u62D6\u9009\u6587\u5B57\uFF09">\u25AE</button>
-    <button class="toolBtn" data-tool="underline" title="\u4E0B\u5212\u7EBF">_</button>
-    <button class="toolBtn" data-tool="strike" title="\u5220\u9664\u7EBF">S\u0336</button>
-    <button class="toolBtn" data-tool="note" title="\u4FBF\u7B7E">\u{1F4DD}</button>
-    <button class="toolBtn" data-tool="freetext" title="\u81EA\u7531\u6587\u672C">T</button>
-    <button class="toolBtn" data-tool="rect" title="\u77E9\u5F62">\u25AD</button>
-    <button class="toolBtn" data-tool="arrow" title="\u7BAD\u5934">\u2197</button>
-    <button class="toolBtn" data-tool="pen" title="\u624B\u5199\uFF08\u677F\u4E66\uFF09">\u270E</button>
-    <button class="toolBtn" data-tool="marker" title="\u8367\u5149\u7B14">\u{1F58D}</button>
-    <button class="toolBtn" data-tool="eraser" title="\u6A61\u76AE\uFF08\u70B9\u4E00\u4E0B\u5220\u9664\uFF09">\u232B</button>
+  <div class="group tools">
+    <button class="toolBtn iconBtn" data-tool="select" title="\u9009\u62E9 / \u6587\u672C\u9009\u62E9"><i class="codicon codicon-cursor"></i></button>
+    <button class="toolBtn iconBtn" data-tool="highlight" title="\u9AD8\u4EAE\uFF08\u62D6\u9009\u6587\u5B57\uFF09"><i class="codicon codicon-symbol-color"></i></button>
+    <button class="toolBtn iconBtn" data-tool="underline" title="\u4E0B\u5212\u7EBF"><span class="glyph u">U</span></button>
+    <button class="toolBtn iconBtn" data-tool="strike" title="\u5220\u9664\u7EBF"><i class="codicon codicon-strikethrough"></i></button>
+    <button class="toolBtn iconBtn" data-tool="note" title="\u4FBF\u7B7E"><i class="codicon codicon-comment-discussion"></i></button>
+    <button class="toolBtn iconBtn" data-tool="freetext" title="\u81EA\u7531\u6587\u672C"><i class="codicon codicon-symbol-string"></i></button>
+    <button class="toolBtn iconBtn" data-tool="rect" title="\u77E9\u5F62"><i class="codicon codicon-primitive-square"></i></button>
+    <button class="toolBtn iconBtn" data-tool="arrow" title="\u7BAD\u5934"><i class="codicon codicon-arrow-right"></i></button>
+    <button class="toolBtn iconBtn" data-tool="pen" title="\u624B\u5199\uFF08\u677F\u4E66\uFF09"><i class="codicon codicon-edit"></i></button>
+    <button class="toolBtn iconBtn" data-tool="marker" title="\u8367\u5149\u7B14"><i class="codicon codicon-paintcan"></i></button>
+    <button class="toolBtn iconBtn" data-tool="eraser" title="\u6A61\u76AE\uFF08\u70B9\u4E00\u4E0B\u5220\u9664\uFF09"><i class="codicon codicon-eraser"></i></button>
     <input id="color" type="color" value="#ffd54f" title="\u989C\u8272" />
     <input id="inkWidth" type="number" min="1" max="24" step="1" value="2" title="\u7B14\u5BBD" />
   </div>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnUndo" title="\u64A4\u9500 (Ctrl+Z)">\u21B6</button>
-    <button id="btnRedo" title="\u91CD\u505A (Ctrl+Y)">\u21B7</button>
-    <button id="btnSave" title="\u7ACB\u5373\u4FDD\u5B58\u6279\u6CE8 (Ctrl+S)">\u4FDD\u5B58</button>
-    <button id="btnOcr" title="OCR\uFF08\u540E\u7EED\u7248\u672C\u63D0\u4F9B\uFF0C\u63A5\u53E3\u5DF2\u9884\u7559\uFF09" class="unsupported">OCR</button>
+    <button id="btnUndo" class="iconBtn" title="\u64A4\u9500\uFF08Ctrl+Z\uFF09"><i class="codicon codicon-discard"></i></button>
+    <button id="btnRedo" class="iconBtn" title="\u91CD\u505A\uFF08Ctrl+Y\uFF09"><i class="codicon codicon-redo"></i></button>
+    <button id="btnSave" class="iconBtn" title="\u7ACB\u5373\u4FDD\u5B58\u6279\u6CE8\uFF08Ctrl+S\uFF09"><i class="codicon codicon-save"></i></button>
+    <button id="btnOcr" class="iconBtn unsupported" title="OCR\uFF08\u540E\u7EED\u7248\u672C\u63D0\u4F9B\uFF0C\u63A5\u53E3\u5DF2\u9884\u7559\uFF09"><span class="glyph tiny">OCR</span></button>
     <span id="saveState"></span>
   </div>
 </div>
 
 <div id="findBar">
+  <i class="codicon codicon-search findIcon"></i>
   <input id="findInput" type="text" placeholder="\u5728\u6587\u6863\u4E2D\u641C\u7D22\u2026\uFF08Ctrl+F\uFF09" />
   <span id="findCount"></span>
-  <button id="findPrev" title="\u4E0A\u4E00\u4E2A (Shift+F3)">\u2191</button>
-  <button id="findNext" title="\u4E0B\u4E00\u4E2A (F3)">\u2193</button>
-  <button id="findClose" title="\u5173\u95ED">\u2715</button>
+  <button id="findPrev" class="iconBtn" title="\u4E0A\u4E00\u4E2A\uFF08Shift+F3\uFF09"><i class="codicon codicon-arrow-up"></i></button>
+  <button id="findNext" class="iconBtn" title="\u4E0B\u4E00\u4E2A\uFF08F3\uFF09"><i class="codicon codicon-arrow-down"></i></button>
+  <button id="findClose" class="iconBtn" title="\u5173\u95ED\uFF08Esc\uFF09"><i class="codicon codicon-close"></i></button>
 </div>
 
 <div id="main">

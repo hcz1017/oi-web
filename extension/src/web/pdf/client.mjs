@@ -56,6 +56,19 @@ function fmtPage() { return `${state.page} / ${state.numPages || "?"}`; }
 // ---------------------------------------------------------------- 启动
 boot().catch((e) => fatal(e));
 
+/** 加载 ESM 库：先用 asWebviewUri 直连，失败再走 fetch+blob */
+async function importLib(url) {
+  try { return await import(url); }
+  catch (e) {
+    log("[pdf] 直连 import 失败，改用 blob：" + (e && e.message));
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`取不到 ${url}: HTTP ${r.status}`);
+    const code = await r.text();
+    const blobUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    return await import(blobUrl);
+  }
+}
+
 async function boot() {
   applyTheme();
   window.addEventListener("message", onHostMessage);
@@ -119,7 +132,9 @@ async function onLoad({ bytes, name, uri, sidecar }) {
   }
 
   // 加载 pdf.js（ESM）并把 worker 变成 blob（跨源/自定义 scheme 下都能用）
-  state.PDF = await import(A.lib);
+  // ⚠️ 直连 import 可能被 CORS/自定义 scheme 拦（网页版资源走 vscode-resource 代理）。
+  //    兜底：fetch 文本 → Blob URL → import（ESM 可以从 blob 加载）。
+  state.PDF = await importLib(A.lib);
   const pdfjs = state.PDF;
   try {
     const wres = await fetch(A.worker);
@@ -148,7 +163,12 @@ async function onLoad({ bytes, name, uri, sidecar }) {
     updatePassword(pw);
   };
   state.doc = await loadingTask.promise;
-  state.numPages = state.doc.getNumPages();
+  // ⚠️ pdfjs-dist v5 起删掉了 PDFDocumentProxy.getNumPages()（只剩 numPages 属性）。
+  //    我们装的是 6.5.438，调用旧方法会 TypeError: state.doc.getNumPages is not a function
+  //    → 打开 PDF 直接报错。这里做一次兼容取值。
+  state.numPages = typeof state.doc.getNumPages === "function"
+    ? state.doc.getNumPages()
+    : state.doc.numPages;
   setSaveState("就绪");
   $("pageTotal").textContent = "/ " + state.numPages;
 
@@ -275,6 +295,7 @@ async function renderPage(info) {
     info.rendered = true;
     info.vp = vp;
     info.pt = { pageWidth: info.size.w, pageHeight: info.size.h, scale: state.scale, rotation: state.rotation };
+    applyPointerMode(info);
     renderAnnots(info);
     renderFindHits(info);
   } finally {
@@ -826,16 +847,18 @@ function setSidebar(which) {
 }
 
 // ---------------------------------------------------------------- 工具栏
+/** 选择模式：文本层收事件（选字）；画图模式：批注层收事件（文本层让位） */
+function applyPointerMode(info) {
+  const select = state.tool === "select";
+  if (info.textLayer) info.textLayer.style.pointerEvents = select ? "auto" : "none";
+  if (info.dom) info.dom.style.pointerEvents = select ? "none" : "auto";
+}
+
 function setTool(tool) {
   state.tool = tool;
   for (const b of document.querySelectorAll(".toolBtn")) b.classList.toggle("on", b.dataset.tool === tool);
   document.body.classList.toggle("drawing", tool !== "select");
-  for (const info of state.pages) {
-    if (!info.rendered) continue;
-    // 画图时：文本层让位给批注层；选择时相反
-    info.textLayer.style.pointerEvents = tool === "select" ? "auto" : "none";
-    info.dom.style.pointerEvents = tool === "select" ? "none" : "auto";
-  }
+  for (const info of state.pages) if (info.rendered) applyPointerMode(info);
 }
 
 function syncToolbar() {

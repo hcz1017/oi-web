@@ -40,7 +40,7 @@ must(countOf(path.join(PDF, "wasm")) >= 5, `wasm 至少 5 个（实际 ${countOf
 must(countOf(path.join(PDF, "iccs")) >= 1, "iccs 至少 1 个");
 
 // ---------- 我们自己的 webview 端 ----------
-for (const f of ["client.mjs", "client.css", "helpers.mjs", "annot.mjs", "ocr.mjs"]) {
+for (const f of ["client.mjs", "client.css", "helpers.mjs", "annot.mjs", "ocr.mjs", "codicon.css", "codicon.ttf"]) {
   must(sizeOf(path.join(PDF, "app", f)) > 100, `app/${f} 已拷贝`);
 }
 {
@@ -49,6 +49,12 @@ for (const f of ["client.mjs", "client.css", "helpers.mjs", "annot.mjs", "ocr.mj
   must(/from "\.\/annot\.mjs"/.test(client), "client.mjs 引用了 annot.mjs");
   must(/from "\.\/ocr\.mjs"/.test(client), "client.mjs 引用了 ocr.mjs（OCR 接口预留）");
   must(/getDocument/.test(client) && /TextLayer/.test(client), "client.mjs 用 pdf.js 渲染 + 文本层");
+  // pdfjs v6 去掉了 getNumPages()：只写旧 API 会导致"打开就报错"，这里钉一下
+  must(/state\.doc\.numPages/.test(client), "client.mjs 用了 numPages 属性（v6 兼容）");
+  must(/updatePassword/.test(client), "client.mjs 处理加密 PDF 的密码回调");
+  // OCR 预留：接口 + 按钮 + sidecar 字段三处都要在
+  must(/available/.test(readFileSync(path.join(PDF, "app", "ocr.mjs"), "utf8")), "ocr.mjs 暴露 available 开关（预留接口）");
+  must(/sidecar\.ocr|state\.ocr/.test(client), "client.mjs 把 OCR 结果带着一起存（预留）");
 }
 
 // ---------- 宿主侧 HTML 模板里的 CSP / 资源 ----------
@@ -57,6 +63,7 @@ for (const f of ["client.mjs", "client.css", "helpers.mjs", "annot.mjs", "ocr.mj
   must(/wasm-unsafe-eval/.test(provider), "CSP 允许 wasm-unsafe-eval（缺了 pdf.js 直接编译失败）");
   must(/worker-src blob:/.test(provider), "CSP 允许 blob worker");
   must(/asWebviewUri/.test(provider), "资源走 asWebviewUri（网页版/桌面版都能取）");
+  must(/codicon\.css/.test(provider) && /codicon codicon-/.test(provider), "工具栏用 VS Code 官方 codicon 图标");
   must(/localResourceRoots/.test(provider), "设置了 localResourceRoots（否则 webview 取不到 assets）");
   must(/cmaps\//.test(provider) && /standard_fonts\//.test(provider) && /wasm\//.test(provider),
     "HTML 里把 cmaps/standard_fonts/wasm 的 URL 都注入了");

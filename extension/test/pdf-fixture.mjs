@@ -44,6 +44,7 @@ must(!!outline && /Page 1/.test(outline[0].title), "大纲标题正确");
 const item = tc.items.find((i) => /hello|world/i.test(i.str || ""));
 must(!!item && Array.isArray(item.transform) && item.transform.length === 6, "文字项带 transform（计算批注矩形要用）");
 
-await doc.destroy();
+// pdfjs-dist v6 去掉了 doc.destroy()，用 cleanup（没有就跳过，进程退出时自然回收）
+if (typeof doc.cleanup === "function") await doc.cleanup();
 console.log(pass ? "\n全部通过" : "\n存在失败项");
 process.exit(pass ? 0 : 1);

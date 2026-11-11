@@ -180,6 +180,14 @@ console.log("copied: dist/node/workers/{runWorker,compileWorker,debugWorker}.js 
     if (!existsSync(src)) { console.error("✗ PDF 前端文件缺失：" + f); process.exit(1); }
     cpSync(src, path.join(appOut, f));
   }
+  // VS Code 官方图标字体（codicon）：工具栏用它，才和编辑器其它按钮一致
+  const codicons = path.join(HERE, "node_modules", "@vscode", "codicons", "dist");
+  if (!existsSync(codicons)) { console.error("✗ 缺少 @vscode/codicons（工具栏图标需要）。请 cd extension && npm install"); process.exit(1); }
+  for (const f of ["codicon.css", "codicon.ttf"]) {
+    const src = path.join(codicons, f);
+    if (!existsSync(src)) { console.error("✗ codicons 资产缺失：" + f); process.exit(1); }
+    cpSync(src, path.join(appOut, f));
+  }
   console.log("copied: pdfjs-dist → assets/pdf/{build,cmaps,standard_fonts,wasm,iccs} + app/");
 }
 

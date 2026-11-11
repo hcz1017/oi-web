@@ -155,64 +155,67 @@ function buildHtml(webview, extensionUri) {
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="${asset("app/codicon.css")}" />
 <link rel="stylesheet" href="${asset("app/client.css")}" />
 <title>PDF</title>
 </head><body class="pdfbody">
 <div id="toolbar">
-  <span id="docName">—</span><span id="docMeta"></span>
+  <span class="docTitle"><i class="codicon codicon-file-pdf"></i><span id="docName">—</span></span>
+  <span id="docMeta"></span>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnThumbs" title="缩略图">▤</button>
-    <button id="btnOutline" title="大纲">☰</button>
+    <button id="btnThumbs" class="iconBtn" title="缩略图"><i class="codicon codicon-layout"></i></button>
+    <button id="btnOutline" class="iconBtn" title="大纲"><i class="codicon codicon-list-tree"></i></button>
   </div>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnPrev" title="上一页 (PageUp)">‹</button>
+    <button id="btnPrev" class="iconBtn" title="上一页（PageUp）"><i class="codicon codicon-chevron-left"></i></button>
     <input id="pageInput" type="text" value="1" title="页码（可输入 3 或 3-5）" />
     <span id="pageTotal">/ ?</span>
-    <button id="btnNext" title="下一页 (PageDown)">›</button>
+    <button id="btnNext" class="iconBtn" title="下一页（PageDown）"><i class="codicon codicon-chevron-right"></i></button>
   </div>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnZoomOut" title="缩小 (Ctrl+-)">−</button>
+    <button id="btnZoomOut" class="iconBtn" title="缩小（Ctrl+-）"><i class="codicon codicon-zoom-out"></i></button>
     <span id="zoomValue">100%</span>
-    <button id="btnZoomIn" title="放大 (Ctrl+=)">+</button>
-    <button id="btnFitWidth" title="适应宽度">↔</button>
-    <button id="btnFitPage" title="适应页面">⤢</button>
-    <button id="btnRotate" title="旋转 90°">⟳</button>
+    <button id="btnZoomIn" class="iconBtn" title="放大（Ctrl+=）"><i class="codicon codicon-zoom-in"></i></button>
+    <button id="btnFitWidth" class="iconBtn" title="适应宽度"><i class="codicon codicon-arrow-both"></i></button>
+    <button id="btnFitPage" class="iconBtn" title="适应页面"><i class="codicon codicon-screen-full"></i></button>
+    <button id="btnRotate" class="iconBtn" title="旋转 90°"><i class="codicon codicon-sync"></i></button>
   </div>
   <span class="sep"></span>
-  <div class="group">
-    <button class="toolBtn" data-tool="select" title="选择 / 文本选择">✥</button>
-    <button class="toolBtn" data-tool="highlight" title="高亮（拖选文字）">▮</button>
-    <button class="toolBtn" data-tool="underline" title="下划线">_</button>
-    <button class="toolBtn" data-tool="strike" title="删除线">S̶</button>
-    <button class="toolBtn" data-tool="note" title="便签">📝</button>
-    <button class="toolBtn" data-tool="freetext" title="自由文本">T</button>
-    <button class="toolBtn" data-tool="rect" title="矩形">▭</button>
-    <button class="toolBtn" data-tool="arrow" title="箭头">↗</button>
-    <button class="toolBtn" data-tool="pen" title="手写（板书）">✎</button>
-    <button class="toolBtn" data-tool="marker" title="荧光笔">🖍</button>
-    <button class="toolBtn" data-tool="eraser" title="橡皮（点一下删除）">⌫</button>
+  <div class="group tools">
+    <button class="toolBtn iconBtn" data-tool="select" title="选择 / 文本选择"><i class="codicon codicon-cursor"></i></button>
+    <button class="toolBtn iconBtn" data-tool="highlight" title="高亮（拖选文字）"><i class="codicon codicon-symbol-color"></i></button>
+    <button class="toolBtn iconBtn" data-tool="underline" title="下划线"><span class="glyph u">U</span></button>
+    <button class="toolBtn iconBtn" data-tool="strike" title="删除线"><i class="codicon codicon-strikethrough"></i></button>
+    <button class="toolBtn iconBtn" data-tool="note" title="便签"><i class="codicon codicon-comment-discussion"></i></button>
+    <button class="toolBtn iconBtn" data-tool="freetext" title="自由文本"><i class="codicon codicon-symbol-string"></i></button>
+    <button class="toolBtn iconBtn" data-tool="rect" title="矩形"><i class="codicon codicon-primitive-square"></i></button>
+    <button class="toolBtn iconBtn" data-tool="arrow" title="箭头"><i class="codicon codicon-arrow-right"></i></button>
+    <button class="toolBtn iconBtn" data-tool="pen" title="手写（板书）"><i class="codicon codicon-edit"></i></button>
+    <button class="toolBtn iconBtn" data-tool="marker" title="荧光笔"><i class="codicon codicon-paintcan"></i></button>
+    <button class="toolBtn iconBtn" data-tool="eraser" title="橡皮（点一下删除）"><i class="codicon codicon-eraser"></i></button>
     <input id="color" type="color" value="#ffd54f" title="颜色" />
     <input id="inkWidth" type="number" min="1" max="24" step="1" value="2" title="笔宽" />
   </div>
   <span class="sep"></span>
   <div class="group">
-    <button id="btnUndo" title="撤销 (Ctrl+Z)">↶</button>
-    <button id="btnRedo" title="重做 (Ctrl+Y)">↷</button>
-    <button id="btnSave" title="立即保存批注 (Ctrl+S)">保存</button>
-    <button id="btnOcr" title="OCR（后续版本提供，接口已预留）" class="unsupported">OCR</button>
+    <button id="btnUndo" class="iconBtn" title="撤销（Ctrl+Z）"><i class="codicon codicon-discard"></i></button>
+    <button id="btnRedo" class="iconBtn" title="重做（Ctrl+Y）"><i class="codicon codicon-redo"></i></button>
+    <button id="btnSave" class="iconBtn" title="立即保存批注（Ctrl+S）"><i class="codicon codicon-save"></i></button>
+    <button id="btnOcr" class="iconBtn unsupported" title="OCR（后续版本提供，接口已预留）"><span class="glyph tiny">OCR</span></button>
     <span id="saveState"></span>
   </div>
 </div>
 
 <div id="findBar">
+  <i class="codicon codicon-search findIcon"></i>
   <input id="findInput" type="text" placeholder="在文档中搜索…（Ctrl+F）" />
   <span id="findCount"></span>
-  <button id="findPrev" title="上一个 (Shift+F3)">↑</button>
-  <button id="findNext" title="下一个 (F3)">↓</button>
-  <button id="findClose" title="关闭">✕</button>
+  <button id="findPrev" class="iconBtn" title="上一个（Shift+F3）"><i class="codicon codicon-arrow-up"></i></button>
+  <button id="findNext" class="iconBtn" title="下一个（F3）"><i class="codicon codicon-arrow-down"></i></button>
+  <button id="findClose" class="iconBtn" title="关闭（Esc）"><i class="codicon codicon-close"></i></button>
 </div>
 
 <div id="main">
