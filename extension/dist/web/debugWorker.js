@@ -1138,7 +1138,7 @@
       replay.hit = true;
       return scratchBase;
     }
-    if (ctrl && Atomics.exchange(ctrl, 2, 0) === 1) {
+    if (ctrl && ctrl.length > 2 && Atomics.exchange(ctrl, 2, 0) === 1) {
       resumeMode = 2;
       stopLine = -1;
       return scratchBaseFor(site);

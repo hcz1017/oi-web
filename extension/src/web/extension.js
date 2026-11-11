@@ -22,6 +22,7 @@ import { preloadAssets, NOTIFY_AFTER_MS } from "./preload.js";
 import { TestCaseStore, normalizeTimeout } from "./testcases.js";
 import { createRunner } from "./testrunner.js";
 import { createTestViewProvider } from "./testpanel.js";
+import { registerPdfViewer, PDF_VIEW_TYPE } from "./pdf/provider.js";
 
 const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -1385,6 +1386,22 @@ export async function activate(c) {
     // 测试用例面板（仿 CPH 最小版）：打开面板 / 一键跑全部
     try { setupTestPanel(c); logLine("测试用例面板已就绪（命令：WebC++: 打开测试面板 / 运行全部用例）"); }
     catch (e) { logLine("⚠ 测试用例面板初始化失败: " + ((e && e.message) || e)); }
+
+    // PDF 阅读器（自定义编辑器）：点开 .pdf 就在编辑器里渲染
+    try {
+      c.subscriptions.push(registerPdfViewer(c));
+      c.subscriptions.push(vscode.commands.registerCommand("oiCpp.openPdf", async (arg) => {
+        // 支持从资源管理器右键（传 uri）和编辑器标题（无参 → 用当前/选中的 pdf）
+        let uri = arg && arg.uri instanceof vscode.Uri ? arg.uri : (arg instanceof vscode.Uri ? arg : null);
+        if (!uri) {
+          const ed = vscode.window.activeTextEditor;
+          if (ed && /\.pdf$/i.test(ed.document.uri.path)) uri = ed.document.uri;
+        }
+        if (!uri) { vscode.window.showInformationMessage("先在资源管理器里选中一个 .pdf 文件"); return; }
+        await vscode.commands.executeCommand("vscode.openWith", uri, PDF_VIEW_TYPE);
+      }));
+      logLine("PDF 阅读器已注册（viewType=" + PDF_VIEW_TYPE + "）");
+    } catch (e) { logLine("⚠ PDF 阅读器初始化失败（不影响其它功能）: " + ((e && e.message) || e)); }
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.anycodeCompletions", cmdAnycodeCompletions));
     c.subscriptions.push(vscode.commands.registerCommand("oiCpp.toggleBreakpoint", toggleBreakpoint));
     registerDebugAdapter(c);

@@ -3,6 +3,35 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.5.0] - 2026-11-11
+
+### 新增：内置 PDF 阅读器（自定义编辑器）
+双击工作区里的 `.pdf`，直接在编辑器里打开（不是浏览器标签页、不是外链）：
+
+- **渲染**：pdf.js 6.x（Mozilla），逐页 canvas + **虚拟化**（大文件只渲染视野附近的页）；
+- **阅读**：连续滚动、缩放（±/适应宽度/适应页面/百分比）、旋转、页码跳转（支持 `3-5`）、
+  缩略图侧栏、大纲（书签）侧栏；
+- **文字**：官方 TextLayer —— 可选择/复制；`Ctrl+F` 搜索（高亮、命中计数、`F3`/`Shift+F3` 上下条）；
+- **批注**：高亮、下划线、删除线、便签、自由文本、矩形、箭头；拖动可框选，颜色/透明度可调；
+- **板书**：手写笔 / 荧光笔 / 橡皮（支持触控笔压感、笔宽 1–24），撤销/重做（`Ctrl+Z` / `Ctrl+Y`）；
+- **保存**：批注与板书写进 **与 PDF 同目录的 `xxx.pdf.annotations.json`**（sidecar，可版本管理、
+  可手改、桌面与网页都能写）；只读工作区写不进去时明确提示，不会静默丢；
+- 主题跟随 VS Code（浅色/深色/高对比度）；缩放与页码会记住（同一文件重开恢复）；
+- 加密 PDF 会弹密码框（webview 里 `prompt()` 被 sandbox 禁用，走宿主 `showInputBox`）；
+- 安全：`isEvalSupported:false` + `enableXfa:false`（不执行 PDF 内嵌脚本），CSP 只放行本扩展资源；
+- 被别的扩展抢了默认打开方式时：资源管理器右键 / 编辑器标题按钮「用 PDF 阅读器打开」，
+  或命令面板 `WebC++: 用 PDF 阅读器打开`。
+
+### 预留：OCR 接口
+`src/web/pdf/ocr.mjs` 已定义引擎接口（`available/ocrPage/ocrPages`）与"OCR 文本并入搜索"的挂钩，
+sidecar 里也有 `ocr` 字段（不会被批注保存覆盖）。当前版本按钮显示"后续版本提供"，接入只需实现该接口。
+
+### 工程
+- 构建期把 `pdfjs-dist` 的 `build/pdf.min.mjs`、`pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、
+  `wasm/`、`iccs/` 拷到 `assets/pdf/`（`.gitignore` 掉，和 `assets/dwarf/` 同样模式），**缺文件直接构建失败**；
+- 新增测试 30+ 项：`pdf-helpers`（缩放/适配/页码/坐标往返/搜索切词）、`pdf-annot`（增删改/撤销重做/
+  命中测试/sidecar 往返/坏数据容错）、`pdf-assets`（资产与 CSP/贡献点断言）。
+
 ## [0.4.2] - 2026-11-07
 
 ### 变更：默认语言标准改为 C++14
