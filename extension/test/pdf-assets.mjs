@@ -36,7 +36,7 @@ for (const f of ["client.mjs", "client.css"]) {
 }
 {
   const client = readFileSync(path.join(PDF, "app", "client.mjs"), "utf8");
-  must(/from "\.\/embedpdf\/embedpdf\.js"/.test(client), "client.mjs 引用 ./embedpdf/embedpdf.js（同目录相对路径）");
+  must(/from "\.\.\/embedpdf\/embedpdf\.js"/.test(client), "client.mjs 引用 ../embedpdf/embedpdf.js（app/ 的上一级）");
   must(/EmbedPDF\.init\(/.test(client), "client.mjs 调用 EmbedPDF.init 初始化");
   must(/wasmUrl/.test(client), "client.mjs 传了 wasmUrl（离线用打包的 pdfium.wasm）");
   must(/fontFallback:\s*null/.test(client), "关掉了默认的 CDN 字体回退（离线可用）");

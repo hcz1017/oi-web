@@ -10,7 +10,7 @@
 //   1) 把宿主传来的字节 → blob URL 交给 EmbedPDF；
 //   2) 把它的 **下载/保存** 动作截获，改成"写回原 PDF"（webview 里下载会被沙箱拦掉）；
 //   3) Ctrl+S 主动保存 + 错误提示 + 日志转发。
-import EmbedPDF from "./embedpdf/embedpdf.js";
+import EmbedPDF from "../embedpdf/embedpdf.js";
 
 const A = window.__PDF_ASSETS || {};
 const vscode = acquireVsCodeApi();
