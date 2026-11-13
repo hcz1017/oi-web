@@ -29,6 +29,10 @@ must(chunks.some((f) => /engine/.test(f) || /browser/.test(f)), "有引擎分片
 // 不许把 demo 文件一起塞进包里（白占体积）
 must(!existsSync(path.join(EMBED, "demo.pdf")) && !existsSync(path.join(EMBED, "index.html")),
   "没有把 demo.pdf / index.html 打进资产");
+{
+  const css = readFileSync(path.join(PDF, "app", "client.css"), "utf8");
+  must(/#saveBar/.test(css) && /#saveStatus/.test(css), "保存条样式在（含未保存/保存中/已保存状态色）");
+}
 
 // ---------- 我们的 webview 薄壳 ----------
 for (const f of ["client.mjs", "client.css"]) {
@@ -43,6 +47,11 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/savePdf/.test(client), "client.mjs 通过 savePdf 把字节交回宿主");
   must(/saveAsCopy|download/.test(client), "client.mjs 走 export 插件的导出能力取字节");
   must(/patchDownloadInterception/.test(client), "截获了 <a download>（webview 里真下载会被沙箱拦）");
+  // 统一保存入口 + 自动保存（用户明确要求：不能只有 Ctrl+S）
+  must(/buildSaveBar/.test(client) && /saveBtn/.test(client), "有统一的可见保存按钮");
+  must(/AUTOSAVE_DELAY/.test(client) && /markDirty/.test(client), "有自动保存（批注变化 → 防抖写回）");
+  must(/onAnnotationEvent/.test(client), "订阅了批注变更事件");
+  must(/visibilitychange|\"blur\"/.test(client), "切走/失焦前会补一次保存");
 }
 
 // ---------- 宿主侧 HTML 模板：CSP / 资源 ----------

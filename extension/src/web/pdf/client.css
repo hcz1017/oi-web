@@ -38,3 +38,29 @@ html, body {
   border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4));
 }
 #error button.primary { background: var(--vscode-button-background, #0a66c2); color: var(--vscode-button-foreground, #fff); }
+
+/* ---------- 统一保存条（浮在阅读器右上角） ---------- */
+#saveBar {
+  position: fixed; top: 10px; right: 12px; z-index: 80;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 8px;
+  background: var(--vscode-editorWidget-background, rgba(40,40,40,.92));
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4));
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  backdrop-filter: blur(6px);
+}
+#saveBar button {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: inherit; font-weight: 600; padding: 4px 10px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-background, #0a66c2);
+  color: var(--vscode-button-foreground, #fff);
+}
+#saveBar button:hover { background: var(--vscode-button-hoverBackground, #0a66c2); }
+#saveBar button:disabled { opacity: .55; cursor: default; }
+#saveBar .ico { font-size: 12px; line-height: 1; }
+#saveStatus { font-size: 11px; opacity: .8; min-width: 46px; }
+#saveStatus[data-kind="dirty"] { color: var(--vscode-editorWarning-foreground, #d7a12c); opacity: 1; }
+#saveStatus[data-kind="saving"] { opacity: 1; }
+#saveStatus[data-kind="saved"] { color: var(--vscode-charts-green, #3fb950); opacity: 1; }
+#saveStatus[data-kind="error"] { color: var(--vscode-errorForeground, #f14c4c); opacity: 1; }
