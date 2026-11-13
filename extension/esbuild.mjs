@@ -140,6 +140,8 @@ for (const name of ["runWorker.js", "compileWorker.js", "debugWorker.js", "clang
   if (existsSync(src)) cpSync(src, path.join(nodeWorkers, name));
 }
 cpSync(path.join(HERE, "src", "node", "worker-shim.cjs"), path.join(OUT_NODE, "worker-shim.cjs"));
+// 垫片共用的"路径 vs URL"判定（单独成文件以便单测）
+cpSync(path.join(HERE, "src", "node", "url-path.cjs"), path.join(OUT_NODE, "url-path.cjs"));
 {
   const engine = path.resolve(HERE, "..", "wdb", "assets", "dwarf", "worker.node.cjs");
   if (existsSync(engine)) cpSync(engine, path.join(nodeWorkers, "dwarfEngine.node.cjs"));

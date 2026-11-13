@@ -3,6 +3,27 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.4.4] - 2026-11-13
+
+### 修复：Windows 桌面上 clangd 起不来（`TypeError: fetch failed`）
+0.4.3 让桌面走回 Node 扩展宿主后，Windows 上打开 `.cpp` 会看到：
+
+```
+[clangd] [stage] worker 启动 ✔ url=file:///d:/…/dist/node/worker-shim.cjs
+[oi clangd] 失败: TypeError: fetch failed
+```
+
+根因是**把 Windows 盘符路径当成了 URL**：垫片（`worker-shim.cjs`）用来判断"本地文件还是 URL"
+的正则是 `/^[a-z]+:/`，而 `d:\vscode\data\extensions\…\assets` 开头的 `d:` 正好命中它，
+于是本地资产被交给真正的 `fetch`（undici），undici 认为它不是合法 URL → `fetch failed`。
+macOS / Linux 的路径以 `/` 开头不会命中，所以本机（Linux）测试一直测不出来。
+
+- 新增 `src/node/url-path.cjs`：`isWindowsDrive()` / `isScheme()` / `isFileLike()`，
+  协议名要求**至少 2 个字符**（`d:` 不再被当成协议），盘符路径 `d:\` / `D:/` 一律算本地文件；
+- `fetch` 与 `importScripts`（dwarf 引擎用）都改用这个判定；
+- 新增 `test/node-paths.mjs`（22 条断言，覆盖 Windows 盘符、`file:///d:/`、POSIX 路径、
+  以及 `http`/`https`/`data`/`blob`/`vscode-file` 不能被误判成文件），并挂进 `test:all`。
+
 ## [0.4.3] - 2026-11-13
 
 ### 修复：桌面版（离线）安装 VSIX 后，一打开 .cpp 就报 `Failed to fetch`

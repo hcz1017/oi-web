@@ -16,6 +16,7 @@ const { parentPort, workerData } = require("node:worker_threads");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL, fileURLToPath } = require("node:url");
+const { isFileLike, isScheme } = require("./url-path.cjs");
 const vm = require("node:vm");
 
 // ---------------- Web Worker 全局垫片 ----------------
@@ -127,8 +128,9 @@ if (workerData && workerData.browserEmulation) {
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const s = String(input && input.url ? input.url : input);
-  const isFile = /^file:/i.test(s) || (!/^[a-z]+:/i.test(s) && path.isAbsolute(s));
-  if (!isFile) return realFetch(input, init);
+  // ⚠️ 用 isFileLike 而不是 /^[a-z]+:/：Windows 的 `d:\...` 会被那个正则当成协议 "d:"，
+  //    结果本地资产被交给真 fetch → undici 抛 `TypeError: fetch failed`（桌面 Windows 上必现）。
+  if (!isFileLike(s, path.isAbsolute)) return realFetch(input, init);
   const file = /^file:/i.test(s) ? fileURLToPath(s) : s;
   if (!fs.existsSync(file)) return new Response(null, { status: 404, statusText: "not found (file)" });
   let buf = fs.readFileSync(file);
@@ -167,7 +169,7 @@ globalThis.fetch = async (input, init) => {
 globalThis.importScripts = (...urls) => {
   for (const u of urls) {
     const s = String(u);
-    const file = /^file:/i.test(s) ? fileURLToPath(s) : (/^[a-z]+:/i.test(s) ? null : s);
+    const file = /^file:/i.test(s) ? fileURLToPath(s) : (isScheme(s) ? null : s);
     if (!file) throw new Error(`importScripts 只支持文件路径: ${s}`);
     const code = fs.readFileSync(file, "utf8");
     vm.runInThisContext(code, { filename: file });
