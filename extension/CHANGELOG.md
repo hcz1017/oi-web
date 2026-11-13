@@ -3,6 +3,22 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.4.3] - 2026-11-13
+
+### 修复：桌面版（离线）安装 VSIX 后，一打开 .cpp 就报 `Failed to fetch`
+清单里 `extensionKind: ["workspace"]` 会强制把扩展放进"工作区扩展宿主"；桌面窗口在
+**没打开文件夹 / 虚拟工作区**时，这个宿主可能被解析成 **Web Worker 宿主** —— 于是桌面里跑的
+其实是 `browser` 入口（我们的网页版代码），它把资产当 **http** 资源去 `fetch`：
+`${assetsBase}/clangd/clangd.wasm.gz`、`headers.json.gz`、`clangd.js` 等。
+桌面下 `assetsBase` 是 `vscode-file://…`，离线/该 scheme 下 `fetch` 直接失败
+→ 打开 `.cpp` 触发 clangd 启动时抛 `Failed to fetch`。
+
+- **删掉 `extensionKind`**：让 VS Code 依据 `main`（桌面 Node 宿主）/`browser`（网页宿主）
+  自己选择入口。桌面走 Node，资产用 `fs` 读，**完全离线也能用**；网页仍走 web 入口。
+- **`capabilities.virtualWorkspaces` 改为 `false`**：终端、编译用的文件系统、clangd 都依赖真实磁盘，
+  我们本来就没为虚拟工作区做适配；声明出来可以避免 VS Code 把桌面窗口误判成 web 宿主。
+  （如果需要虚拟工作区支持，得把 web 入口的资产读取改成 `vscode.workspace.fs`，属于另一件事。）
+
 ## [0.4.2] - 2026-11-07
 
 ### 变更：默认语言标准改为 C++14

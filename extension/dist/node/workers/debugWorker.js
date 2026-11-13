@@ -1105,6 +1105,19 @@
       return stopDepth;
     }
   }
+  function scratchBaseFor(reportSite) {
+    if (!scratchBase) {
+      try {
+        const old = inst.exports.memory.buffer.byteLength;
+        inst.exports.memory.grow(1);
+        scratchBase = old;
+      } catch (e) {
+        scratchBase = 0;
+      }
+    }
+    pending = reportSite;
+    return scratchBase;
+  }
   function probe(siteId) {
     const site = siteById.get(siteId);
     if (!site) return 0;
@@ -1125,6 +1138,11 @@
       replay.hit = true;
       return scratchBase;
     }
+    if (ctrl && ctrl.length > 2 && Atomics.exchange(ctrl, 2, 0) === 1) {
+      resumeMode = 2;
+      stopLine = -1;
+      return scratchBaseFor(site);
+    }
     const ids = [siteId, ...site.aliases || []];
     const isBreakpoint = !!bp && ids.some((id) => (Atomics.load(bp, id >>> 5) & 1 << (id & 31)) !== 0);
     const sameLine = resumeMode !== 1 && site.line === stopLine;
@@ -1144,23 +1162,13 @@
       }
     }
     if (!hit) return 0;
-    if (!scratchBase) {
-      try {
-        const old = inst.exports.memory.buffer.byteLength;
-        inst.exports.memory.grow(1);
-        scratchBase = old;
-      } catch (e) {
-        scratchBase = 0;
-      }
-    }
     let report = site;
     if (isBreakpoint) {
       const markId = ids.find((id) => (Atomics.load(bp, id >>> 5) & 1 << (id & 31)) !== 0);
       const rep = markId != null ? siteById.get(markId) : null;
       if (rep && rep.id !== site.id) report = { ...rep, body: site.body };
     }
-    pending = report;
-    return scratchBase;
+    return scratchBaseFor(report);
   }
   function pause() {
     const site = pending;
@@ -1172,6 +1180,8 @@
       post({
         type: "trap",
         replayed: true,
+        waiting: true,
+        // 下面会阻塞在 Atomics.wait
         reason: trapped && trapped.reason,
         message: trapped && trapped.message,
         site,
@@ -1194,6 +1204,8 @@
     }
     post({
       type: "paused",
+      waiting: true,
+      // 下面会阻塞在 Atomics.wait（宿主 _resume 依据它写控制槽）
       siteId: site.id,
       site,
       frames,
@@ -1365,6 +1377,7 @@
     }
     trapped = { reason: msg, site };
     post({
+      waiting: false,
       type: "trap",
       reason: msg,
       message: msg,
