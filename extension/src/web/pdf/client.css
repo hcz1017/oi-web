@@ -1,7 +1,5 @@
-/* PDF 阅读器样式（构建时拷到 assets/pdf/app/client.css）。
-   颜色全部走 VS Code 主题变量，浅色/深色自动跟随。 */
-
-:root { --pdf-backdrop: #2b2b2b; --pdf-page-shadow: 0 2px 10px rgba(0,0,0,.45); }
+/* PDF 阅读器（EmbedPDF）外层样式：只负责铺满 + 主题底色 + 提示/错误浮层。
+   阅读器自己的 UI 在 shadow DOM 里，由 EmbedPDF 的主题接管（浅色/深色按 VS Code 主题传进去）。 */
 
 html, body {
   margin: 0; padding: 0; height: 100%; overflow: hidden;
@@ -9,151 +7,18 @@ html, body {
   color: var(--vscode-editor-foreground, CanvasText);
   font: 12px/1.4 var(--vscode-font-family, system-ui);
 }
-body { display: flex; flex-direction: column; }
-button, input, select {
-  font: inherit; color: var(--vscode-input-foreground, FieldText);
-  background: var(--vscode-input-background, Field);
-  border: 1px solid var(--vscode-input-border, rgba(128,128,128,.4));
-  border-radius: 4px; padding: 2px 6px;
-}
-button { cursor: pointer; background: var(--vscode-button-secondaryBackground, rgba(128,128,128,.18));
-         color: var(--vscode-button-secondaryForeground, CanvasText); }
-button:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, rgba(128,128,128,.28)); }
-button:disabled { opacity: .45; cursor: default; }
-button.primary { background: var(--vscode-button-background, #0a66c2); color: var(--vscode-button-foreground, #fff); }
-button.on { outline: 2px solid var(--vscode-focusBorder, #0a66c2); }
-button.unsupported { opacity: .55; }
+#pdfViewer { position: absolute; inset: 0; }
 
-/* ---------- 工具栏（VS Code 风格：codicon 图标 + 分组 + 细分隔线） ---------- */
-#toolbar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,.35));
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background, Canvas));
-  position: relative; z-index: 20;
-}
-#toolbar .group { display: inline-flex; align-items: center; gap: 2px; }
-#toolbar .sep { width: 1px; height: 16px; background: var(--vscode-panel-border, rgba(128,128,128,.35)); margin: 0 2px; }
-.docTitle { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.docTitle .codicon { color: var(--vscode-icon-foreground, currentColor); }
-#docName { font-weight: 600; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#docMeta, #saveState { opacity: .65; font-size: 11px; }
-#pageInput { width: 44px; text-align: center; padding: 1px 4px; }
-#pageTotal { opacity: .7; font-size: 11px; }
-#zoomValue { min-width: 40px; text-align: center; font-size: 11px; opacity: .85; }
-#color { width: 24px; height: 22px; padding: 0; border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.5)); background: none; border-radius: 3px; }
-#inkWidth { width: 48px; padding: 1px 4px; }
-
-/* 只有图标的按钮：看不见边框，hover 才显形（和 VS Code 的工具栏按钮一致） */
-.iconBtn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px;
-  background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground, CanvasText));
-}
-.iconBtn:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.22)); }
-.iconBtn:active:not(:disabled) { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,.32)); }
-.iconBtn:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0a66c2); outline-offset: -1px; }
-.iconBtn .codicon { font-size: 16px; }
-.toolBtn.on { background: var(--vscode-button-background, #0a66c2); color: var(--vscode-button-foreground, #fff); }
-.toolBtn.on:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #0a66c2); }
-#btnOcr.unsupported { opacity: .5; }
-
-/* 没有对应 codicon 的几个：用文字字形，尺寸与 codicon 对齐 */
-.glyph { display: inline-block; font: 600 13px/1 var(--vscode-font-family, system-ui); }
-.glyph.u { text-decoration: underline; text-underline-offset: 2px; }
-.glyph.tiny { font-size: 9px; letter-spacing: .3px; }
-
-/* ---------- 查找条 ---------- */
-#findBar {
-  display: none; align-items: center; gap: 6px; padding: 4px 8px;
-  background: var(--vscode-editorWidget-background, Canvas);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,.35));
-}
-#findBar.show { display: flex; }
-#findBar .findIcon { opacity: .6; }
-#findInput { flex: 0 0 240px; }
-#findCount { opacity: .8; min-width: 64px; }
-
-/* ---------- 主体 ---------- */
-#main { flex: 1 1 auto; display: flex; min-height: 0; }
-#sidebar { width: 0; overflow: hidden; border-right: 1px solid var(--vscode-panel-border, rgba(128,128,128,.35)); }
-#sidebar.open { width: 168px; display: flex; flex-direction: column; }
-#thumbs, #outline { display: none; overflow: auto; flex: 1 1 auto; padding: 6px; }
-#thumbs.show, #outline.show { display: block; }
-.thumb { cursor: pointer; margin: 0 0 8px; text-align: center; }
-.thumb:hover .thumbBox { outline: 2px solid var(--vscode-focusBorder, #0a66c2); }
-.thumbBox { display: block; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); min-height: 40px; }
-.thumbBox canvas { display: block; width: 100%; height: auto; }
-.thumbNo { font-size: 10px; opacity: .7; }
-.outlineItem { cursor: pointer; padding: 3px 6px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.outlineItem:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.2)); }
-.hint { opacity: .6; padding: 8px; }
-
-/* ---------- 页面区 ---------- */
-#viewport { flex: 1 1 auto; overflow: auto; position: relative; }
-#pages { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px; }
-.page {
-  position: relative; background: #fff; box-shadow: var(--pdf-page-shadow);
-  /* 尺寸由 JS 设内联 width/height（pt × scale） */
-}
-.pageInner { position: relative; width: 100%; height: 100%; overflow: hidden; }
-.page canvas.pageCanvas { display: block; position: absolute; inset: 0; }
-.page .textLayer { position: absolute; inset: 0; overflow: hidden; opacity: 1;
-  line-height: 1; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0;
-  z-index: 3; }
-.page .textLayer span, .page .textLayer br {
-  color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%;
-}
-.page .textLayer ::selection { background: rgba(10,102,194,.35); }
-.page .annotLayer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
-body.drawing .page .annotLayer { pointer-events: auto; cursor: crosshair; }
-.page canvas.inkCanvas { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
-.page .pageNo {
-  position: absolute; bottom: -14px; right: 2px; font-size: 10px; opacity: .45;
-}
-.page .drawPreview {
-  display: none; position: absolute; border: 1px dashed var(--vscode-focusBorder, #0a66c2);
-  background: rgba(10,102,194,.08); z-index: 6; pointer-events: none;
-}
-
-/* 批注外观 */
-.annot { position: absolute; inset: 0; pointer-events: none; }
-.annot .hl { position: absolute; background: var(--c); opacity: var(--o); mix-blend-mode: multiply; border-radius: 1px; }
-.annot .line { position: absolute; height: 0; border-top: 2px solid var(--c); opacity: var(--o); }
-.annot.strike .line { border-top-width: 2px; }
-.annot .box { position: absolute; border: 2px solid var(--c); border-radius: 2px; }
-.annot svg.arrow { position: absolute; overflow: visible; }
-.annot svg.arrow line { stroke: var(--c); stroke-width: 2; marker-end: url(#arrowHead); }
-.annot .note { position: absolute; font-size: 16px; line-height: 1; cursor: pointer; pointer-events: auto;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
-.annot .free { position: absolute; color: var(--c); white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace);
-  cursor: pointer; pointer-events: auto; }
-.annot.sel .hl, .annot.sel .box, .annot.sel .free, .annot.sel .note { outline: 2px solid var(--vscode-focusBorder, #0a66c2); }
-
-/* 搜索命中 */
-.findHit { position: absolute; background: rgba(255,213,79,.45); border-radius: 2px; pointer-events: none; z-index: 7; }
-.findHit.cur { background: rgba(255,145,0,.65); outline: 1px solid rgba(255,145,0,.9); }
-
-/* ---------- 便签/自由文本编辑框 ---------- */
-#editor {
-  display: none; position: fixed; z-index: 50; width: 280px;
-  background: var(--vscode-editorWidget-background, Canvas);
-  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.5));
-  border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.4); padding: 8px;
-}
-#editor.show { display: block; }
-#editorText { width: 100%; box-sizing: border-box; min-height: 74px; resize: vertical;
-  font-family: var(--vscode-editor-font-family, monospace); }
-#editor .row { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
-
-/* ---------- 提示 / 错误 ---------- */
 #toast {
   position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(8px);
-  background: var(--vscode-notifications-background, #333); color: var(--vscode-notifications-foreground, #fff);
+  background: var(--vscode-notifications-background, #333);
+  color: var(--vscode-notifications-foreground, #fff);
   border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4));
-  padding: 6px 12px; border-radius: 14px; opacity: 0; pointer-events: none; transition: .18s; z-index: 60;
+  padding: 6px 12px; border-radius: 14px; opacity: 0; pointer-events: none;
+  transition: .18s; z-index: 60; max-width: 70vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 #error {
   display: none; position: absolute; left: 12px; right: 12px; top: 12px; z-index: 55;
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
@@ -162,4 +27,14 @@ body.drawing .page .annotLayer { pointer-events: auto; cursor: crosshair; }
 }
 #error.show { display: block; }
 #error .row { display: flex; gap: 6px; margin-top: 8px; }
-#errorText { white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace); max-height: 30vh; overflow: auto; }
+#errorText {
+  white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace);
+  max-height: 30vh; overflow: auto; margin-top: 4px;
+}
+#error button {
+  font: inherit; padding: 3px 10px; border-radius: 4px; cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, CanvasText);
+  background: var(--vscode-button-secondaryBackground, rgba(128,128,128,.18));
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4));
+}
+#error button.primary { background: var(--vscode-button-background, #0a66c2); color: var(--vscode-button-foreground, #fff); }

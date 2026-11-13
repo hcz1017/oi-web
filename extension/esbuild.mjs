@@ -1,5 +1,5 @@
 import esbuild from "esbuild";
-import { mkdirSync, cpSync, existsSync } from "fs";
+import { mkdirSync, cpSync, existsSync, readdirSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -147,48 +147,36 @@ cpSync(path.join(HERE, "src", "node", "worker-shim.cjs"), path.join(OUT_NODE, "w
 }
 console.log("copied: dist/node/workers/{runWorker,compileWorker,debugWorker}.js + 垫片 + node 引擎");
 
-// 9) PDF 阅读器资产：pdf.js 的库 + worker + cmaps + 标准字体 + wasm（JPX/ICC）
-//    以及我们自己的 webview 端代码（原样拷贝，不做 bundle —— 它要 import pdf.min.mjs）。
-//    ⚠️ 缺文件必须报错：否则会打出一个"能打开但渲染不出来"的 VSIX。
+// 9) PDF 阅读器资产：**EmbedPDF（PDFium WASM）** 的 webview 运行时
+//    —— 和 Chrome/Edge 同一个渲染引擎；批注/板书是**标准 PDF 标注**，直接写进 PDF。
+//    snippet 的 chunk 之间是按相对路径互相 import 的，所以必须原样保持目录结构。
+//    ⚠️ 缺文件必须报错：否则会打出一个"能打开但白屏"的 VSIX。
 {
-  const pdfSrc = path.join(HERE, "node_modules", "pdfjs-dist");
-  const pdfOut = path.join(HERE, "assets", "pdf");
-  const appOut = path.join(pdfOut, "app");
-  const must = [
-    ["build/pdf.min.mjs", "build/pdf.min.mjs"],
-    ["build/pdf.worker.min.mjs", "build/pdf.worker.min.mjs"],
-  ];
-  if (!existsSync(pdfSrc)) {
-    console.error("\n✗ 缺少 pdfjs-dist（PDF 阅读器需要）。请执行：cd extension && npm install\n");
+  const embedSrc = path.join(HERE, "node_modules", "@embedpdf", "snippet", "dist");
+  const outDir = path.join(HERE, "assets", "pdf", "embedpdf");
+  const appOut = path.join(HERE, "assets", "pdf", "app");
+  if (!existsSync(embedSrc)) {
+    console.error("\n✗ 缺少 @embedpdf/snippet（PDF 阅读器需要）。请执行：cd extension && npm install\n");
     process.exit(1);
   }
+  mkdirSync(outDir, { recursive: true });
+  let copied = 0;
+  for (const f of readdirSync(embedSrc)) {
+    // 只拷运行时需要的：js chunk + wasm。跳过 demo pdf / 示例 html / 类型声明 / sourcemap
+    if (!/\.(js|wasm)$/.test(f)) continue;
+    cpSync(path.join(embedSrc, f), path.join(outDir, f));
+    copied++;
+  }
+  for (const must of ["embedpdf.js", "pdfium.wasm"]) {
+    if (!existsSync(path.join(outDir, must))) { console.error("✗ EmbedPDF 资产缺失：" + must); process.exit(1); }
+  }
   mkdirSync(appOut, { recursive: true });
-  for (const [from, to] of must) {
-    const src = path.join(pdfSrc, from);
-    if (!existsSync(src)) { console.error("✗ pdfjs 资产缺失：" + from); process.exit(1); }
-    cpSync(src, path.join(pdfOut, to));
-  }
-  for (const dir of ["cmaps", "standard_fonts", "wasm", "iccs"]) {
-    const src = path.join(pdfSrc, dir);
-    if (!existsSync(src)) { console.error("✗ pdfjs 资产目录缺失：" + dir); process.exit(1); }
-    cpSync(src, path.join(pdfOut, dir), { recursive: true });
-  }
-  // 我们的 webview 端（client.mjs 会 import ./helpers.mjs ./annot.mjs ./ocr.mjs）
-  const appFiles = ["client.mjs", "client.css", "helpers.mjs", "annot.mjs", "ocr.mjs"];
-  for (const f of appFiles) {
+  for (const f of ["client.mjs", "client.css"]) {
     const src = path.join(SRC, "pdf", f);
     if (!existsSync(src)) { console.error("✗ PDF 前端文件缺失：" + f); process.exit(1); }
     cpSync(src, path.join(appOut, f));
   }
-  // VS Code 官方图标字体（codicon）：工具栏用它，才和编辑器其它按钮一致
-  const codicons = path.join(HERE, "node_modules", "@vscode", "codicons", "dist");
-  if (!existsSync(codicons)) { console.error("✗ 缺少 @vscode/codicons（工具栏图标需要）。请 cd extension && npm install"); process.exit(1); }
-  for (const f of ["codicon.css", "codicon.ttf"]) {
-    const src = path.join(codicons, f);
-    if (!existsSync(src)) { console.error("✗ codicons 资产缺失：" + f); process.exit(1); }
-    cpSync(src, path.join(appOut, f));
-  }
-  console.log("copied: pdfjs-dist → assets/pdf/{build,cmaps,standard_fonts,wasm,iccs} + app/");
+  console.log(`copied: @embedpdf/snippet → assets/pdf/embedpdf（${copied} 个文件） + app/`);
 }
 
 console.log("bundled: extension.js / compileWorker.js / runWorker.js / clangdWorker.js / dwarfWorker.js / debugWorker.js");

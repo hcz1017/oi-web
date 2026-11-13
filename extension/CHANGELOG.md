@@ -3,34 +3,37 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
-## [0.5.0] - 2026-11-11
+## [0.5.0] - 2026-11-13
 
-### 新增：内置 PDF 阅读器（自定义编辑器）
-双击工作区里的 `.pdf`，直接在编辑器里打开（不是浏览器标签页、不是外链）：
+### 新增：内置 PDF 阅读器（引擎：EmbedPDF / PDFium）
+双击工作区里的 `.pdf`，直接在编辑器里打开（不是浏览器标签页、不是外链）。
 
-- **渲染**：pdf.js 6.x（Mozilla），逐页 canvas + **虚拟化**（大文件只渲染视野附近的页）；
-- **阅读**：连续滚动、缩放（±/适应宽度/适应页面/百分比）、旋转、页码跳转（支持 `3-5`）、
-  缩略图侧栏、大纲（书签）侧栏；
-- **文字**：官方 TextLayer —— 可选择/复制；`Ctrl+F` 搜索（高亮、命中计数、`F3`/`Shift+F3` 上下条）；
-- **批注**：高亮、下划线、删除线、便签、自由文本、矩形、箭头；拖动可框选，颜色/透明度可调；
-- **板书**：手写笔 / 荧光笔 / 橡皮（支持触控笔压感、笔宽 1–24），撤销/重做（`Ctrl+Z` / `Ctrl+Y`）；
-- **保存**：批注与板书写进 **与 PDF 同目录的 `xxx.pdf.annotations.json`**（sidecar，可版本管理、
-  可手改、桌面与网页都能写）；只读工作区写不进去时明确提示，不会静默丢；
-- 主题跟随 VS Code（浅色/深色/高对比度）；缩放与页码会记住（同一文件重开恢复）；
-- 加密 PDF 会弹密码框（webview 里 `prompt()` 被 sandbox 禁用，走宿主 `showInputBox`）；
-- 安全：`isEvalSupported:false` + `enableXfa:false`（不执行 PDF 内嵌脚本），CSP 只放行本扩展资源；
+**为什么用 EmbedPDF 而不是 pdf.js**：pdf.js 只是渲染器，没有批注、没有板书、没有"把标注写进文件"的能力；
+EmbedPDF（Apache-2.0）的引擎是 **PDFium —— Chrome/Edge 用的同一个渲染引擎**，保真度最高，且批注是
+**标准 PDF 标注**（`/Highlight`、`/Ink`、`/Text`、`/Square`…），写进文件后 Acrobat、Edge、福昕都能看见、能编辑。
+
+- **阅读**：连续滚动 + 虚拟化（大文件只渲染视野附近的页）、缩放、旋转、页码跳转、缩略图、大纲/书签；
+- **文字**：可选择/复制，搜索（命中高亮 + 计数 + 上下条）；
+- **批注**：高亮、下划线、删除线、便签、自由文本、矩形、箭头；
+- **板书**：手写笔 / 荧光笔 / 橡皮（触控笔压感），撤销重做；
+- **保存**：`Ctrl+S`（或阅读器工具栏里的保存）把批注**写回原 PDF 文件**；
+  首次写回会先在同目录留一份 `xxx.pdf.bak` 备份（网页版没有原子替换，不能拿原件冒险）；
+- 加密 PDF 由阅读器自己弹密码框；主题跟随 VS Code（浅色/深色）；
 - 被别的扩展抢了默认打开方式时：资源管理器右键 / 编辑器标题按钮「用 PDF 阅读器打开」，
   或命令面板 `WebC++: 用 PDF 阅读器打开`。
 
-### 预留：OCR 接口
-`src/web/pdf/ocr.mjs` 已定义引擎接口（`available/ocrPage/ocrPages`）与"OCR 文本并入搜索"的挂钩，
-sidecar 里也有 `ocr` 字段（不会被批注保存覆盖）。当前版本按钮显示"后续版本提供"，接入只需实现该接口。
-
 ### 工程
-- 构建期把 `pdfjs-dist` 的 `build/pdf.min.mjs`、`pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、
-  `wasm/`、`iccs/` 拷到 `assets/pdf/`（`.gitignore` 掉，和 `assets/dwarf/` 同样模式），**缺文件直接构建失败**；
-- 新增测试 30+ 项：`pdf-helpers`（缩放/适配/页码/坐标往返/搜索切词）、`pdf-annot`（增删改/撤销重做/
-  命中测试/sidecar 往返/坏数据容错）、`pdf-assets`（资产与 CSP/贡献点断言）。
+- 构建期把 `@embedpdf/snippet` 的运行时（入口 + 引擎/worker 分片 + `pdfium.wasm`，**6.6MB**）
+  拷到 `assets/pdf/embedpdf/`，`.gitignore` 掉（和 `assets/dwarf/` 同样模式），**缺文件直接构建失败**；
+- webview 里的 `<a download>` 被截获 → 改成把字节交回宿主写盘（真下载在 webview 里会被沙箱拦掉，
+  或者存进浏览器下载目录，用户根本找不到）；
+- 测试：`pdf-assets`（引擎/分片/wasm 齐不齐、CSP 有没有 `wasm-unsafe-eval`、宿主有没有备份逻辑、
+  贡献点是否注册）+ `pdf-fixture`（Node 里用 pdf.js 真解析一遍样本 PDF，防止 fixture 被改坏）；
+- 新增 `scripts/make-pdf-fixture.mjs`：生成 2 页样本 PDF（`extension/test/fixtures/sample.pdf`，带大纲）。
+
+### OCR（后续版本）
+当前未启用。批注已落进 PDF，所以将来 OCR 可以直接把识别出的文本层写进 PDF 的不可见文本层
+（而不是另存 sidecar），接口位置留在这条链路上。
 
 ## [0.4.2] - 2026-11-07
 
