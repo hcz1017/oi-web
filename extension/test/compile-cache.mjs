@@ -4,7 +4,7 @@
 //   1) 假 memento **强制 JSON 往返**（复现 vscode.dev 的 IndexedDB+JSON 行为）——
 //      直接挡住"塞 ArrayBuffer 进去、读回来变成 {}"那类 bug；
 //   2) 覆盖命中/未命中、key 隔离、LRU 淘汰、超限跳过、坏数据容错。
-import { createCompileCache, b64enc, b64dec } from "../src/web/compile-cache.js";
+import { createCompileCache, b64enc, b64dec, CACHE_KEY } from "../src/web/compile-cache.js";
 
 /** 造一段**合法**的假 wasm（缓存会校验 \0asm magic，随便的字节会被当坏条目） */
 const mk = (n, fill = 0) => {
@@ -72,20 +72,22 @@ const log = (s) => logs.push(s);
   must(cache.get("dbg:O0").wasm.length === 11 && cache.get("dbg:O2").wasm.length === 12, "调试/运行、不同优化级各自独立");
 }
 
-// ---------- 4. LRU：最多 4 条 ----------
+// ---------- 4. LRU：最多 6 条（调试产物 3.6MB，3 条会被对拍/运行挤掉）----------
 {
   const cache = createCompileCache(fakeMemento(), { log });
-  for (let i = 0; i < 7; i++) cache.put("k" + i, mk(8, i), i);
-  must(cache.size() === 3, `LRU 只保留 3 条（实际 ${cache.size()}）`);
+  for (let i = 0; i < 9; i++) cache.put("k" + i, mk(8, i), i);
+  must(cache.size() === 6, `LRU 只保留 6 条（实际 ${cache.size()}）`);
   must(cache.get("k6") !== null, "最新的那条在");
   must(cache.get("k0") === null, "最老的被淘汰");
 }
 
-// ---------- 5. 超过 12MB 不缓存 ----------
+// ---------- 5. 超过 24MB 不缓存（调试产物实测 3.6MB，24MB 给了充足余量） ----------
 {
   const cache = createCompileCache(fakeMemento(), { log });
-  const huge = new Uint8Array(13 * 1024 * 1024);
-  must(cache.put("big", huge, 1) === false, "超过 12MB 拒绝缓存");
+  const ok = new Uint8Array(13 * 1024 * 1024);      // 13MB：以前会被拒，现在应当接受
+  must(cache.put("mid", ok, 1) === true, "13MB 可以缓存（旧上限 12MB 会拒掉）");
+  const huge = new Uint8Array(25 * 1024 * 1024);
+  must(cache.put("big", huge, 1) === false, "超过 24MB 拒绝缓存");
   must(cache.get("big") === null, "超限的那条确实没进去");
 }
 
@@ -128,6 +130,34 @@ const log = (s) => logs.push(s);
   const half = Buffer.from([0x00, 0x61, 0x73]).toString("base64");
   m.update("oiCpp.compileCache.v2", { entries: { h: { b64: half, ms: 1, t: 1 } } });
   must(createCompileCache(m, { log: () => {} }).get("h") === null, "magic 不完整（3 字节）→ 当作未命中");
+}
+
+
+// ---------- 10. 命中要刷新 recency（真 LRU；以前只有 put 刷新） ----------
+{
+  const m = fakeMemento();
+  const cache = createCompileCache(m, { log: () => {} });
+  for (let i = 0; i < 6; i++) cache.put("h" + i, mk(8, i), i);   // 写满 6 条
+  must(cache.get("h0") !== null, "h0 先命中一次（应把它提到最新）");
+  cache.put("new", mk(8, 9), 9);                                  // 触发淘汰
+  must(cache.size() === 6, "仍然 6 条");
+  must(cache.get("h0") !== null, "刚用过的 h0 不能被淘汰（旧实现会被淘汰）");
+  must(cache.get("h1") === null, "该淘汰的是最久没用的 h1");
+}
+
+// ---------- 11. L1 内存缓存：命中不依赖 base64 往返 ----------
+{
+  const m = fakeMemento();
+  const cache = createCompileCache(m, { log: () => {} });
+  const u8 = mk(16, 7);
+  cache.put("l1", u8, 5);
+  // 把 memento 里的 b64 弄坏：如果还命中，说明走的是 L1（而不是解码）
+  m.update(CACHE_KEY, { entries: { l1: { b64: "!!!broken!!!", ms: 5, t: 1 } } });
+  const hit = cache.get("l1");
+  must(hit && hit.wasm.length === u8.length, "L1 命中（memento 被改坏也不影响）");
+
+  const cache2 = createCompileCache(fakeMemento(), { log: () => {} });   // 新实例 → L1 为空
+  must(cache2.get("l1") === null, "换实例后 L1 为空（不会串数据）");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");

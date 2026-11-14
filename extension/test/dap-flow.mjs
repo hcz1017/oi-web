@@ -235,6 +235,26 @@ await waitFor((m) => m.type === "response" && m.command === "disconnect");
     return null;
   };
   const [r1, r2] = await Promise.all([waitResp(one.m), waitResp(two.m)]);
+  // ---- 第三次（串行）：同一份产物 + 同一个引擎 → 必须命中"准备缓存" ----
+  // 这是 F5 慢的关键：DWARF 解析 + 插桩（addRawModule/getMappedLines/instrumentWasm）
+  // 以前每次 F5 都重做一遍，现在按产物内容缓存。
+  {
+    const logs = [];
+    const a3 = new WasmDebugAdapter({
+      target, getEngine: async () => engine,
+      compile: (args) => tc.compile(args),
+      workerUrl: path.join(EXT, "dist/web/debugWorker.js"),
+      log: (x) => logs.push(String(x)),
+    });
+    const msgs = [];
+    a3.onDidSendMessage((x) => msgs.push(x));
+    a3.handleMessage({ type: "request", seq: 300, command: "launch", arguments: {} });
+    const r3 = await waitResp(msgs);
+    must(!!r3 && r3.success, `第三次 launch 成功${r3 && !r3.success ? " / " + r3.message : ""}`);
+    must(logs.some((l) => /命中准备缓存/.test(l)), "第三次 launch 命中「准备缓存」（跳过 DWARF 解析 + 插桩）");
+    a3.dispose();
+  }
+
   must(!!r1 && r1.success && !!r2 && r2.success,
     `两个会话并发 launch 都成功（module id 不冲突）${r1 && !r1.success ? " / " + r1.message : ""}${r2 && !r2.success ? " / " + r2.message : ""}`);
   one.a.dispose(); two.a.dispose();

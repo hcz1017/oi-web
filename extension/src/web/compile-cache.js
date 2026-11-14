@@ -30,8 +30,14 @@ export function b64dec(b64) {
 }
 
 export const CACHE_KEY = "oiCpp.compileCache.v2";   // v1 存的是 ArrayBuffer（永远是坏的）
-const MAX_ENTRIES = 3;
-const MAX_BYTES = 12 * 1024 * 1024;
+// ⚠️ 上限别太小：调试产物实测 3.2–3.6MB（-O0 -g + 桩），而 `dbg:` 键本来就有好几种口径
+//    （F5 / 符号探针 / 对拍面板各一套参数），3 条会互相淘汰 —— 表现就是
+//    "运行能缓存、调试不缓存"。6 条 + 24MB 足够覆盖"运行/调试/对拍"混用的场景。
+const MAX_ENTRIES = 6;
+const MAX_BYTES = 24 * 1024 * 1024;
+// L1：进程内直接存 Uint8Array，命中时省掉 base64 解码（3.6MB → 4.8MB 字符串，来回都要走一遍）
+const L1_MAX_ENTRIES = 6;
+const L1_MAX_BYTES = 48 * 1024 * 1024;
 
 /**
  * @param {{get:Function, update:Function}} memento 通常就是 ctx.globalState
@@ -44,6 +50,32 @@ export function createCompileCache(memento, opts = {}) {
   //    从 Date.now() 起步是为了和上一个会话存下来的 t 保持可比（跨重启仍然按新旧排序）。
   let tick = Date.now();
   let mem = null;
+  // L1 内存缓存：key → { wasm, ms }（不做 base64，命中直接返回同一份字节）
+  const l1 = new Map();
+  let l1Bytes = 0;
+  const l1Get = (k) => {
+    const e = l1.get(k);
+    if (!e) return null;
+    // ⚠️ 调用方可能把产物 buffer transfer 给 worker（transfer 后 byteLength 变 0）。
+    //    母本一旦被转移，这条 L1 就废了 —— 当作未命中并清掉。
+    if (!e.wasm || e.wasm.byteLength === 0) { l1Bytes -= (e.wasm ? e.wasm.length : 0); l1.delete(k); return null; }
+    // 命中即提到队尾（真正的 LRU）
+    l1.delete(k); l1.set(k, e);
+    // 每次都返回**副本**：调用方可能会 transfer/改写，母本必须保持干净
+    return { wasm: new Uint8Array(e.wasm), ms: e.ms };
+  };
+  const l1Put = (k, wasm, ms) => {
+    if (wasm.length > MAX_BYTES) return;
+    if (l1.has(k)) { l1Bytes -= l1.get(k).wasm.length; l1.delete(k); }
+    // 母本另存一份（不与被 transfer 的那份共享 buffer）
+    l1.set(k, { wasm: new Uint8Array(wasm), ms: ms || 0 });
+    l1Bytes += wasm.length;
+    while (l1.size > L1_MAX_ENTRIES || l1Bytes > L1_MAX_BYTES) {
+      const oldest = l1.keys().next().value;
+      l1Bytes -= l1.get(oldest).wasm.length;
+      l1.delete(oldest);
+    }
+  };
   const load = () => {
     if (mem) return mem;
     try { mem = memento.get(CACHE_KEY, { entries: {} }); } catch { mem = { entries: {} }; }
@@ -53,10 +85,37 @@ export function createCompileCache(memento, opts = {}) {
     return mem;
   };
 
+  // 命中即刷新 recency：以前只有 put 才 ++tick，get 命中不刷新 →
+  // 淘汰的是"最久没被**写入**"的，而不是"最久没被**使用**"的。
+  // 正在反复使用的调试产物会被一次对拍写入挤掉，表现就是"调试永远不缓存"。
+  let touchTimer = null;
+  const markTouched = (k) => {
+    const m = load();
+    const e = m.entries[k];
+    if (!e) return;
+    e.t = ++tick;
+    if (touchTimer) return;
+    touchTimer = setTimeout(() => {
+      touchTimer = null;
+      try {
+        const p = memento.update(CACHE_KEY, m);
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      } catch {}
+    }, 1000);
+    if (touchTimer && typeof touchTimer.unref === "function") touchTimer.unref();
+  };
+
   return {
     /** @returns {{wasm:Uint8Array, ms:number}|null} */
     get(k) {
       if (!k) return null;
+      // L1 命中：不碰 base64/memento
+      const hot = l1Get(k);
+      if (hot) {
+        log(`缓存命中(L1) ${k}（${(hot.wasm.length / 1048576).toFixed(1)}MB）`);
+        markTouched(k);
+        return { wasm: hot.wasm, ms: hot.ms };
+      }
       const e = load().entries[k];
       if (!e || typeof e.b64 !== "string" || !e.b64) return null;
       try {
@@ -82,6 +141,7 @@ export function createCompileCache(memento, opts = {}) {
         if (wasm.length > MAX_BYTES) { log(`产物 ${(wasm.length / 1048576).toFixed(1)}MB 超过缓存上限，跳过`); return false; }
         const m = load();
         m.entries[k] = { b64: b64enc(wasm), ms: ms || 0, t: ++tick };
+        l1Put(k, wasm, ms);
         const keys = Object.keys(m.entries).sort((a, b) => (m.entries[b].t || 0) - (m.entries[a].t || 0));
         while (keys.length > MAX_ENTRIES) delete m.entries[keys.pop()];
         const p = memento.update(CACHE_KEY, m);
