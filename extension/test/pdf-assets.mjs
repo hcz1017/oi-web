@@ -31,7 +31,8 @@ must(!existsSync(path.join(EMBED, "demo.pdf")) && !existsSync(path.join(EMBED, "
   "没有把 demo.pdf / index.html 打进资产");
 {
   const css = readFileSync(path.join(PDF, "app", "client.css"), "utf8");
-  must(/#saveBar/.test(css) && /#saveStatus/.test(css), "保存条样式在（含未保存/保存中/已保存状态色）");
+  must(/#saveBar/.test(css) && /#saveStatus/.test(css), "保存条样式在（含保存中/已保存/失败状态色）");
+  must(/#saveBar \{[\s\S]{0,120}bottom:/.test(css), "保存条在右下角（不压住阅读器工具栏）");
 }
 
 // ---------- 我们的 webview 薄壳 ----------
@@ -47,11 +48,9 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/savePdf/.test(client), "client.mjs 通过 savePdf 把字节交回宿主");
   must(/saveAsCopy|download/.test(client), "client.mjs 走 export 插件的导出能力取字节");
   must(/patchDownloadInterception/.test(client), "截获了 <a download>（webview 里真下载会被沙箱拦）");
-  // 统一保存入口 + 自动保存（用户明确要求：不能只有 Ctrl+S）
+  // 统一保存入口；**不自动保存**（用户明确要求：只在点按钮/Ctrl+S 时写盘）
   must(/buildSaveBar/.test(client) && /saveBtn/.test(client), "有统一的可见保存按钮");
-  must(/AUTOSAVE_DELAY/.test(client) && /markDirty/.test(client), "有自动保存（批注变化 → 防抖写回）");
-  must(/onAnnotationEvent/.test(client), "订阅了批注变更事件");
-  must(/visibilitychange|\"blur\"/.test(client), "切走/失焦前会补一次保存");
+  must(!/AUTOSAVE_DELAY|markDirty/.test(client), "没有自动保存（只在点按钮/Ctrl+S 时写盘）");
 }
 
 // ---------- 宿主侧 HTML 模板：CSP / 资源 ----------
@@ -64,7 +63,11 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/pdfium\.wasm/.test(provider), "HTML 注入了 pdfium.wasm 的 URL");
   must(/client\.mjs/.test(provider) && /client\.css/.test(provider), "HTML 引用了 app/client.mjs 与 client.css");
   must(/savePdf/.test(provider) && /writeFile/.test(provider), "宿主侧处理 savePdf 并写盘");
-  must(/BACKUP_SUFFIX|\.bak/.test(provider), "写回前会备份原文件（网页版没有原子替换）");
+  must(/history\.snapshot/.test(provider), "写回前先存快照（替代 .bak）");
+  const providerCode = provider.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  must(!/BACKUP_SUFFIX|backupOf|\.pdf\.bak/.test(providerCode), "不再生成 .bak 文件（备份进 VS Code 时间线）");
+  const clientSrc = readFileSync(path.join(PDF, "app", "client.mjs"), "utf8");
+  must(/makeDraggable/.test(clientSrc) && /saveBar/.test(clientSrc), "保存条可拖动（位置记在 state 里）");
 }
 
 // ---------- package.json 贡献点 ----------
@@ -80,6 +83,15 @@ for (const f of ["client.mjs", "client.css"]) {
   const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
   must(!!deps["@embedpdf/snippet"], "构建依赖里有 @embedpdf/snippet");
   must(!deps["pdfjs-dist"] || /fixture/i.test(JSON.stringify(pkg.scripts || {})), "pdfjs-dist 只作为测试用途（引擎已换成 PDFium）");
+  // 时间线（快照回滚）三件套：纯逻辑、vscode 胶水、注册时机
+  const histCore = readFileSync(path.join(EXT, "src", "web", "pdf", "history-core.mjs"), "utf8");
+  const histGlue = readFileSync(path.join(EXT, "src", "web", "pdf", "history.js"), "utf8");
+  const ext = readFileSync(path.join(EXT, "src", "web", "extension.js"), "utf8");
+  must(/createHistoryStore/.test(histCore) && /pickPrune/.test(histCore), "快照核心：仓库 + 裁剪逻辑在");
+  must(/registerTimelineProvider/.test(histGlue), "注册了 VS Code 时间线提供者");
+  must(/registerTimelineProvider"|typeof register !== "function"/.test(histGlue), "对没有时间线 API 的宿主做了能力探测");
+  must(/RESTORE_COMMAND/.test(histGlue) && /snapshot\(uri\.toString\(\), current\)/.test(histGlue), "恢复前会先给当前版本留快照（可反悔）");
+  must(/createPdfHistory/.test(ext) && /registerPdfTimeline/.test(ext), "激活时接上了快照仓库与时间线");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");

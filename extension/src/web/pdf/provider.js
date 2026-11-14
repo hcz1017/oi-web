@@ -6,13 +6,10 @@ import * as vscode from "vscode";
 import * as platform from "oi-platform";
 
 export const PDF_VIEW_TYPE = "webcpp.pdf";
-const BACKUP_SUFFIX = ".bak";
 
 class PdfDocument {
   constructor(uri) {
     this.uri = uri;
-    /** 本次会话是否已经备份过（同一份 PDF 只备份一次，别把 .bak 刷成最新批注版本） */
-    this.backedUp = false;
   }
   dispose() { }
 }
@@ -22,7 +19,8 @@ class PdfDocument {
  * @param {vscode.ExtensionContext} ctx
  * @returns {vscode.Disposable}
  */
-export function registerPdfViewer(ctx) {
+export function registerPdfViewer(ctx, deps = {}) {
+  const history = deps.history || null;
   const provider = {
     async openCustomDocument(uri) {
       return new PdfDocument(uri);
@@ -56,26 +54,25 @@ export function registerPdfViewer(ctx) {
           return;
         }
 
-        // 把（带批注的）PDF 写回原文件。⚠️ 先备份：网页版没有原子替换，写一半失败就毁了原件
+        // 把（带批注的）PDF 写回原文件。
+        // ⚠️ 写之前先把"当前版本"存成快照（出现在 VS Code 的"时间线"里），
+        //    这样不需要 .bak 文件也能回滚；快照存不下就不写 —— 绝不冒险覆盖原件。
         if (m.type === "savePdf") {
           try {
             const data = toBytes(m.bytes);
-            let backup = null;
-            if (!document.backedUp) {
+            let snapshot = null;
+            if (history) {
               try {
                 const old = bytes || await vscode.workspace.fs.readFile(document.uri);
-                await vscode.workspace.fs.writeFile(backupOf(document.uri), old);
-                backup = fileName + BACKUP_SUFFIX;
-                document.backedUp = true;
+                snapshot = await history.snapshot(document.uri.toString(), old);
               } catch (e) {
-                // 备份失败就不写了 —— 宁可让用户看到错误，也不能冒险覆盖原件
-                send({ type: "saved", ok: false, error: "备份失败，已放弃写入：" + ((e && e.message) || e) });
+                send({ type: "saved", ok: false, error: "快照失败，已放弃写入：" + ((e && e.message) || e) });
                 return;
               }
             }
             await vscode.workspace.fs.writeFile(document.uri, data);
             bytes = data;                     // 后续再次保存时用最新内容
-            send({ type: "saved", ok: true, backup });
+            send({ type: "saved", ok: true, snapshot });
           } catch (e) {
             send({ type: "saved", ok: false, error: String((e && e.message) || e) });
           }
@@ -116,10 +113,6 @@ function toBytes(v) {
   if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
   if (Array.isArray(v)) return new Uint8Array(v);          // 兜底：极端情况会退化成普通数组
   throw new Error("收到的 PDF 数据不是二进制");
-}
-
-function backupOf(uri) {
-  return uri.with({ path: uri.path + BACKUP_SUFFIX });
 }
 
 function buildHtml(webview, extensionUri) {
