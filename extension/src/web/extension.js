@@ -1393,11 +1393,11 @@ export async function activate(c) {
       // 快照仓库（取代 .bak：写回前的版本进 VS Code 的「时间线」，可回滚）
       const pdfHistory = createPdfHistory(c);
       c.subscriptions.push(registerPdfViewer(c, { history: pdfHistory }));
-      const timeline = registerPdfTimeline(c, pdfHistory);
+      const timeline = registerPdfTimeline(c, pdfHistory, (t) => logLine(t));
       c.subscriptions.push({ dispose() { try { timeline.dispose(); } catch { } } });
       logLine(timeline.supported
         ? "PDF 快照时间线已注册（保存前的版本可在「时间线」里回滚）"
-        : "⚠ 当前 VS Code 不支持时间线 API：PDF 保存仍可用，但没有可回滚的快照");
+        : "⚠ 时间线注册失败（PDF 保存仍可用，但没有可回滚的快照）: " + (timeline.error || "宿主不支持该 API"));
 
       c.subscriptions.push(vscode.commands.registerCommand("oiCpp.openPdf", async (arg) => {
         // 支持从资源管理器右键（传 uri）和编辑器标题（无参 → 用当前/选中的 pdf）

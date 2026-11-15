@@ -53,7 +53,7 @@ export function createPdfHistory(ctx) {
  * @param {ReturnType<typeof createPdfHistory>} history
  * @returns {vscode.Disposable}
  */
-export function registerPdfTimeline(ctx, history) {
+export function registerPdfTimeline(ctx, history, log = () => { }) {
   const subs = [];
 
   // 恢复命令：把某个快照写回 PDF（恢复前先给"当前版本"再留一份快照，所以恢复也能反悔）
@@ -70,39 +70,75 @@ export function registerPdfTimeline(ctx, history) {
     }
   }));
 
-  // 时间线提供者：不同 VS Code 版本/宿主的支持情况不同，这里做能力探测
+  // 兜底入口：即使时间线视图不显示（宿主差异），也能从命令面板找到快照
+  subs.push(vscode.commands.registerCommand("oiCpp.pdf.listSnapshots", async () => {
+    const uri = pickPdfUri();
+    if (!uri) { vscode.window.showInformationMessage("先打开或选中一个 .pdf 文件"); return; }
+    const list = await history.list(uri.toString());
+    if (!list.length) { vscode.window.showInformationMessage("这个 PDF 还没有快照（保存一次批注后就会有）"); return; }
+    const pick = await vscode.window.showQuickPick(
+      list.map((s) => ({ label: "批注保存前 " + new Date(s.ts).toLocaleString(), description: s.name, name: s.name })),
+      { title: "PDF 快照（选一个恢复）", placeHolder: "越靠上越新" },
+    );
+    if (!pick) return;
+    await vscode.commands.executeCommand(RESTORE_COMMAND, uri.toString(), pick.name);
+  }));
+
+  // 时间线提供者：不同 VS Code 版本/宿主的支持情况不同，这里做能力探测。
+  //
+  // ⚠️ 真实签名是 registerTimelineProvider(id, **label**, provider, options?)，第二个参数是
+  //    显示在「时间线」里的来源名称（字符串），**不是 provider**。曾经把它当 provider 传进去，
+  //    注册直接抛错、又被下面的 catch 吞掉，表现就是"时间线永远是空的"。
   const register = vscode.window.registerTimelineProvider;
   if (typeof register !== "function") {
     return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: false };
   }
-  try {
-    subs.push(register(PDF_TIMELINE_ID, {
-      async provideTimeline(uri) {
-        if (!/\.pdf$/i.test(uri.path)) return { items: [] };
-        const list = await history.list(uri.toString());
-        return {
-          items: list.map((s) => ({
-            id: s.name,
-            label: "批注保存前 " + new Date(s.ts).toLocaleString(),
-            timestamp: s.ts,
-            description: "写回前自动留的快照",
-            contextValue: "pdfSnapshot",
-            command: {
-              title: "恢复此版本",
-              command: RESTORE_COMMAND,
-              arguments: [uri.toString(), s.name],
-            },
-          })),
-        };
-      },
-    }, { supportsResolving: false }));
-  } catch (e) {
-    // 老版本 VS Code 没有这个 API：功能降级（保存照常，只是没有时间线条目）
-    return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: false, error: String((e && e.message) || e) };
+  const provider = {
+    async provideTimeline(uri) {
+      if (!/\.pdf$/i.test(uri.path)) return { items: [] };
+      const list = await history.list(uri.toString());
+      log(`[timeline] ${uri.path.split("/").pop()} → ${list.length} 条快照`);
+      return {
+        items: list.map((s) => ({
+          id: s.name,
+          label: "批注保存前 " + new Date(s.ts).toLocaleString(),
+          timestamp: s.ts,
+          description: "写回前自动留的快照（点一下可恢复）",
+          contextValue: "pdfSnapshot",
+          command: {
+            title: "恢复此版本",
+            command: RESTORE_COMMAND,
+            arguments: [uri.toString(), s.name],
+          },
+        })),
+      };
+    },
+  };
+  let registered = false;
+  let lastError = "";
+  const attempts = [
+    () => register(PDF_TIMELINE_ID, "PDF 快照", provider, { supportsResolving: false }),  // 现行签名
+    () => register(PDF_TIMELINE_ID, provider, { supportsResolving: false }),              // 老签名兜底
+  ];
+  for (const attempt of attempts) {
+    try { subs.push(attempt()); registered = true; break; } catch (e) { lastError = String((e && e.message) || e); }
   }
-
+  if (!registered) {
+    return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: false, error: lastError };
+  }
   return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: true };
 }
 
 /** 供日志/诊断用：某文件在仓库里的目录名 */
 export function historyKey(uri) { return keyOf(uri.toString()); }
+
+/** 找一个可用于 PDF 快照操作的 Uri（当前编辑器 / 资源管理器选中项） */
+function pickPdfUri() {
+  const ed = vscode.window.activeTextEditor;
+  if (ed && /\.pdf$/i.test(ed.document.uri.path)) return ed.document.uri;
+  const sel = vscode.window.tabGroups && vscode.window.tabGroups.activeTabGroup
+    ? vscode.window.tabGroups.activeTabGroup.activeTab : null;
+  const input = sel && sel.input;
+  if (input && input.uri && /\.pdf$/i.test(input.uri.path)) return input.uri;
+  return null;
+}

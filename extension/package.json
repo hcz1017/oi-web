@@ -91,6 +91,12 @@
         "title": "用 PDF 阅读器打开",
         "category": "WebC++",
         "icon": "$(file-pdf)"
+      },
+      {
+        "command": "oiCpp.pdf.listSnapshots",
+        "title": "查看/恢复 PDF 快照",
+        "category": "WebC++",
+        "icon": "$(history)"
       }
     ],
     "menus": {
