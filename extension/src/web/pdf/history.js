@@ -45,7 +45,8 @@ function toBytes(v) {
  */
 export function createPdfHistory(ctx) {
   const root = vscode.Uri.joinPath(ctx.globalStorageUri, "pdf-history");
-  return createHistoryStore(fsAdapter(root), root.path, { keep: 20 });
+  // 每个文件只保留最近 10 份快照（用户要求；更早的自动淘汰）
+  return createHistoryStore(fsAdapter(root), root.path, { keep: 10 });
 }
 
 /**

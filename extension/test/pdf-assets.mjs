@@ -88,6 +88,7 @@ for (const f of ["client.mjs", "client.css"]) {
   const histGlue = readFileSync(path.join(EXT, "src", "web", "pdf", "history.js"), "utf8");
   const ext = readFileSync(path.join(EXT, "src", "web", "extension.js"), "utf8");
   must(/createHistoryStore/.test(histCore) && /pickPrune/.test(histCore), "快照核心：仓库 + 裁剪逻辑在");
+  must(/keep:\s*10/.test(histGlue), "每个文件只保留最近 10 份快照");
   must(/workspace\.registerTimelineProvider/.test(histGlue), "用的是官方 API：workspace.registerTimelineProvider（不是 window.*）");
   must(/register\(PDF_TIMELINE_ID, "PDF 快照", "\*", provider\)/.test(histGlue),
     '按 (id, label, "*", provider) 四参注册（scheme 只能传 "*"，传 "" 会被 workbench 过滤掉）');
