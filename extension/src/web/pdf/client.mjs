@@ -28,6 +28,7 @@ vscode.postMessage({ type: "ready" });
 window.addEventListener("message", (ev) => {
   const m = ev.data || {};
   if (m.type === "load") onLoad(m).catch(fatal);
+  if (m.type === "reload") reloadDoc(m).catch(fatal);
   if (m.type === "saved") onSaved(m);
 });
 
@@ -50,6 +51,11 @@ async function onLoad({ bytes, name }) {
     fontFallback: null,               // 关掉默认的 jsDelivr 字体回退：离线也要能用
     theme: { preference: dark ? "dark" : "light" },
     i18n: { defaultLocale: "zh-CN" },
+    // ⚠️ 关掉两个会联网的默认项（否则 CSP 里天天报 Refused to connect）：
+    //    · fonts：UI 字体默认从 Google Fonts 拉
+    //    · stamp.defaultLibrary：印章库默认从 jsDelivr 拉 manifest
+    fonts: { ui: null, signature: null },
+    stamp: { defaultLibrary: false },
   });
   state.viewer = viewer;
   if (!viewer) throw new Error("EmbedPDF 初始化失败（返回空）");
@@ -60,6 +66,19 @@ async function onLoad({ bytes, name }) {
     throw new Error("EmbedPDF 插件注册失败：" + ((e && e.message) || e));
   }
   setStatus("已保存", "idle");
+}
+
+/** 重新读入同一份 PDF（恢复快照、或文件被外部改动时用，不用关掉再开） */
+async function reloadDoc({ bytes, name }) {
+  try { state.viewer?.destroy?.(); } catch { }
+  state.viewer = null;
+  state.registry = null;
+  const target = $("pdfViewer");
+  if (target) target.innerHTML = "";
+  if (state.srcUrl) { try { URL.revokeObjectURL(state.srcUrl); } catch { } state.srcUrl = null; }
+  await onLoad({ bytes, name: name || state.name });
+  setStatus("已重新载入", "saved");
+  state.lastSaved = Date.now();
 }
 
 // ---------------------------------------------------------------- 保存条（统一入口）

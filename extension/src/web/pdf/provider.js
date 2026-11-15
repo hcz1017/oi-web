@@ -7,6 +7,20 @@ import * as platform from "oi-platform";
 
 export const PDF_VIEW_TYPE = "webcpp.pdf";
 
+/** 打开着的 PDF 面板（uri 字符串 → 重载函数）。恢复快照/文件被外部改动时用它刷新 */
+const panels = new Map();
+
+/** 让某个 PDF 的所有已打开面板重新读取文件（不关编辑器也能看到新内容） */
+export async function reloadPdfPanels(uriString) {
+  const set = panels.get(String(uriString));
+  if (!set) return 0;
+  let n = 0;
+  for (const reload of [...set]) {
+    try { await reload(); n++; } catch { }
+  }
+  return n;
+}
+
 class PdfDocument {
   constructor(uri) {
     this.uri = uri;
@@ -44,6 +58,28 @@ export function registerPdfViewer(ctx, deps = {}) {
       } catch (e) {
         loadError = String((e && e.message) || e);
       }
+
+      // 登记面板：供"恢复快照 / 外部改动"时热重载
+      const reload = async () => {
+        try {
+          const fresh = await vscode.workspace.fs.readFile(document.uri);
+          bytes = fresh;
+          send({ type: "reload", bytes: fresh, name: fileName });
+        } catch (e) {
+          send({ type: "saved", ok: false, error: "重新读取失败：" + ((e && e.message) || e) });
+        }
+      };
+      const key = document.uri.toString();
+      if (!panels.has(key)) panels.set(key, new Set());
+      panels.get(key).add(reload);
+
+      // 文件被外部改动（比如用系统阅读器另存）时也自动刷新
+      let watcher = null;
+      try {
+        const dirUri = document.uri.with({ path: document.uri.path.replace(/\/[^/]*$/, "") });
+        watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dirUri, fileName));
+        watcher.onDidChange((u) => { if (u.toString() === key) reload(); });
+      } catch { /* 虚拟工作区不支持 watcher 就跳过 */ }
 
       const sub = webview.onDidReceiveMessage(async (m) => {
         if (!m || !m.type) return;
@@ -96,7 +132,12 @@ export function registerPdfViewer(ctx, deps = {}) {
         }
       });
 
-      panel.onDidDispose(() => { try { sub.dispose(); } catch { } });
+      panel.onDidDispose(() => {
+        try { sub.dispose(); } catch { }
+        try { watcher && watcher.dispose(); } catch { }
+        const s = panels.get(key);
+        if (s) { s.delete(reload); if (!s.size) panels.delete(key); }
+      });
     },
   };
 

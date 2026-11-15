@@ -6,6 +6,7 @@
 // 快照放在扩展的 globalStorage 里（每用户一份，不污染工作区、不会被 git 同步）。
 import * as vscode from "vscode";
 import { createHistoryStore, keyOf } from "./history-core.mjs";
+import { reloadPdfPanels } from "./provider.js";
 
 export const PDF_TIMELINE_ID = "webcpp.pdf-history";
 export const RESTORE_COMMAND = "oiCpp.pdf.restoreSnapshot";
@@ -64,7 +65,11 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
       const current = await vscode.workspace.fs.readFile(uri);
       await history.snapshot(uri.toString(), current);
       await vscode.workspace.fs.writeFile(uri, toBytes(bytes));
-      vscode.window.showInformationMessage(`已恢复到 ${snapshotName}（恢复前的版本也留在时间线里）`);
+      // 打开着的阅读器直接热重载，不用关掉再开
+      const n = await reloadPdfPanels(uri.toString());
+      vscode.window.showInformationMessage(
+        `已恢复到 ${snapshotName}（恢复前的版本也留在时间线里）` + (n ? "，已自动刷新阅读器" : ""),
+      );
     } catch (e) {
       vscode.window.showErrorMessage("恢复失败：" + ((e && e.message) || e));
     }
