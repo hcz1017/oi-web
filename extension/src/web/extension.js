@@ -23,7 +23,7 @@ import { TestCaseStore, normalizeTimeout } from "./testcases.js";
 import { createRunner } from "./testrunner.js";
 import { createTestViewProvider } from "./testpanel.js";
 import { registerPdfViewer, PDF_VIEW_TYPE } from "./pdf/provider.js";
-import { createPdfHistory, registerPdfTimeline } from "./pdf/history.js";
+import { createPdfHistory, registerPdfTimeline, registerPdfSnapshotsView } from "./pdf/history.js";
 
 const TERM_NAME = "WebC++ (WASM)";
 const SAB_SIZE = 8 + 64 * 1024;
@@ -1395,6 +1395,9 @@ export async function activate(c) {
       c.subscriptions.push(registerPdfViewer(c, { history: pdfHistory }));
       const timeline = registerPdfTimeline(c, pdfHistory, (t) => logLine(t));
       c.subscriptions.push({ dispose() { try { timeline.dispose(); } catch { } } });
+      // 树视图兜底：Timeline 视图在网页宿主里不一定显示，这个一定能看见、能点
+      try { c.subscriptions.push(registerPdfSnapshotsView(c, pdfHistory, (t) => logLine(t))); }
+      catch (e) { logLine("⚠ PDF 快照视图注册失败: " + ((e && e.message) || e)); }
       logLine(timeline.supported
         ? "PDF 快照时间线已注册（保存前的版本可在「时间线」里回滚）"
         : "⚠ 时间线注册失败（PDF 保存仍可用，但没有可回滚的快照）: " + (timeline.error || "宿主不支持该 API"));

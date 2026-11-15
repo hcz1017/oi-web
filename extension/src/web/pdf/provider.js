@@ -53,6 +53,8 @@ export function registerPdfViewer(ctx, deps = {}) {
 
       let bytes = null;
       let loadError = null;
+      /** 我们自己上一次写盘的时间（用来忽略"自己触发"的 watcher 事件） */
+      let lastSelfWrite = 0;
       try {
         bytes = await vscode.workspace.fs.readFile(document.uri);
       } catch (e) {
@@ -78,7 +80,14 @@ export function registerPdfViewer(ctx, deps = {}) {
       try {
         const dirUri = document.uri.with({ path: document.uri.path.replace(/\/[^/]*$/, "") });
         watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dirUri, fileName));
-        watcher.onDidChange((u) => { if (u.toString() === key) reload(); });
+        watcher.onDidChange((u) => {
+          if (u.toString() !== key) return;
+          // ⚠️ 保存时我们自己写盘也会触发 watcher：以前这里无脑 reload，
+          //    结果"每存一次就整页重新载入"（滚动位置、选中、缩放全丢）。
+          //    只对真正的外部改动刷新。
+          if (Date.now() - lastSelfWrite < 4000) return;
+          reload();
+        });
       } catch { /* 虚拟工作区不支持 watcher 就跳过 */ }
 
       const sub = webview.onDidReceiveMessage(async (m) => {
@@ -106,6 +115,7 @@ export function registerPdfViewer(ctx, deps = {}) {
                 return;
               }
             }
+            lastSelfWrite = Date.now();
             await vscode.workspace.fs.writeFile(document.uri, data);
             bytes = data;                     // 后续再次保存时用最新内容
             try { history.notifyChanged?.(document.uri.toString()); } catch { }
@@ -170,7 +180,8 @@ function buildHtml(webview, extensionUri) {
     // EmbedPDF 的 pdfium worker 走 blob；主线程 chunk 走 cspSource
     `worker-src blob: ${webview.cspSource}`,
     `font-src data: ${webview.cspSource}`,
-    `connect-src blob: data: ${webview.cspSource}`,
+    // 印章库清单默认从 jsDelivr 拉（可选功能）：放行它，避免控制台一直报 CSP
+    `connect-src blob: data: https://cdn.jsdelivr.net ${webview.cspSource}`,
   ].join("; ");
 
   return `<!DOCTYPE html><html lang="zh-CN"><head>

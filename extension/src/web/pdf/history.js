@@ -149,3 +149,56 @@ function pickPdfUri() {
   if (input && input.uri && /\.pdf$/i.test(input.uri.path)) return input.uri;
   return null;
 }
+
+/**
+ * 「PDF 快照」树视图（活动栏里，和测试面板在同一容器）。
+ *
+ * 为什么除了时间线还要这个：Timeline 是宿主提供的视图，网页版/不同版本行为不一致
+ * （实测在某些 web 宿主里注册成功但列表不显示）。树视图完全由我们控制，
+ * 一定能看见、一定能点，作为"能回滚"的兜底入口。
+ */
+export function registerPdfSnapshotsView(ctx, history, log = () => { }) {
+  const emitter = new vscode.EventEmitter();
+  const tree = {
+    onDidChangeTreeData: emitter.event,
+    async getChildren(el) {
+      if (el) return [];
+      const uri = pickPdfUri();
+      if (!uri) return [{ kind: "hint", label: "打开一个 .pdf 文件后，这里会列出它的快照" }];
+      const list = await history.list(uri.toString());
+      if (!list.length) return [{ kind: "hint", label: "还没有快照（保存一次批注后就会出现）" }];
+      return list.map((s) => ({ kind: "snap", name: s.name, ts: s.ts, uri }));
+    },
+    getTreeItem(node) {
+      if (node.kind === "hint") {
+        const t = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
+        t.iconPath = new vscode.ThemeIcon("info");
+        return t;
+      }
+      const t = new vscode.TreeItem("批注保存前 " + new Date(node.ts).toLocaleString(), vscode.TreeItemCollapsibleState.None);
+      t.description = true;
+      t.iconPath = new vscode.ThemeIcon("history");
+      t.tooltip = "点一下恢复这个版本（恢复前会先给当前版本留快照）";
+      t.command = { command: RESTORE_COMMAND, title: "恢复此版本", arguments: [node.uri.toString(), node.name] };
+      return t;
+    },
+  };
+  const view = vscode.window.createTreeView(SNAPSHOTS_VIEW_ID, { treeDataProvider: tree, showCollapseAll: false });
+  const refresh = () => { try { emitter.fire(); } catch { } };
+  const prevNotify = history.notifyChanged;
+  history.notifyChanged = (uriString) => {
+    try { prevNotify && prevNotify(uriString); } catch { }
+    refresh();
+  };
+  const tabSub = vscode.window.tabGroups.onDidChangeTabs ? vscode.window.tabGroups.onDidChangeTabs(refresh) : null;
+  log("PDF 快照视图已注册（活动栏「WebC++ 测试」容器里的第二个视图）");
+  return {
+    dispose() {
+      try { tabSub && tabSub.dispose(); } catch { }
+      try { view.dispose(); } catch { }
+      try { emitter.dispose(); } catch { }
+    },
+  };
+}
+
+export const SNAPSHOTS_VIEW_ID = "oiCpp.pdfSnapshots";
