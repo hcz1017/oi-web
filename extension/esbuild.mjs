@@ -1,5 +1,5 @@
 import esbuild from "esbuild";
-import { mkdirSync, cpSync, existsSync, readdirSync } from "fs";
+import { mkdirSync, cpSync, existsSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -159,6 +159,8 @@ console.log("copied: dist/node/workers/{runWorker,compileWorker,debugWorker}.js 
     console.error("\n✗ 缺少 @embedpdf/snippet（PDF 阅读器需要）。请执行：cd extension && npm install\n");
     process.exit(1);
   }
+  // 先清空：snippet 的 chunk 名带内容哈希，版本升级后旧 chunk 会残留 → 越打越大
+  rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
   let copied = 0;
   for (const f of readdirSync(embedSrc)) {

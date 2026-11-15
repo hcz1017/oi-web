@@ -4,19 +4,52 @@
 // 宿主只做三件事：读文件、写回文件（先备份）、以及 webview 做不到的事（外部打开、日志）。
 import * as vscode from "vscode";
 import * as platform from "oi-platform";
+import { looksLikePdf } from "./history-core.mjs";
 
 export const PDF_VIEW_TYPE = "webcpp.pdf";
 
-/** 打开着的 PDF 面板（uri 字符串 → 重载函数）。恢复快照/文件被外部改动时用它刷新 */
+/** 打开着的 PDF 面板（uri 字符串 → { reload, flush }）。恢复快照/文件被外部改动时用它刷新 */
 const panels = new Map();
+
+/**
+ * 每个文件一条写队列：保存、恢复、flush 都排队执行。
+ * 不加队列时，"保存中紧接着恢复"会让两次写盘交错（后写的可能基于旧快照），
+ * 表现为"恢复完又变回新版本"这类玄学 bug。
+ */
+const writeQueues = new Map();
+function withWriteLock(uriString, fn) {
+  const key = String(uriString);
+  const prev = writeQueues.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  // 队列尾部存一个"吞掉错误"的 promise，避免一次失败卡死后续所有操作
+  writeQueues.set(key, next.catch(() => { }));
+  return next;
+}
+
+/**
+ * 让某个 PDF 的所有已打开面板**先把自己手上未保存的批注写回文件**。
+ *
+ * 恢复快照时必须先做这一步：否则阅读器里那些还没保存的批注会被旧字节直接覆盖掉（数据丢失）。
+ * 返回已冲刷的面板数；超时/失败不阻塞恢复（但会记日志）。
+ */
+export async function flushPdfPanels(uriString, timeoutMs = 5000) {
+  const set = panels.get(String(uriString));
+  if (!set || !set.size) return 0;
+  let n = 0;
+  await Promise.all([...set].map(async (p) => {
+    if (typeof p.flush !== "function") return;
+    try { await p.flush(timeoutMs); n++; } catch { }
+  }));
+  return n;
+}
 
 /** 让某个 PDF 的所有已打开面板重新读取文件（不关编辑器也能看到新内容） */
 export async function reloadPdfPanels(uriString) {
   const set = panels.get(String(uriString));
   if (!set) return 0;
   let n = 0;
-  for (const reload of [...set]) {
-    try { await reload(); n++; } catch { }
+  for (const p of [...set]) {
+    try { await p.reload(); n++; } catch { }
   }
   return n;
 }
@@ -62,24 +95,40 @@ export function registerPdfViewer(ctx, deps = {}) {
       }
 
       // 登记面板：供"恢复快照 / 外部改动"时热重载
+      /** 发起一次"把未保存批注写回文件"，等客户端回 flushSave */
+      let flushSeq = 0;
+      const flushWaiters = new Map();
+      const flush = (timeoutMs = 5000) => new Promise((resolve, reject) => {
+        const id = `f${Date.now().toString(36)}${++flushSeq}`;
+        const timer = setTimeout(() => { flushWaiters.delete(id); reject(new Error("冲刷超时")); }, timeoutMs);
+        flushWaiters.set(id, { resolve: () => { clearTimeout(timer); flushWaiters.delete(id); resolve(); }, reject: (e) => { clearTimeout(timer); flushWaiters.delete(id); reject(e); } });
+        send({ type: "flush", id });
+      });
+
       const reload = async () => {
         try {
           const fresh = await vscode.workspace.fs.readFile(document.uri);
           bytes = fresh;
           send({ type: "reload", bytes: fresh, name: fileName });
         } catch (e) {
-          send({ type: "saved", ok: false, error: "重新读取失败：" + ((e && e.message) || e) });
+          send({ type: "error", text: "重新读取失败：" + ((e && e.message) || e) });
         }
       };
       const key = document.uri.toString();
       if (!panels.has(key)) panels.set(key, new Set());
-      panels.get(key).add(reload);
+      const panelRef = { reload, flush };
+      panels.get(key).add(panelRef);
 
       // 文件被外部改动（比如用系统阅读器另存）时也自动刷新
       let watcher = null;
       try {
         const dirUri = document.uri.with({ path: document.uri.path.replace(/\/[^/]*$/, "") });
         watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dirUri, fileName));
+        watcher.onDidDelete((u) => {
+          if (u.toString() !== key) return;
+          send({ type: "error", text: "这个 PDF 已被删除或移走（编辑器里的内容可能已过期）" });
+        });
+        watcher.onDidCreate(() => { /* 同路径被重新创建：下次保存会重建，忽略 */ });
         watcher.onDidChange((u) => {
           if (u.toString() !== key) return;
           // ⚠️ 保存时我们自己写盘也会触发 watcher：以前这里无脑 reload，
@@ -105,23 +154,51 @@ export function registerPdfViewer(ctx, deps = {}) {
         if (m.type === "savePdf") {
           try {
             const data = toBytes(m.bytes);
+            // 写盘前先确认这真的是 PDF：挡住"导出插件返回了一段空/JSON"这类异常
+            if (!looksLikePdf(data)) throw new Error("要写入的数据不是有效的 PDF，已放弃");
             let snapshot = null;
-            if (history) {
-              try {
+            await withWriteLock(key, async () => {
+              if (history) {
                 const old = bytes || await vscode.workspace.fs.readFile(document.uri);
                 snapshot = await history.snapshot(document.uri.toString(), old);
-              } catch (e) {
-                send({ type: "saved", ok: false, error: "快照失败，已放弃写入：" + ((e && e.message) || e) });
-                return;
+                if (snapshot === null) send({ type: "log", text: "[pdf] 文件超过快照体积上限，本次未留快照" });
               }
-            }
-            lastSelfWrite = Date.now();
-            await vscode.workspace.fs.writeFile(document.uri, data);
-            bytes = data;                     // 后续再次保存时用最新内容
-            try { history.notifyChanged?.(document.uri.toString()); } catch { }
+              lastSelfWrite = Date.now();
+              await vscode.workspace.fs.writeFile(document.uri, data);
+              bytes = data;                   // 后续再次保存时用最新内容
+              try { history && history.notifyChanged?.(document.uri.toString()); } catch { }
+            });
             send({ type: "saved", ok: true, snapshot });
           } catch (e) {
             send({ type: "saved", ok: false, error: String((e && e.message) || e) });
+          }
+          return;
+        }
+
+        // 恢复快照前的"冲刷未保存批注"应答：写盘（含快照）后回复
+        if (m.type === "flushSave") {
+          const waiter = flushWaiters.get(m.id);
+          try {
+            if (m.error) throw new Error(m.error);
+            const data = toBytes(m.bytes);
+            if (!looksLikePdf(data)) throw new Error("冲刷的数据不是有效的 PDF");
+            await withWriteLock(key, async () => {
+              if (history) {
+                try {
+                  const old = bytes || await vscode.workspace.fs.readFile(document.uri);
+                  await history.snapshot(document.uri.toString(), old);
+                  try { history && history.notifyChanged?.(document.uri.toString()); } catch { }
+                } catch { /* 快照失败不阻塞冲刷 */ }
+              }
+              lastSelfWrite = Date.now();
+              await vscode.workspace.fs.writeFile(document.uri, data);
+              bytes = data;
+            });
+            send({ type: "flushDone", id: m.id, ok: true });
+            waiter?.resolve();
+          } catch (e) {
+            send({ type: "flushDone", id: m.id, ok: false, error: String((e && e.message) || e) });
+            waiter?.reject(e);
           }
           return;
         }
@@ -147,14 +224,18 @@ export function registerPdfViewer(ctx, deps = {}) {
         try { sub.dispose(); } catch { }
         try { watcher && watcher.dispose(); } catch { }
         const s = panels.get(key);
-        if (s) { s.delete(reload); if (!s.size) panels.delete(key); }
+        if (s) { s.delete(panelRef); if (!s.size) panels.delete(key); }
+        for (const [, w] of flushWaiters) { try { w.reject(new Error("面板已关闭")); } catch { } }
+        flushWaiters.clear();
       });
     },
   };
 
   return vscode.window.registerCustomEditorProvider(PDF_VIEW_TYPE, provider, {
     webviewOptions: { retainContextWhenHidden: true },
-    supportsMultipleEditorsPerDocument: true,
+    // ⚠️ 关闭"同一文档多编辑器"：两个视图各持一份字节，保存会互相覆盖（后写赢），
+    //    而且每份都是整份 PDF 的内存副本。要并排看就分别打开不同文件。
+    supportsMultipleEditorsPerDocument: false,
   });
 }
 

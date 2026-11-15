@@ -8,9 +8,10 @@
 //
 // 这一层负责：
 //   1) 字节 → blob URL 交给 EmbedPDF；
-//   2) **统一的保存按钮 + 自动保存**（批注一改就防抖写回原 PDF，先 .bak 备份）；
+//   2) 统一的保存按钮 / Ctrl+S（**不自动保存**），保存前由宿主留快照（VS Code 时间线）；
 //   3) 截获它自带的下载动作（webview 里真下载会被沙箱拦掉）；
-//   4) Ctrl+S、切走前保存、错误提示、日志转发。
+//   4) 支持"热重载"（恢复快照/外部改动）与"恢复前冲刷未保存批注"（flush）；
+//   5) 错误提示、日志转发。
 import EmbedPDF from "../embedpdf/embedpdf.js";
 
 const A = window.__PDF_ASSETS || {};
@@ -20,7 +21,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   name: "document.pdf",
   viewer: null, registry: null, srcUrl: null,
-  saving: false, lastSaved: 0,
+  saving: false, lastSaved: 0, dirty: false,
 };
 
 // ---------------------------------------------------------------- 启动
@@ -30,6 +31,10 @@ window.addEventListener("message", (ev) => {
   if (m.type === "load") onLoad(m).catch(fatal);
   if (m.type === "reload") reloadDoc(m).catch(fatal);
   if (m.type === "saved") onSaved(m);
+  if (m.type === "error") { setStatus("打开失败", "error"); showError("打开这个 PDF 时出错了", m.text || ""); }
+  if (m.type === "flush") onFlush(m);
+  if (m.type === "flushDone") onFlushDone(m);
+  if (m.type === "log") { const t = String(m.text || "").replace(/^\[pdf\]\s*/, ""); if (/快照|上限/.test(t)) toast(t, 4200); }
 });
 
 async function onLoad({ bytes, name }) {
@@ -65,11 +70,38 @@ async function onLoad({ bytes, name }) {
   } catch (e) {
     throw new Error("EmbedPDF 插件注册失败：" + ((e && e.message) || e));
   }
+  wireDirtyTracking();
+  state.dirty = false;
   setStatus("已保存", "idle");
+}
+
+/** 订阅批注变更：让保存按钮能显示"有未保存改动"，避免用户以为已经写进文件了 */
+function wireDirtyTracking() {
+  const ann = pluginCap("annotation");
+  const hook = ann && ann.onAnnotationEvent;
+  if (!hook) return;                       // 拿不到事件就退化为"只在保存后改状态"
+  const handler = () => {
+    state.dirty = true;
+    setStatus("未保存…", "dirty");
+  };
+  try {
+    if (typeof hook === "function") hook(handler);
+    else if (typeof hook.subscribe === "function") hook.subscribe(handler);
+  } catch { /* 事件订阅失败不影响保存 */ }
+}
+
+function pluginCap(id) {
+  try {
+    const p = state.registry && state.registry.getPlugin(id);
+    return p && typeof p.provides === "function" ? p.provides() : null;
+  } catch { return null; }
 }
 
 /** 重新读入同一份 PDF（恢复快照、或文件被外部改动时用，不用关掉再开） */
 async function reloadDoc({ bytes, name }) {
+  // 重载期间可能正好有一次保存在飞行中：状态重置掉，否则 saving 永远为 true（保存按钮彻底失灵）
+  state.saving = false;
+  clearTimeout(state.saveWatchdog);
   try { state.viewer?.destroy?.(); } catch { }
   state.viewer = null;
   state.registry = null;
@@ -77,8 +109,9 @@ async function reloadDoc({ bytes, name }) {
   if (target) target.innerHTML = "";
   if (state.srcUrl) { try { URL.revokeObjectURL(state.srcUrl); } catch { } state.srcUrl = null; }
   await onLoad({ bytes, name: name || state.name });
-  setStatus("已重新载入", "saved");
-  state.lastSaved = Date.now();
+  hideError();
+  state.dirty = false;
+  setStatus("已重新载入", "info");
 }
 
 // ---------------------------------------------------------------- 保存条（统一入口）
@@ -154,7 +187,17 @@ async function saveNow(_kind) {
   if (state.saving) return;
   state.saving = true;
   setStatus("保存中…", "saving");
+  // 看门狗：宿主没回消息（面板被销毁 / 消息丢了）时不能把 saving 永久卡在 true
+  clearTimeout(state.saveWatchdog);
+  state.saveWatchdog = setTimeout(() => {
+    if (!state.saving) return;
+    state.saving = false;
+    setStatus("保存超时", "error");
+    toast("保存没有响应，请重试", 4000);
+  }, 15000);
   try {
+    // 5) 刚打开就按保存时 registry 可能还没就绪：等一会儿而不是直接报错
+    if (!state.registry) await waitForRegistry(2500);
     const plugin = state.registry && state.registry.getPlugin("export");
     const cap = plugin && typeof plugin.provides === "function" ? plugin.provides() : null;
     if (!cap || typeof cap.saveAsCopy !== "function") throw new Error("没有可用的导出能力（export 插件未就绪）");
@@ -163,20 +206,50 @@ async function saveNow(_kind) {
     postPdf(buf);
   } catch (e) {
     state.saving = false;
+    clearTimeout(state.saveWatchdog);
     setStatus("保存失败", "error");
-    fatal(e);
+    saveFailed(e);
   }
+}
+
+/** 等 registry 就绪（最多 ms 毫秒） */
+function waitForRegistry(ms) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const tick = () => {
+      if (state.registry || Date.now() - t0 > ms) return resolve(!!state.registry);
+      setTimeout(tick, 100);
+    };
+    tick();
+  });
 }
 
 function postPdf(buf) {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   // ⚠️ 结构化克隆会复制一份；PDF 大时内存会短暂翻倍，所以用完就把引用丢掉
-  vscode.postMessage({ type: "savePdf", bytes });
+  try {
+    vscode.postMessage({ type: "savePdf", bytes });
+  } catch (e) {
+    state.saving = false;
+    clearTimeout(state.saveWatchdog);
+    setStatus("保存失败", "error");
+    saveFailed(e);
+  }
+}
+
+/** 保存失败：标题要写对（以前误用"打开这个 PDF 时出错了"） */
+function saveFailed(e) {
+  const text = String((e && (e.message || e)) || e);
+  vscode.postMessage({ type: "log", text: "[pdf] 保存失败: " + text });
+  showError("保存失败", text);
 }
 
 function onSaved(m) {
   state.saving = false;
+  clearTimeout(state.saveWatchdog);
   if (m.ok) {
+    hideError();
+    state.dirty = false;
     state.lastSaved = Date.now();
     setStatus("已保存 " + new Date(state.lastSaved).toLocaleTimeString(), "saved");
     toast("已写回 PDF（写前的版本在「时间线」里，可回滚）");
@@ -197,16 +270,49 @@ function patchDownloadInterception() {
       const href = this.getAttribute("href") || "";
       if (this.hasAttribute("download") && /^blob:/i.test(href)) {
         // 它自带的"保存/下载"也走我们的保存通道，保证只有一条写盘路径
-        fetch(href).then((r) => r.arrayBuffer()).then((buf) => {
-          state.saving = true;
-          setStatus("保存中…", "saving");
-          postPdf(buf);
-        }).catch(fatal);
+        if (state.saving) { toast("正在保存，请稍候…", 2000); return; }
+        state.saving = true;
+        clearTimeout(state.saveWatchdog);
+        state.saveWatchdog = setTimeout(() => { state.saving = false; setStatus("保存超时", "error"); }, 15000);
+        setStatus("保存中…", "saving");
+        fetch(href).then((r) => r.arrayBuffer()).then((buf) => postPdf(buf)).catch((e) => {
+          state.saving = false;
+          clearTimeout(state.saveWatchdog);
+          setStatus("保存失败", "error");
+          saveFailed(e);
+        });
         return;
       }
     } catch { /* 落到原生行为 */ }
     return origClick.call(this);
   };
+}
+
+// ---------------------------------------------------------------- 恢复前冲刷（flush）
+// 为什么要 flush：批注在阅读器里是**未保存**状态时，宿主恢复快照会直接用旧字节覆盖文件，
+// 用户手上这批批注就凭空没了。所以恢复前先让阅读器把当前批注写一遍（宿主会顺便留快照）。
+function onFlush(m) {
+  const id = m && m.id;
+  if (!id) return;
+  (async () => {
+    try {
+      // 正在保存就先等它落地，避免"导出两份、后写的赢"
+      for (let i = 0; i < 50 && state.saving; i++) await new Promise((r) => setTimeout(r, 100));
+      if (!state.registry) await waitForRegistry(2500);
+      const plugin = state.registry && state.registry.getPlugin("export");
+      const cap = plugin && typeof plugin.provides === "function" ? plugin.provides() : null;
+      if (!cap || typeof cap.saveAsCopy !== "function") throw new Error("导出能力未就绪");
+      const task = cap.saveAsCopy();
+      const buf = await (task && typeof task.toPromise === "function" ? task.toPromise() : task);
+      vscode.postMessage({ type: "flushSave", id, bytes: buf instanceof Uint8Array ? buf : new Uint8Array(buf) });
+    } catch (e) {
+      vscode.postMessage({ type: "flushSave", id, error: String((e && e.message) || e) });
+    }
+  })();
+}
+
+function onFlushDone(m) {
+  if (m && m.ok) setStatus("已保存 " + new Date().toLocaleTimeString(), "saved");
 }
 
 // ---------------------------------------------------------------- 快捷键
@@ -234,6 +340,11 @@ function showError(title, text) {
   $("errorTitle").textContent = title || "出错了";
   $("errorText").textContent = String(text || "");
   box.classList.add("show");
+}
+
+function hideError() {
+  const box = $("error");
+  if (box) box.classList.remove("show");
 }
 
 function fatal(e) {

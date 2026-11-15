@@ -5,13 +5,31 @@
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync as rmF, existsSync } from "fs";
 import os from "os";
 import path from "path";
-import { keyOf, stampName, stampOf, sortNewestFirst, pickPrune, createHistoryStore } from "../src/web/pdf/history-core.mjs";
+import { keyOf, legacyKeyOf, looksLikePdf, stampName, stampOf, uniqueStampName, sortNewestFirst, pickPrune, createHistoryStore } from "../src/web/pdf/history-core.mjs";
 
 let pass = true;
 const must = (c, m) => { console.log(`${c ? "✓" : "✗"} ${m}`); if (!c) pass = false; return c; };
 
 // ---------- keyOf ----------
-must(/^[0-9a-f]{8}$/.test(keyOf("file:///a/b.pdf")), "keyOf: 输出 8 位十六进制");
+must(/^[0-9a-f]{16}$/.test(keyOf("file:///a/b.pdf")), "keyOf: 输出 16 位十六进制（64 位，降低撞车）");
+must(/^[0-9a-f]{8}$/.test(legacyKeyOf("file:///a/b.pdf")), "legacyKeyOf: 老的 8 位 key 仍可算（兼容旧快照）");
+{
+  // 撞车是很隐蔽的 bug（A 的快照混进 B）：这里用大量随机路径确认 64 位 key 无碰撞
+  const seen = new Set();
+  let dup = 0;
+  for (let i = 0; i < 20000; i++) {
+    const k = keyOf("file:///ws/" + i + "/题面" + (i % 97) + ".pdf");
+    if (seen.has(k)) dup++;
+    seen.add(k);
+  }
+  must(dup === 0, `keyOf: 2 万条路径零碰撞（实际 ${dup}）`);
+}
+{
+  must(looksLikePdf(new TextEncoder().encode("%PDF-1.7\n...")), "looksLikePdf: 认 %PDF 头");
+  must(!looksLikePdf(new TextEncoder().encode("{\"json\":1}")), "looksLikePdf: JSON 不算 PDF");
+  must(!looksLikePdf(new Uint8Array(0)), "looksLikePdf: 空数据不算");
+  must(!looksLikePdf(null), "looksLikePdf: null 不算（不抛）");
+}
 must(keyOf("file:///a/b.pdf") === keyOf("file:///a/b.pdf"), "keyOf: 稳定（同样的 URI 同样的 key）");
 must(keyOf("file:///a/b.pdf") !== keyOf("file:///a/c.pdf"), "keyOf: 不同文件不同 key");
 must(keyOf("") === keyOf(""), "keyOf: 空串也能算（不抛）");
@@ -24,6 +42,16 @@ must(keyOf("") === keyOf(""), "keyOf: 空串也能算（不抛）");
   must(stampOf(name) === ts, "stampOf: 能从文件名还原时间戳");
   must(stampOf("乱七八糟.pdf") === 0, "stampOf: 非法名返回 0");
   must(/^[0-9]{8}-[0-9]{6}-[0-9]{3}\.pdf$/.test(name), "stampName: 文件名格式固定（排序/校验都靠它）");
+}
+
+// ---------- 重名保护（同一毫秒连续保存不能互相覆盖） ----------
+{
+  const ts = new Date(2026, 10, 14, 23, 29, 22, 586).getTime();
+  const first = stampName(ts);
+  const second = uniqueStampName(ts, [first]);
+  must(second !== first, `uniqueStampName: 撞名时顺延（${second}）`);
+  must(stampOf(second) > ts, "uniqueStampName: 新名字时间往后走");
+  must(uniqueStampName(ts, []) === first, "uniqueStampName: 不撞名时保持不变");
 }
 
 // ---------- 排序 / 裁剪 ----------
@@ -68,6 +96,16 @@ must(keyOf("") === keyOf(""), "keyOf: 空串也能算（不抛）");
   // 另一个文件互不影响
   const other = "file:///ws/别的.pdf";
   must((await store.list(other)).length === 0, "不同文件互不干扰");
+
+  // 体积上限：超大 PDF 不存快照（返回 null），免得把用户存储吃光
+  {
+    const bigStore = createHistoryStore(fs, root, { keep: 3, maxBytes: 16 });
+    const tooBig = new Uint8Array(32);
+    const r = await bigStore.snapshot(uri, tooBig);
+    must(r === null, "snapshot: 超过体积上限时返回 null（不写盘）");
+    const ok = await bigStore.snapshot(uri, new Uint8Array(8));
+    must(typeof ok === "string", "snapshot: 未超限时正常返回名字");
+  }
 
   // 非法快照名（防止 ../ 之类穿越）
   let rejected = false;

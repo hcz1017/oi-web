@@ -5,8 +5,8 @@
 //
 // 快照放在扩展的 globalStorage 里（每用户一份，不污染工作区、不会被 git 同步）。
 import * as vscode from "vscode";
-import { createHistoryStore, keyOf } from "./history-core.mjs";
-import { reloadPdfPanels } from "./provider.js";
+import { createHistoryStore, looksLikePdf } from "./history-core.mjs";
+import { reloadPdfPanels, flushPdfPanels } from "./provider.js";
 
 export const PDF_TIMELINE_ID = "webcpp.pdf-history";
 export const RESTORE_COMMAND = "oiCpp.pdf.restoreSnapshot";
@@ -17,7 +17,6 @@ function fsAdapter(rootUri) {
     const rel = String(p).slice(String(rootUri.path).length).replace(/^\/+/, "");
     return vscode.Uri.joinPath(rootUri, ...rel.split("/").filter(Boolean));
   };
-  const text = (u) => u;
   return {
     async mkdir(p) { try { await vscode.workspace.fs.createDirectory(uriOf(p)); } catch { } },
     async writeFile(p, bytes) { await vscode.workspace.fs.writeFile(uriOf(p), toBytes(bytes)); },
@@ -77,15 +76,30 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
       const n = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "正在恢复 PDF 快照", cancellable: false },
         async (progress) => {
+          // ⚠️ 先让打开着的阅读器把手上的批注写回文件：
+          //    否则"未保存的批注"会被接下来写入的旧版本直接覆盖掉（用户会莫名其妙丢数据）。
+          progress.report({ message: "保存当前未保存的批注…" });
+          try {
+            const flushed = await flushPdfPanels(uri.toString());
+            if (flushed) log(`[restore] 已先写回 ${flushed} 个面板的未保存批注`);
+          } catch (e) {
+            log(`[restore] 冲刷未保存批注失败（继续恢复）: ${(e && e.message) || e}`);
+          }
+
           progress.report({ message: "读取快照…" });
           const bytes = await history.read(uri.toString(), name);
+          // 快照可能被外部破坏（磁盘/同步工具）：不是 PDF 就绝不写回去
+          if (!looksLikePdf(bytes)) throw new Error("这个快照已损坏（不是有效的 PDF），已放弃恢复");
 
           progress.report({ message: "备份当前版本…" });
           const current = await vscode.workspace.fs.readFile(uri);
-          await history.snapshot(uri.toString(), current);
+          const snap = await history.snapshot(uri.toString(), current);
+          if (snap === null) log("[restore] 当前文件超过快照体积上限，跳过备份（继续恢复）");
 
           progress.report({ message: "写回 PDF…" });
           await vscode.workspace.fs.writeFile(uri, toBytes(bytes));
+          // 恢复后把"当前版本"的内存缓存也刷新掉，避免下次保存基于旧字节
+          try { await reloadPdfPanels(uri.toString()); } catch { }
           try { history.notifyChanged?.(uri.toString()); } catch { }
 
           progress.report({ message: "刷新阅读器…" });
@@ -129,23 +143,30 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
   const provider = {
     onDidChange: changeEmitter ? changeEmitter.event : undefined,
     async provideTimeline(uri) {
-      if (!/\.pdf$/i.test(uri.path)) return { items: [] };
-      const list = await history.list(uri.toString());
-      log(`[timeline] ${uri.path.split("/").pop()} → ${list.length} 条快照`);
-      return {
-        items: list.map((s) => ({
-          id: s.name,
-          label: "批注保存前 " + new Date(s.ts).toLocaleString(),
-          timestamp: s.ts,
-          description: "写回前自动留的快照（点一下可恢复）",
-          contextValue: "pdfSnapshot",
-          command: {
-            title: "恢复此版本",
-            command: RESTORE_COMMAND,
-            arguments: [uri.toString(), s.name],
-          },
-        })),
-      };
+      try {
+        if (!/\.pdf$/i.test(uri.path)) return { items: [] };
+        const list = await history.list(uri.toString());
+        // 只在有快照时打日志（否则每次刷新时间线都刷没用的行）
+        if (list.length) log(`[timeline] ${uri.path.split("/").pop()} → ${list.length} 条快照`);
+        return {
+          items: list.map((s) => ({
+            id: s.name,
+            label: "批注保存前 " + new Date(s.ts).toLocaleString(),
+            timestamp: s.ts,
+            description: "写回前自动留的快照（点一下可恢复）",
+            contextValue: "pdfSnapshot",
+            command: {
+              title: "恢复此版本",
+              command: RESTORE_COMMAND,
+              arguments: [uri.toString(), s.name],
+            },
+          })),
+        };
+      } catch (e) {
+        // 绝不让 provider 抛出去：抛出去会让整个时间线报错、连别的来源也看不见
+        log(`[timeline] 查询失败: ${(e && e.message) || e}`);
+        return { items: [] };
+      }
     },
   };
 

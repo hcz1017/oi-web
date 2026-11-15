@@ -67,5 +67,7 @@ html, body {
 #saveBar.dragging { cursor: grabbing; opacity: .92; box-shadow: 0 8px 22px rgba(0,0,0,.5); }
 #saveStatus { font-size: 11px; opacity: .8; min-width: 46px; }
 #saveStatus[data-kind="saving"] { opacity: 1; }
+#saveStatus[data-kind="dirty"] { color: var(--vscode-editorWarning-foreground, #d7a12c); opacity: 1; }
+#saveStatus[data-kind="info"] { opacity: .9; }
 #saveStatus[data-kind="saved"] { color: var(--vscode-charts-green, #3fb950); opacity: 1; }
 #saveStatus[data-kind="error"] { color: var(--vscode-errorForeground, #f14c4c); opacity: 1; }

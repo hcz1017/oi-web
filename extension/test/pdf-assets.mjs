@@ -56,6 +56,7 @@ for (const f of ["client.mjs", "client.css"]) {
 // ---------- 宿主侧 HTML 模板：CSP / 资源 ----------
 {
   const provider = readFileSync(path.join(EXT, "src", "web", "pdf", "provider.js"), "utf8");
+  const client = readFileSync(path.join(PDF, "app", "client.mjs"), "utf8");
   must(/wasm-unsafe-eval/.test(provider), "CSP 允许 wasm-unsafe-eval（缺了 PDFium 直接编译失败）");
   must(/worker-src blob:/.test(provider), "CSP 允许 blob worker");
   must(/asWebviewUri/.test(provider), "资源走 asWebviewUri（网页版/桌面版都能取）");
@@ -66,8 +67,7 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/history\.snapshot/.test(provider), "写回前先存快照（替代 .bak）");
   const providerCode = provider.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   must(!/BACKUP_SUFFIX|backupOf|\.pdf\.bak/.test(providerCode), "不再生成 .bak 文件（备份进 VS Code 时间线）");
-  const clientSrc = readFileSync(path.join(PDF, "app", "client.mjs"), "utf8");
-  must(/makeDraggable/.test(clientSrc) && /saveBar/.test(clientSrc), "保存条可拖动（位置记在 state 里）");
+  must(/makeDraggable/.test(client) && /saveBar/.test(client), "保存条可拖动（位置记在 state 里）");
 }
 
 // ---------- package.json 贡献点 ----------
@@ -87,6 +87,8 @@ for (const f of ["client.mjs", "client.css"]) {
   const histCore = readFileSync(path.join(EXT, "src", "web", "pdf", "history-core.mjs"), "utf8");
   const histGlue = readFileSync(path.join(EXT, "src", "web", "pdf", "history.js"), "utf8");
   const ext = readFileSync(path.join(EXT, "src", "web", "extension.js"), "utf8");
+  const client = readFileSync(path.join(PDF, "app", "client.mjs"), "utf8");
+  const provider = readFileSync(path.join(EXT, "src", "web", "pdf", "provider.js"), "utf8");
   must(/createHistoryStore/.test(histCore) && /pickPrune/.test(histCore), "快照核心：仓库 + 裁剪逻辑在");
   must(/keep:\s*10/.test(histGlue), "每个文件只保留最近 10 份快照");
   must(/workspace\.registerTimelineProvider/.test(histGlue), "用的是官方 API：workspace.registerTimelineProvider（不是 window.*）");
@@ -98,6 +100,25 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/RESTORE_COMMAND/.test(histGlue) && /snapshot\(uri\.toString\(\), current\)/.test(histGlue), "恢复前会先给当前版本留快照（可反悔）");
   must(/restoring/.test(histGlue) && /if \(restoring\)/.test(histGlue), "恢复中会忽略重复点击（重入保护）");
   must(/withProgress/.test(histGlue) && /正在恢复 PDF 快照/.test(histGlue), "恢复时显示进度提示");
+  // 恢复前必须先冲刷未保存批注，否则"刚画的批注"会被旧版本覆盖掉（数据丢失）
+  must(/flushPdfPanels/.test(histGlue) && /flushPdfPanels\(uri\.toString\(\)\)/.test(histGlue), "恢复前会先冲刷未保存批注");
+  must(/flushSave/.test(client) && /onFlush/.test(client), "webview 端实现了 flush 协议");
+  must(/flushSave/.test(provider) && /flushWaiters/.test(provider), "宿主端等 flush 应答后才继续");
+  // webview 端不能把状态卡死
+  must(/saveWatchdog/.test(client), "保存有超时看门狗（宿主不回消息也不会永久卡住）");
+  must(/hideError/.test(client), "恢复成功后会清掉旧的错误框");
+  must(/waitForRegistry/.test(client), "刚打开就按保存时会等 registry 就绪");
+  // 数据安全：写盘/恢复前校验 PDF 魔数；写操作串行；体积上限；单编辑器
+  must(/looksLikePdf/.test(provider) && /不是有效的 PDF|要写入的数据不是有效的 PDF/.test(provider), "写盘前校验 PDF 魔数");
+  must(/withWriteLock/.test(provider), "同一文件的保存/恢复/冲刷走写队列（不会交叉写）");
+  must(!/supportsMultipleEditorsPerDocument: true/.test(provider), "关闭了同一文档多编辑器（避免两份字节互相覆盖）");
+  must(/onDidDelete/.test(provider), "文件被删除/移走时会给提示");
+  must(/looksLikePdf/.test(histGlue) && /已损坏/.test(histGlue), "恢复前校验快照是不是有效 PDF");
+  must(/maxBytes/.test(histCore), "快照有体积上限（防撑爆存储）");
+  must(/legacyKeyOf/.test(histCore), "升级 64 位 key 后仍能读老的快照目录");
+  must(/state\.dirty|wireDirtyTracking/.test(client), "批注一改就显示「未保存」，不会让人以为已写盘");
+  // 构建不能残留旧 chunk
+  must(/rmSync\(outDir/.test(readFileSync(path.join(EXT, "esbuild.mjs"), "utf8")), "构建前清空 embedpdf 目录（避免旧 chunk 残留）");
   must(/createPdfHistory/.test(ext) && /registerPdfTimeline/.test(ext), "激活时接上了快照仓库与时间线");
   // 树视图兜底 + 忽略自身写盘导致的刷新（否则每保存一次就整页重载）
   must(!/registerPdfSnapshotsView|createTreeView/.test(ext + histGlue), "没有额外加树视图（走原生「时间线」）");
