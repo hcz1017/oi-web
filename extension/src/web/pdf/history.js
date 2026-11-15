@@ -57,21 +57,47 @@ export function createPdfHistory(ctx) {
 export function registerPdfTimeline(ctx, history, log = () => { }) {
   const subs = [];
 
-  // 恢复命令：把某个快照写回 PDF（恢复前先给"当前版本"再留一份快照，所以恢复也能反悔）
+  // 恢复命令：把某个快照写回 PDF。
+  //
+  // ⚠️ 恢复是个"读快照 → 备份当前 → 写文件 → 刷新阅读器"的串行流程，中途再点一次会：
+  //    · 用同一个快照重复写，浪费时间；
+  //    · 更糟：第二份"当前版本快照"可能落在半写状态上。
+  //    所以用 restoring 标志做**重入保护**，同时用 withProgress 明确告诉用户"正在恢复"。
+  let restoring = false;
   subs.push(vscode.commands.registerCommand(RESTORE_COMMAND, async (fileUriStr, snapshotName) => {
+    if (restoring) {
+      vscode.window.setStatusBarMessage("$(sync~spin) 正在恢复快照，请稍候…", 2500);
+      return;
+    }
+    restoring = true;
     try {
       const uri = vscode.Uri.parse(String(fileUriStr));
-      const bytes = await history.read(uri.toString(), snapshotName);
-      const current = await vscode.workspace.fs.readFile(uri);
-      await history.snapshot(uri.toString(), current);
-      await vscode.workspace.fs.writeFile(uri, toBytes(bytes));
-      // 打开着的阅读器直接热重载，不用关掉再开
-      const n = await reloadPdfPanels(uri.toString());
+      const name = String(snapshotName || "");
+      const n = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "正在恢复 PDF 快照", cancellable: false },
+        async (progress) => {
+          progress.report({ message: "读取快照…" });
+          const bytes = await history.read(uri.toString(), name);
+
+          progress.report({ message: "备份当前版本…" });
+          const current = await vscode.workspace.fs.readFile(uri);
+          await history.snapshot(uri.toString(), current);
+
+          progress.report({ message: "写回 PDF…" });
+          await vscode.workspace.fs.writeFile(uri, toBytes(bytes));
+          try { history.notifyChanged?.(uri.toString()); } catch { }
+
+          progress.report({ message: "刷新阅读器…" });
+          return reloadPdfPanels(uri.toString());
+        },
+      );
       vscode.window.showInformationMessage(
-        `已恢复到 ${snapshotName}（恢复前的版本也留在时间线里）` + (n ? "，已自动刷新阅读器" : ""),
+        `已恢复到 ${name}（恢复前的版本也留在时间线里）` + (n ? "，已自动刷新阅读器" : ""),
       );
     } catch (e) {
       vscode.window.showErrorMessage("恢复失败：" + ((e && e.message) || e));
+    } finally {
+      restoring = false;
     }
   }));
 

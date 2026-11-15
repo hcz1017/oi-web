@@ -95,6 +95,8 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/provideTimeline/.test(histGlue), "实现了 provideTimeline");
   must(/typeof register !== "function"/.test(histGlue), "对没有时间线 API 的宿主做了能力探测（不静默失败，会带错误文本）");
   must(/RESTORE_COMMAND/.test(histGlue) && /snapshot\(uri\.toString\(\), current\)/.test(histGlue), "恢复前会先给当前版本留快照（可反悔）");
+  must(/restoring/.test(histGlue) && /if \(restoring\)/.test(histGlue), "恢复中会忽略重复点击（重入保护）");
+  must(/withProgress/.test(histGlue) && /正在恢复 PDF 快照/.test(histGlue), "恢复时显示进度提示");
   must(/createPdfHistory/.test(ext) && /registerPdfTimeline/.test(ext), "激活时接上了快照仓库与时间线");
   // 树视图兜底 + 忽略自身写盘导致的刷新（否则每保存一次就整页重载）
   must(!/registerPdfSnapshotsView|createTreeView/.test(ext + histGlue), "没有额外加树视图（走原生「时间线」）");
