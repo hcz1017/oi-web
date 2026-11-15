@@ -89,16 +89,16 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
     await vscode.commands.executeCommand(RESTORE_COMMAND, uri.toString(), pick.name);
   }));
 
-  // 时间线提供者：不同 VS Code 版本/宿主的支持情况不同，这里做能力探测。
+  // 时间线提供者。
   //
-  // ⚠️ 真实签名是 registerTimelineProvider(id, **label**, provider, options?)，第二个参数是
-  //    显示在「时间线」里的来源名称（字符串），**不是 provider**。曾经把它当 provider 传进去，
-  //    注册直接抛错、又被下面的 catch 吞掉，表现就是"时间线永远是空的"。
-  const register = vscode.window.registerTimelineProvider;
-  if (typeof register !== "function") {
-    return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: false };
-  }
+  // ⚠️ 正确 API 是 **vscode.workspace.registerTimelineProvider**，签名：
+  //      registerTimelineProvider(id, label, scheme, provider)
+  //    之前写成 vscode.window.registerTimelineProvider(id, provider, options) ——
+  //    那个函数根本不存在，typeof 判断直接走降级分支，于是"时间线永远是空的"。
+  //    scheme 传 "" 表示支持所有 scheme（file / vscode-test-web / memfs 都能用）。
+  const changeEmitter = typeof vscode.EventEmitter === "function" ? new vscode.EventEmitter() : null;
   const provider = {
+    onDidChange: changeEmitter ? changeEmitter.event : undefined,
     async provideTimeline(uri) {
       if (!/\.pdf$/i.test(uri.path)) return { items: [] };
       const list = await history.list(uri.toString());
@@ -119,18 +119,20 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
       };
     },
   };
-  let registered = false;
-  let lastError = "";
-  const attempts = [
-    () => register(PDF_TIMELINE_ID, "PDF 快照", provider, { supportsResolving: false }),  // 现行签名
-    () => register(PDF_TIMELINE_ID, provider, { supportsResolving: false }),              // 老签名兜底
-  ];
-  for (const attempt of attempts) {
-    try { subs.push(attempt()); registered = true; break; } catch (e) { lastError = String((e && e.message) || e); }
+
+  // 保存/恢复后通知时间线刷新（不然要多点一次才看到新条目）
+  if (changeEmitter) history.notifyChanged = (uriString) => { try { changeEmitter.fire(vscode.Uri.parse(uriString)); } catch { } };
+
+  const register = vscode.workspace && vscode.workspace.registerTimelineProvider;
+  if (typeof register !== "function") {
+    return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: false, error: "workspace.registerTimelineProvider 不存在（宿主版本过老）" };
   }
-  if (!registered) {
-    return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: false, error: lastError };
+  try {
+    subs.push(register(PDF_TIMELINE_ID, "PDF 快照", "", provider));
+  } catch (e) {
+    return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: false, error: String((e && e.message) || e) };
   }
+
   return { dispose() { for (const d of subs) try { d.dispose(); } catch { } }, supported: true };
 }
 

@@ -88,8 +88,11 @@ for (const f of ["client.mjs", "client.css"]) {
   const histGlue = readFileSync(path.join(EXT, "src", "web", "pdf", "history.js"), "utf8");
   const ext = readFileSync(path.join(EXT, "src", "web", "extension.js"), "utf8");
   must(/createHistoryStore/.test(histCore) && /pickPrune/.test(histCore), "快照核心：仓库 + 裁剪逻辑在");
-  must(/registerTimelineProvider/.test(histGlue), "注册了 VS Code 时间线提供者");
-  must(/registerTimelineProvider"|typeof register !== "function"/.test(histGlue), "对没有时间线 API 的宿主做了能力探测");
+  must(/workspace\.registerTimelineProvider/.test(histGlue), "用的是官方 API：workspace.registerTimelineProvider（不是 window.*）");
+  must(/register\(PDF_TIMELINE_ID, "PDF 快照", "", provider\)/.test(histGlue), "按 (id, label, scheme, provider) 四参注册");
+  must(/onDidChange/.test(histGlue) && /notifyChanged/.test(histGlue), "保存后有变更事件，时间线会自己刷新");
+  must(/provideTimeline/.test(histGlue), "实现了 provideTimeline");
+  must(/typeof register !== "function"/.test(histGlue), "对没有时间线 API 的宿主做了能力探测（不静默失败，会带错误文本）");
   must(/RESTORE_COMMAND/.test(histGlue) && /snapshot\(uri\.toString\(\), current\)/.test(histGlue), "恢复前会先给当前版本留快照（可反悔）");
   must(/createPdfHistory/.test(ext) && /registerPdfTimeline/.test(ext), "激活时接上了快照仓库与时间线");
 }

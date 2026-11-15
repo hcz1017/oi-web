@@ -108,6 +108,7 @@ export function registerPdfViewer(ctx, deps = {}) {
             }
             await vscode.workspace.fs.writeFile(document.uri, data);
             bytes = data;                     // 后续再次保存时用最新内容
+            try { history.notifyChanged?.(document.uri.toString()); } catch { }
             send({ type: "saved", ok: true, snapshot });
           } catch (e) {
             send({ type: "saved", ok: false, error: String((e && e.message) || e) });
