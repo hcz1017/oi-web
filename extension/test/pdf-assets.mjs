@@ -89,17 +89,17 @@ for (const f of ["client.mjs", "client.css"]) {
   const ext = readFileSync(path.join(EXT, "src", "web", "extension.js"), "utf8");
   must(/createHistoryStore/.test(histCore) && /pickPrune/.test(histCore), "快照核心：仓库 + 裁剪逻辑在");
   must(/workspace\.registerTimelineProvider/.test(histGlue), "用的是官方 API：workspace.registerTimelineProvider（不是 window.*）");
-  must(/register\(PDF_TIMELINE_ID, "PDF 快照", "", provider\)/.test(histGlue), "按 (id, label, scheme, provider) 四参注册");
+  must(/register\(PDF_TIMELINE_ID, "PDF 快照", "\*", provider\)/.test(histGlue),
+    '按 (id, label, "*", provider) 四参注册（scheme 只能传 "*"，传 "" 会被 workbench 过滤掉）');
   must(/onDidChange/.test(histGlue) && /notifyChanged/.test(histGlue), "保存后有变更事件，时间线会自己刷新");
   must(/provideTimeline/.test(histGlue), "实现了 provideTimeline");
   must(/typeof register !== "function"/.test(histGlue), "对没有时间线 API 的宿主做了能力探测（不静默失败，会带错误文本）");
   must(/RESTORE_COMMAND/.test(histGlue) && /snapshot\(uri\.toString\(\), current\)/.test(histGlue), "恢复前会先给当前版本留快照（可反悔）");
   must(/createPdfHistory/.test(ext) && /registerPdfTimeline/.test(ext), "激活时接上了快照仓库与时间线");
   // 树视图兜底 + 忽略自身写盘导致的刷新（否则每保存一次就整页重载）
-  must(/registerPdfSnapshotsView/.test(ext), "激活时注册了「PDF 快照」树视图（时间线不显示时也能回滚）");
-  must(/SNAPSHOTS_VIEW_ID|oiCpp\.pdfSnapshots/.test(histGlue) && /createTreeView/.test(histGlue), "树视图实现里用 createTreeView 绑定了视图 id");
+  must(!/registerPdfSnapshotsView|createTreeView/.test(ext + histGlue), "没有额外加树视图（走原生「时间线」）");
   const pkgViews = ((pkg.contributes.views || {}).webcppTests || []).map((v) => v.id);
-  must(pkgViews.includes("oiCpp.pdfSnapshots"), "package.json 里声明了 PDF 快照视图");
+  must(!pkgViews.includes("oiCpp.pdfSnapshots"), "package.json 里没有多余的快照视图");
   const providerSrc = readFileSync(path.join(EXT, "src", "web", "pdf", "provider.js"), "utf8");
   must(/lastSelfWrite/.test(providerSrc), "watcher 会忽略自己写盘触发的变更（不再每保存就重载）");
 }

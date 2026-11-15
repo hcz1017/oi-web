@@ -301,10 +301,6 @@
           "type": "webview",
           "id": "oiCpp.testsView",
           "name": "测试用例"
-        },
-        {
-          "id": "oiCpp.pdfSnapshots",
-          "name": "PDF 快照"
         }
       ]
     },
