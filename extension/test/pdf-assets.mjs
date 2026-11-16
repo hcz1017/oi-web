@@ -142,6 +142,8 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/setTimeout\(/.test(historySrc.slice(historySrc.indexOf("notifyChanged ="), historySrc.indexOf("notifyChanged =") + 900)),
     "时间线变更会延迟补发一次（否则要手动刷新才看到新条目）");
   must(/changeEmitter\.fire\(\)/.test(historySrc), "onDidChange 不带 URI 触发（d.uris===undefined 表示所有资源都变了，最宽松）");
+  // 官方 d.ts 里字段名是 onDidChangeTimeline（不是 onDidChange）；写错 ext host 就不订阅 → 永不刷新
+  must(/onDidChangeTimeline:\s*changeEmitter\.event/.test(historySrc), "provider 暴露 onDidChangeTimeline（官方字段名）");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");

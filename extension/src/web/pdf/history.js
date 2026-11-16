@@ -194,6 +194,12 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
     };
   }
   const provider = {
+    // ⚠️⚠️ 这里必须是 **onDidChangeTimeline**（不是 onDidChange）！
+    //     官方 d.ts：interface TimelineProvider { readonly onDidChangeTimeline?: Event<Uri|Uri[]|undefined>; ... }
+    //     ext host 那边只读这个名字（`o.onDidChangeTimeline?.(...)`），读不到就**永远不订阅**，
+    //     于是我们 fire() 多少次都没人接 —— 这就是"时间线怎么都不自动刷新"的真正原因。
+    //     同时保留 onDidChange 以兼容老宿主（1.6x 之前的名字）。
+    onDidChangeTimeline: changeEmitter.event,
     onDidChange: changeEmitter.event,
     async provideTimeline(uri) {
       try {
