@@ -129,6 +129,18 @@ for (const f of ["client.mjs", "client.css"]) {
   const providerSrc = readFileSync(path.join(EXT, "src", "web", "pdf", "provider.js"), "utf8");
   must(/isSelfWrite\(/.test(providerSrc), "watcher 会忽略自己写盘触发的变更（不再每保存就重载）");
   must((providerSrc.match(/noteSelfWrite\(/g) || []).length >= 2, "保存/flush 写盘都打上\"自己写的\"标记");
+
+  const historySrc = readFileSync(path.join(EXT, "src", "web", "pdf", "history.js"), "utf8");
+  // 回滚一次只能留一条快照：flush 里不许再建快照，恢复流程里只能有一处 snapshot()
+  const flushBlock = providerSrc.slice(providerSrc.indexOf('m.type === "flushSave"'), providerSrc.indexOf('m.type === "flushSave"') + 1200);
+  must(!/history\.snapshot\(/.test(flushBlock), "flushSave 不建快照（否则回滚一次出现两条重复条目）");
+  const restoreBlock = historySrc.slice(historySrc.indexOf("RESTORE_COMMAND"), historySrc.indexOf("已恢复到"));
+  must((restoreBlock.match(/history\.snapshot\(/g) || []).length === 1, "恢复流程只建一条快照");
+  const flushIdx = restoreBlock.indexOf("flushPdfPanels");
+  const snapIdx = restoreBlock.indexOf("history.snapshot(");
+  must(flushIdx > 0 && snapIdx > flushIdx, "先 flush 再备份（保证快照里含用户最后那批批注）");
+  must(/setTimeout/.test(historySrc.slice(historySrc.indexOf("notifyChanged ="), historySrc.indexOf("notifyChanged =") + 500)),
+    "时间线变更会延迟补发一次（否则要手动刷新才看到新条目）");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");

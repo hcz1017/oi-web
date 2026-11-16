@@ -362,14 +362,17 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   //    lspPromise 都还是非空的 → 之后 ensureLsp() 永远返回这个已死的 promise，
   //    再打开 .cpp 也不会重启，补全/诊断静默消失（只能手动「重启 clangd」）。
   //    所以这里额外回调 onFatal，让扩展把 lspPromise 清掉。
-  const fatal = (why) => { try { onFatal && onFatal(why); } catch {} };
+  // ⚠️ 名字不能叫 fatal：本函数上面还有一个模块级标志 `fatal`（clangd 被停用），
+  //    同名 const 会让上面那句 `if (fatal)` 变成"访问未初始化的局部变量" →
+  //    ReferenceError: Cannot access 'fatal' before initialization（clangd 直接起不来）。
+  const notifyFatal = (why) => { try { onFatal && onFatal(why); } catch {} };
   worker.addEventListener("error", (e) => {
     try { liveReader?.onError.fire([e, undefined, 1]); } catch {}
-    fatal("worker error: " + ((e && (e.message || e.type)) || e));
+    notifyFatal("worker error: " + ((e && (e.message || e.type)) || e));
   });
   worker.addEventListener("messageerror", () => {
     try { liveReader?.onError.fire([new Error("messageerror"), undefined, 1]); } catch {}
-    fatal("worker messageerror");
+    notifyFatal("worker messageerror");
   });
   // provider 每次新建 reader/writer：lc.stop() 会 dispose reader，复用同一对会让重启后静默丢弃消息
   let clientRef = null;   // middleware 里要发请求，构造完回指

@@ -82,8 +82,11 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
       const n = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "正在恢复 PDF 快照", cancellable: false },
         async (progress) => {
-          // ⚠️ 先让打开着的阅读器把手上的批注写回文件：
-          //    否则"未保存的批注"会被接下来写入的旧版本直接覆盖掉（用户会莫名其妙丢数据）。
+          // 顺序很关键：
+          //   ① 先让阅读器把未保存批注写回（否则这些批注会被旧版本覆盖 → 丢数据）；
+          //   ② 再把**写回之后的当前文件**留成快照（这才包含用户最后那批批注，能退回来）；
+          //   ③ 最后写入选中的快照。
+          // 以前 flush 内部也会建一条快照 → 回滚一次出现两条一模一样的"批注保存前"。
           progress.report({ message: "保存当前未保存的批注…" });
           try {
             const flushed = await flushPdfPanels(uri.toString());
@@ -92,15 +95,15 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
             log(`[restore] 冲刷未保存批注失败（继续恢复）: ${(e && e.message) || e}`);
           }
 
-          progress.report({ message: "读取快照…" });
-          const bytes = await history.read(uri.toString(), name);
-          // 快照可能被外部破坏（磁盘/同步工具）：不是 PDF 就绝不写回去
-          if (!looksLikePdf(bytes)) throw new Error("这个快照已损坏（不是有效的 PDF），已放弃恢复");
-
           progress.report({ message: "备份当前版本…" });
           const current = await vscode.workspace.fs.readFile(uri);
           const snap = await history.snapshot(uri.toString(), current);
           if (snap === null) log("[restore] 当前文件超过快照体积上限，跳过备份（继续恢复）");
+
+          progress.report({ message: "读取快照…" });
+          const bytes = await history.read(uri.toString(), name);
+          // 快照可能被外部破坏（磁盘/同步工具）：不是 PDF 就绝不写回去
+          if (!looksLikePdf(bytes)) throw new Error("这个快照已损坏（不是有效的 PDF），已放弃恢复");
 
           progress.report({ message: "写回 PDF…" });
           // ⚠️ 必须和"保存/flush"共用同一把写队列：否则并发时 flush 的写可能落在恢复之后，
@@ -206,8 +209,19 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
     },
   };
 
-  // 保存/恢复后通知时间线刷新（不然要多点一次才看到新条目）
-  if (changeEmitter) history.notifyChanged = (uriString) => { try { changeEmitter.fire(vscode.Uri.parse(uriString)); } catch { } };
+  // 保存/恢复后通知时间线刷新（不然要多点一次才看到新条目）。
+  // ⚠️ 只发一次不够：写盘到文件系统 watcher/时间线缓存更新有几十~几百毫秒延迟，
+  //    用户会看到"新条目要手动刷新才出来"。这里立刻发一次，再在 300ms 后补一次（去重）。
+  const pending = new Map();
+  if (changeEmitter) history.notifyChanged = (uriString) => {
+    const key = String(uriString);
+    try { changeEmitter.fire(vscode.Uri.parse(key)); } catch { }
+    if (pending.has(key)) return;
+    pending.set(key, setTimeout(() => {
+      pending.delete(key);
+      try { changeEmitter.fire(vscode.Uri.parse(key)); } catch { }
+    }, 300));
+  };
 
   const register = vscode.workspace && vscode.workspace.registerTimelineProvider;
   if (typeof register !== "function") {

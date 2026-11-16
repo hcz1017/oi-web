@@ -204,6 +204,7 @@ function ensureLsp() {
     } catch (e) {
       busy?.dispose(); busy = null;
       logLine("[clangd] 启动失败: " + ((e && e.message) || e));
+      try { console.error("[oi clangd] 启动失败:", e); } catch {}   // 栈留给 DevTools
       // ⚠️ 必须 await：stop 没做完就允许重试，会残留已注册的命令/worker
       try { await stopClangd(); } catch { }
       lspFailedAt = Date.now();

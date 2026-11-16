@@ -192,13 +192,9 @@ export function registerPdfViewer(ctx, deps = {}) {
             const data = toBytes(m.bytes);
             if (!looksLikePdf(data)) throw new Error("冲刷的数据不是有效的 PDF");
             await withWriteLock(key, async () => {
-              if (history) {
-                try {
-                  const old = bytes || await vscode.workspace.fs.readFile(document.uri);
-                  await history.snapshot(document.uri.toString(), old);
-                  try { history && history.notifyChanged?.(document.uri.toString()); } catch { }
-                } catch { /* 快照失败不阻塞冲刷 */ }
-              }
+              // ⚠️ 这里**不建快照**：flush 只发生在"恢复快照之前"，
+              //    而恢复流程本身会在 flush 之前先给当前文件留一份快照。
+              //    以前两处都建 → 回滚一次出现两条一模一样的"批注保存前"条目。
               noteSelfWrite(key);
               await vscode.workspace.fs.writeFile(document.uri, data);
               bytes = data;
