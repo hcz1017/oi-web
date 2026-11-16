@@ -175,7 +175,7 @@ export function registerPdfViewer(ctx, deps = {}) {
               noteSelfWrite(key);
               await vscode.workspace.fs.writeFile(document.uri, data);
               bytes = data;                   // 后续再次保存时用最新内容
-              try { history && history.notifyChanged?.(document.uri.toString()); } catch { }
+              try { history && history.notifyChanged?.(document.uri); } catch { }
             });
             send({ type: "saved", ok: true, snapshot });
           } catch (e) {

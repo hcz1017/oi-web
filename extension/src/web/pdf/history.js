@@ -112,7 +112,7 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
             noteSelfWrite(uri.toString());
             await vscode.workspace.fs.writeFile(uri, toBytes(bytes));
           });
-          try { history.notifyChanged?.(uri.toString()); } catch { }
+          try { history.notifyChanged?.(uri); } catch { }
 
           // 只刷新一次（以前这里刷一次、return 又刷一次，写盘还会触发 watcher 第三次，
           // 并发重建 viewer 会白屏/多开 PDFium worker）
@@ -178,13 +178,28 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
   //    scheme 必须传 **"*"** 才表示"所有 scheme"。官方文档写的是 `""`，但 workbench 里的
   //    实际过滤逻辑是：`if (scheme !== "*" && scheme !== uri.scheme) return;`
   //    —— 传 "" 会让所有查询直接 return，表现就是"时间线永远空着"。
-  const changeEmitter = typeof vscode.EventEmitter === "function" ? new vscode.EventEmitter() : null;
+  // ⚠️ 不要依赖 `vscode.EventEmitter` 一定存在：web 宿主里它是可选导出，
+  //    取不到时旧代码直接退化成"永远不通知" → 时间线只能手动刷新，而且毫无报错。
+  //    这里自带一个最小 Event：VS Code 的 Event<T> 就是 (listener) => Disposable。
+  let changeEmitter = null;
+  if (typeof vscode.EventEmitter === "function") {
+    try { changeEmitter = new vscode.EventEmitter(); } catch { changeEmitter = null; }
+  }
+  if (!changeEmitter) {
+    const listeners = new Set();
+    changeEmitter = {
+      event: (cb) => { listeners.add(cb); return { dispose: () => listeners.delete(cb) }; },
+      fire: (u) => { for (const cb of [...listeners]) { try { cb(u); } catch { } } },
+      dispose: () => listeners.clear(),
+    };
+  }
   const provider = {
-    onDidChange: changeEmitter ? changeEmitter.event : undefined,
+    onDidChange: changeEmitter.event,
     async provideTimeline(uri) {
       try {
         if (!/\.pdf$/i.test(uri.path)) return { items: [] };
         const list = await history.list(uri.toString());
+        log(`[timeline] 查询 ${uri.toString()} → ${list.length} 条`);
         // 只在有快照时打日志（否则每次刷新时间线都刷没用的行）
         if (list.length) log(`[timeline] ${uri.path.split("/").pop()} → ${list.length} 条快照`);
         return {
@@ -213,14 +228,21 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
   // ⚠️ 只发一次不够：写盘到文件系统 watcher/时间线缓存更新有几十~几百毫秒延迟，
   //    用户会看到"新条目要手动刷新才出来"。这里立刻发一次，再在 300ms 后补一次（去重）。
   const pending = new Map();
-  if (changeEmitter) history.notifyChanged = (uriString) => {
-    const key = String(uriString);
-    try { changeEmitter.fire(vscode.Uri.parse(key)); } catch { }
+  history.notifyChanged = (uriOrString) => {
+    // ⚠️ 尽量传 **Uri 对象**（调用方手上就有）：workbench 内部用 URI 的规范化形式做比较，
+    //    从字符串重新 parse 出来的对象（编码形式可能不同）会被判成"不是同一个资源"，
+    //    于是事件被忽略 —— 表现就是"时间线必须手动刷新"。
+    const u = typeof uriOrString === "string" ? vscode.Uri.parse(uriOrString) : uriOrString;
+    const key = u && u.toString ? u.toString() : String(uriOrString);
+    const fire = () => { try { changeEmitter.fire(u); } catch { } };
+    fire();
+    log(`[timeline] onDidChange → ${key}`);
     if (pending.has(key)) return;
     pending.set(key, setTimeout(() => {
       pending.delete(key);
-      try { changeEmitter.fire(vscode.Uri.parse(key)); } catch { }
-    }, 300));
+      fire();
+      log(`[timeline] onDidChange(补发) → ${key}`);
+    }, 400));
   };
 
   const register = vscode.workspace && vscode.workspace.registerTimelineProvider;
