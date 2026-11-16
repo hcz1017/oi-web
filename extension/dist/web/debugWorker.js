@@ -1377,7 +1377,7 @@
     }
     trapped = { reason: msg, site };
     post({
-      waiting: false,
+      waiting: true,
       type: "trap",
       reason: msg,
       message: msg,

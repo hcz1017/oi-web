@@ -184,3 +184,24 @@ export function createHistoryStore(fs, root, { keep = 10, maxBytes = Infinity, b
     },
   };
 }
+
+// ---------------------------------------------------------------- 写盘协调（provider 与 history 共用）
+// ⚠️ 为什么放在这个"纯逻辑"文件里：保存、恢复快照、flush 三条路径都会写同一个 PDF 文件，
+//    必须共用**同一把锁**；而 history.js 是恢复方、provider.js 是保存方，锁放谁那儿都会造成反向依赖。
+/** 每个文件一条写队列：保存 / 恢复 / flush 依次执行 */
+const writeQueues = new Map();
+export function withWriteLock(uriString, fn) {
+  const key = String(uriString);
+  const prev = writeQueues.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  writeQueues.set(key, next.catch(() => { }));   // 尾部吞错，避免一次失败卡死后续
+  return next;
+}
+
+/** 我们自己最近写过这个文件的时间：用来忽略"自己触发"的 watcher 事件 */
+const selfWrites = new Map();
+export function noteSelfWrite(uriString) { selfWrites.set(String(uriString), Date.now()); }
+export function isSelfWrite(uriString, windowMs = 4000) {
+  const t = selfWrites.get(String(uriString)) || 0;
+  return !!t && Date.now() - t < windowMs;
+}

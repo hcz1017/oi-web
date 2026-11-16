@@ -64,6 +64,17 @@ function logLine(line) {
 }
 
 /** 当前打开的 C/C++ 文档数（clangd 只在这些文件存在时活着） */
+/**
+ * 文档 URI → 文件名（percent-encoded 的要解码）。
+ * ⚠️ 以前运行路径直接 `uri.path.split("/").pop()` 不解码：中文/空格文件名会变成
+ * `%E4%B8%AD%E6%96%87.cpp`，终端标题、编译进 /workspace 的文件名、clangd 的 files
+ * 列表、缓存键与断点映射全和 F5 路径对不上（F5 那条是解码过的）。
+ */
+function baseNameOf(uri) {
+  const raw = String((uri && uri.path) || uri || "").split("/").pop() || "";
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+
 function openCppCount() {
   return vscode.workspace.textDocuments.filter(
     (d) => (d.languageId === "cpp" || d.languageId === "c") && !d.isClosed,
@@ -155,7 +166,7 @@ async function restartLspClean(reason = "workspace-change") {
 async function listCppFiles() {
   try {
     const uris = await vscode.workspace.findFiles("**/*.{cpp,cc,cxx,c}", null, 50);
-    return uris.map((u) => String(u.path).split("/").pop()).filter(Boolean);
+    return uris.map((u) => baseNameOf(u)).filter(Boolean);
   } catch { return []; }
 }
 function ensureLsp() {
@@ -285,24 +296,37 @@ class OiPty {
 
   // ---- 运行 worker（每次新建） ----
   async _startRunner(wasmBuf) {
-    this._killRunner();
+    // ⚠️ 建 worker 是 await 的：没有互斥时"连按两次运行"会同时进两次，
+    //    两个 worker 共用同一个 stdin/控制 SAB（输出交错、互相踩 ctrl[0]），
+    //    而且后建的会覆盖 this.runner、先建的永远不被 terminate。
+    this._killRunner();                 // 会 ++_runnerGen，必须在取 gen 之前
+    const gen = ++this._runnerGen;
+    let w = null;
     try {
       // web: URL + 跨源 blob 兜底；桌面: worker_threads + 垫片
-      this.runner = await platform.createNamedWorker("runWorker.js", { log: (m) => debugLog("[wdb] " + m) });
+      w = await platform.createNamedWorker("runWorker.js", { log: (m) => debugLog("[wdb] " + m) });
     } catch (e) {
       this._fail("无法创建运行 worker: " + e.message);
       return;
     }
-    this.runner.onmessage = (ev) => this._runnerMsg(ev.data);
-    this.runner.onerror = (e) => {
+    if (gen !== this._runnerGen || this.state === "idle") {
+      // 期间又发起了新一轮（或本次运行已被取消）→ 丢弃这个 worker，避免孤儿
+      debugLog("[wdb] 运行已被新一轮/取消取代，丢弃刚建好的 worker");
+      try { w.terminate(); } catch {}
+      return;
+    }
+    this.runner = w;
+    w.onmessage = (ev) => this._runnerMsg(ev.data);
+    w.onerror = (e) => {
       this.wln(`\x1b[31m[运行崩溃] ${e.message || e}\x1b[0m`);
       this._killRunner();
       this.busyReset("idle");
     };
-    this.runner.postMessage({ type: "run", bytes: wasmBuf, stdinSAB: this.sab }, [wasmBuf]);
+    w.postMessage({ type: "run", bytes: wasmBuf, stdinSAB: this.sab }, [wasmBuf]);
   }
 
   _killRunner() {
+    this._runnerGen = (this._runnerGen || 0) + 1;   // 让在途的创建作废
     if (this.runner) { try { this.runner.terminate(); } catch {} }
     this.runner = null;
   }
@@ -446,8 +470,13 @@ class OiPty {
       .replace(/\x1b\[[0-9;?]*[A-Za-z~]/g, "")
       .replace(/\x1bO[A-Za-z]/g, "")
       .replace(/\r\n/g, "\n");          // 粘贴 CRLF 不能变成两个换行
+    // ⚠️ 回显要**攒起来一次写**：以前每个字符一次 write（= 一次 EventEmitter.fire + 终端写入），
+    //    粘贴几千字符就是几千次事件，明显卡顿。
+    let echo = "";
+    const flushEcho = () => { if (echo) { this.write(echo); echo = ""; } };
     for (const ch of cleaned) {
       if (ch === "\x04") {                          // Ctrl+D
+        flushEcho();
         if (this._line) { this._queueSend(this._line + "\n"); this._line = ""; }
         this.write("^D\r\n");
         this.eof = true;
@@ -455,16 +484,18 @@ class OiPty {
         return;
       }
       if (ch === "\r" || ch === "\n") {
-        this.write("\r\n");
+        echo += "\r\n";
+        flushEcho();
         this._queueSend(this._line + "\n");
         this._line = "";
       } else if (ch === "\x7f" || ch === "\b") {
-        if (this._line.length) { this._line = this._line.slice(0, -1); this.write("\b \b"); }
+        if (this._line.length) { this._line = this._line.slice(0, -1); echo += "\b \b"; }
       } else if (ch >= " " && ch !== "\x1b") {
         this._line += ch;
-        this.write(ch);
+        echo += ch;
       }
     }
+    flushEcho();
   }
 
   _queueSend(text) {
@@ -543,6 +574,9 @@ function workerUrl(name) { return platform.workerRef(name); }
 // 预加载状态：每次打开 .cpp 都重新预热一遍（浏览器可能已经把缓存挤掉了），
 // 但同一时刻只允许一轮；上一轮还在跑就直接跳过（"没有在加载才触发"）。
 const preloadState = { running: false, lastDoneAt: 0 };
+// 每次打开 .cpp 都预热一遍是用户要求的行为，但一轮 6 个资产走完 ~1.3s（即便全命中缓存），
+// 连续开几个文件就会白跑好几轮。这里加个最小间隔：刚跑完 10s 内不再重复。
+const PRELOAD_MIN_GAP_MS = 10000;
 /** 字节数格式化：给用户看的（MB 一位小数） */
 const fmtMB = (n) => `${(Number(n || 0) / 1048576).toFixed(1)}MB`;
 
@@ -566,6 +600,11 @@ function startPreload(trigger = "activate") {
       return;
     }
     if (preloadState.running) { logLine(`预加载: 上一轮还在进行，跳过本次触发（${trigger}）`); return; }
+    if (trigger !== "activate" && preloadState.lastDoneAt
+        && Date.now() - preloadState.lastDoneAt < PRELOAD_MIN_GAP_MS) {
+      logLine(`预加载: 刚完成 ${Math.round((Date.now() - preloadState.lastDoneAt) / 1000)}s，跳过（${trigger}）`);
+      return;
+    }
     preloadState.running = true;
 
     const base = assetsBase();
@@ -748,7 +787,10 @@ function compileForDebug({ source, fileName, flags, opt = 0, debugInfo = true, d
 const symbols = { engine: null, ready: null, memory: null, frame: null };
 
 function getSymbolsEngine() {
-  if (symbols.engine) return symbols.ready;
+  // ⚠️ 只看 symbols.engine 会重复启动：启动要下载 12.7MB + start()（数秒），
+  //    这期间 engine 还是 null，调试会话与符号探针并发调用就会各建一个引擎，
+  //    先建的 worker/wasm 内存永远回收不了。用 ready promise 本身做互斥。
+  if (symbols.ready) return symbols.ready;
   symbols.ready = (async () => {
     // 宿主 4 个同步 getter：读"暂停快照"（由调试会话在 paused 时塞进来）
     const host = {
@@ -813,7 +855,7 @@ async function symbolsProbe() {
   const ed = vscode.window.activeTextEditor;
   if (!ed) { vscode.window.showWarningMessage("先打开一个 C/C++ 文件"); return; }
   const doc = ed.document;
-  const fileName = doc.uri.path.split("/").pop() || "main.cpp";
+  const fileName = baseNameOf(doc.uri) || "main.cpp";
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   const out = vscode.window.createOutputChannel("WebC++ 符号");
   out.show(true);
@@ -1058,10 +1100,7 @@ function targetFromActiveEditor() {
   const ed = vscode.window.activeTextEditor;
   if (!ed) return null;
   const doc = ed.document;
-  const rawName = doc.uri.path.split("/").pop() || "";
-  let fileName = rawName;
-  // uri.path 在部分 provider 下是 percent-encoded 的，解码后再用于编译文件名
-  try { fileName = decodeURIComponent(rawName); } catch {}
+  const fileName = baseNameOf(doc.uri);
   if (!/\.(cpp|cc|cxx|c)$/i.test(fileName)) return null;
   const cfg = vscode.workspace.getConfiguration("oiCpp");
   return {
@@ -1330,7 +1369,7 @@ async function runActive() {
   const ed = vscode.window.activeTextEditor;
   if (!ed) { vscode.window.showWarningMessage("先打开一个 C/C++ 文件"); return; }
   const doc = ed.document;
-  const fileName = doc.uri.path.split("/").pop() || "main.cpp";
+  const fileName = baseNameOf(doc.uri) || "main.cpp";
   if (!/\.(cpp|cc|cxx|c)$/i.test(fileName)) { vscode.window.showWarningMessage("当前文件不是 C/C++ 源文件"); return; }
   const p = ensureTerminal(fileName);
   p.wln("");

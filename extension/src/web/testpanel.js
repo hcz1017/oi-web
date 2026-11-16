@@ -39,7 +39,8 @@ const FLUSH_TIMEOUT_MS = 400;
 export function createTestViewProvider(deps) {
   let view = null;          // 当前 webviewView
   let current = null;       // { key, fileName, source, flags, opt }   key = 文档 URI（唯一身份）
-  let rev = 0;              // 每次回推 init 递增，用来丢弃"上一版"的载荷
+  let rev = 0;
+  let syncSeq = 0;      // syncIfNeeded 的"最后一次获胜"序号              // 每次回推 init 递增，用来丢弃"上一版"的载荷
   let runGen = 0;           // 每次运行递增，用来丢弃上一轮的结果
   let running = false;
   let pendingRunAll = false;
@@ -315,19 +316,38 @@ export function createTestViewProvider(deps) {
         onMessage(m).catch((e) => deps.log("[对拍] 处理消息出错：" + ((e && e.message) || e)));
       });
     },
-    /** 编辑器变化时调用：切文件 / 关光文件都走这里（会先 flush） */
+    /**
+     * 编辑器变化时调用：切文件 / 关光文件都走这里（会先 flush）。
+     * ⚠️ 必须防乱序：本函数里有 await（askFlush 最长 400ms），而"切回原文件"那条分支
+     *    是**同步 return** 的 —— 快速连续切换时，先发起的那次 await 结束后会把 current
+     *    覆盖成"旧文件"，面板停在 B 的用例而编辑器是 A；之后面板提交的 {file:B,rev}
+     *    与宿主校验对得上，于是把 A 的编辑写进 B（正是消息身份要防的串写）。
+     *    用递增序号做"最后一次获胜"，每个 await 之后都要重新校验。
+     */
     async syncIfNeeded() {
       if (!view) return false;
+      const seq = ++syncSeq;
       const t = deps.activeTarget();
       if (!t) {
-        if (current) { await askFlush(); current = null; rev++; post({ type: "noFile", text: START_TEXT }); }
+        if (current) {
+          await askFlush();
+          if (seq !== syncSeq) return false;                    // 期间又有新的切换 → 放弃本次
+          current = null; rev++; runGen++;                      // 作废在跑的一轮
+          post({ type: "noFile", text: START_TEXT });
+          post({ type: "runEnd", gen: runGen, cancelled: true });
+        }
         return false;
       }
       if (current && keyOf(current) === keyOf(t)) { current = t; return false; }   // 同文件：只更新源码
       await askFlush();
-      current = t;
+      if (seq !== syncSeq) return false;                        // 期间又切了 → 本次作废
+      const now = deps.activeTarget();
+      if (!now || keyOf(now) !== keyOf(t)) return false;        // 目标已经变了，交给新一轮去做
+      current = now;
       rev++;
-      post(stateOf(t));
+      runGen++;                                                 // 切文件：作废上一轮的运行结果
+      post(stateOf(now));
+      post({ type: "runEnd", gen: runGen, cancelled: true });    // 解锁面板 busy（否则"正在运行"一直挡着）
       return true;
     },
     async open() {

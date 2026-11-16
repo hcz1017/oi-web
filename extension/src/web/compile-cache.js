@@ -38,6 +38,10 @@ const MAX_BYTES = 24 * 1024 * 1024;
 // L1：进程内直接存 Uint8Array，命中时省掉 base64 解码（3.6MB → 4.8MB 字符串，来回都要走一遍）
 const L1_MAX_ENTRIES = 6;
 const L1_MAX_BYTES = 48 * 1024 * 1024;
+// L2 的**总**字节预算：单条上限之外还要有总量上限，否则 6 条 × 24MB = 144MB wasm
+// （base64 后 192MB）全塞进 globalState，网页版会触发配额失败 / "large extension state"。
+// 而每次 put 都要把整包 JSON 序列化一次，越大越卡。
+const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
 
 /**
  * @param {{get:Function, update:Function}} memento 通常就是 ctx.globalState
@@ -88,21 +92,15 @@ export function createCompileCache(memento, opts = {}) {
   // 命中即刷新 recency：以前只有 put 才 ++tick，get 命中不刷新 →
   // 淘汰的是"最久没被**写入**"的，而不是"最久没被**使用**"的。
   // 正在反复使用的调试产物会被一次对拍写入挤掉，表现就是"调试永远不缓存"。
-  let touchTimer = null;
+  // 命中即刷新 recency（真 LRU）：只改**内存里**的 t，不回写 memento。
+  // ⚠️ 别在这里 memento.update：缓存最多 24MB base64，写一次就是把整包 JSON 重新序列化，
+  //    网页版（IndexedDB）上会明显卡顿，正是以前 "large extension state detected" 的来源。
+  //    真正的落盘交给 put（写入新条目时顺带把顺序带下去）。
   const markTouched = (k) => {
     const m = load();
     const e = m.entries[k];
     if (!e) return;
     e.t = ++tick;
-    if (touchTimer) return;
-    touchTimer = setTimeout(() => {
-      touchTimer = null;
-      try {
-        const p = memento.update(CACHE_KEY, m);
-        if (p && typeof p.catch === "function") p.catch(() => {});
-      } catch {}
-    }, 1000);
-    if (touchTimer && typeof touchTimer.unref === "function") touchTimer.unref();
   };
 
   return {
@@ -140,10 +138,21 @@ export function createCompileCache(memento, opts = {}) {
       try {
         if (wasm.length > MAX_BYTES) { log(`产物 ${(wasm.length / 1048576).toFixed(1)}MB 超过缓存上限，跳过`); return false; }
         const m = load();
-        m.entries[k] = { b64: b64enc(wasm), ms: ms || 0, t: ++tick };
+        m.entries[k] = { b64: b64enc(wasm), ms: ms || 0, t: ++tick, bytes: wasm.length };
         l1Put(k, wasm, ms);
+        // 淘汰：条数上限 + **总字节上限**（按最近使用时间从旧到新删）
         const keys = Object.keys(m.entries).sort((a, b) => (m.entries[b].t || 0) - (m.entries[a].t || 0));
-        while (keys.length > MAX_ENTRIES) delete m.entries[keys.pop()];
+        const sizeOf = (key) => {
+          const e = m.entries[key];
+          return (e && (e.bytes || Math.floor((e.b64 || "").length * 0.75))) || 0;
+        };
+        let total = keys.reduce((n, key) => n + sizeOf(key), 0);
+        while (keys.length > MAX_ENTRIES || (total > MAX_TOTAL_BYTES && keys.length > 1)) {
+          const dead = keys.pop();
+          total -= sizeOf(dead);
+          delete m.entries[dead];
+          log(`缓存淘汰 ${dead}（总 ${(total / 1048576).toFixed(1)}MB / 条数 ${keys.length}）`);
+        }
         const p = memento.update(CACHE_KEY, m);
         if (p && typeof p.catch === "function") p.catch((e) => log("缓存写入失败（忽略）: " + ((e && e.message) || e)));
         log(`已写入缓存 ${k}（${(wasm.length / 1048576).toFixed(1)}MB）`);

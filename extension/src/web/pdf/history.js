@@ -5,7 +5,8 @@
 //
 // 快照放在扩展的 globalStorage 里（每用户一份，不污染工作区、不会被 git 同步）。
 import * as vscode from "vscode";
-import { createHistoryStore, looksLikePdf, keepForSize, keyOf, legacyKeyOf, sortNewestFirst } from "./history-core.mjs";
+import { createHistoryStore, looksLikePdf, keepForSize, keyOf, legacyKeyOf, sortNewestFirst,
+         withWriteLock, noteSelfWrite } from "./history-core.mjs";
 import { reloadPdfPanels, flushPdfPanels } from "./provider.js";
 
 export const PDF_TIMELINE_ID = "webcpp.pdf-history";
@@ -102,11 +103,16 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
           if (snap === null) log("[restore] 当前文件超过快照体积上限，跳过备份（继续恢复）");
 
           progress.report({ message: "写回 PDF…" });
-          await vscode.workspace.fs.writeFile(uri, toBytes(bytes));
-          // 恢复后把"当前版本"的内存缓存也刷新掉，避免下次保存基于旧字节
-          try { await reloadPdfPanels(uri.toString()); } catch { }
+          // ⚠️ 必须和"保存/flush"共用同一把写队列：否则并发时 flush 的写可能落在恢复之后，
+          //    表现是"恢复完又变回新版本"。以前这里直接 writeFile，完全绕过了队列。
+          await withWriteLock(uri.toString(), async () => {
+            noteSelfWrite(uri.toString());
+            await vscode.workspace.fs.writeFile(uri, toBytes(bytes));
+          });
           try { history.notifyChanged?.(uri.toString()); } catch { }
 
+          // 只刷新一次（以前这里刷一次、return 又刷一次，写盘还会触发 watcher 第三次，
+          // 并发重建 viewer 会白屏/多开 PDFium worker）
           progress.report({ message: "刷新阅读器…" });
           return reloadPdfPanels(uri.toString());
         },

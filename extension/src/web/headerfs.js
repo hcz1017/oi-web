@@ -19,6 +19,15 @@ class HeaderFsProvider {
 
   async _load() {
     if (this._files) return this._files;
+    // ⚠️ 加"在途 promise"缓存：资源管理器展开目录时并发 stat/readDirectory，
+    //    没有它会同时 fetch+gunzip+解码 1338 个头文件好几遍（几十 MB 的重复活）。
+    if (this._loading) return this._loading;
+    this._loading = this._loadOnce();
+    try { return await this._loading; } finally { this._loading = null; }
+  }
+
+  async _loadOnce() {
+    if (this._files) return this._files;
     const base = String(this._getBase() || "").replace(/\/+$/, "");
     // ⚠️ 桌面版里 assetsBase() 是**文件路径**（不是 URL），直接 fetch 会报
     //    "Failed to parse URL from /home/.../headers.json.gz" —— 点 #include <vector> 打不开就是这个。

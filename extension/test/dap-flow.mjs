@@ -75,6 +75,7 @@ const spawned = spawn(host);
 const rpc = spawned.rpc;
 await rpc.sendMessage("hello", [], false);
 const usedModuleIds = new Set();
+const removedModuleIds = new Set();   // 记录 removeRawModule 调用（验证准备缓存持有期间不注销）
 const engine = {
   // 与 DwarfEngine.addRawModule 等价：upstream 期望 rawModule = { url, code }
   addRawModule: (id, url, bytes) => {
@@ -92,7 +93,7 @@ const engine = {
   getFunctionInfo: (...a) => rpc.sendMessage("getFunctionInfo", ...a),
   listVariablesInScope: () => Promise.resolve([]),
   getValueInfo: () => Promise.resolve(null),
-  removeRawModule: () => Promise.resolve(),
+  removeRawModule: (id) => { removedModuleIds.add(id); return Promise.resolve(); },
 };
 
 const SRC = `#include <cstdio>
@@ -252,7 +253,33 @@ await waitFor((m) => m.type === "response" && m.command === "disconnect");
     const r3 = await waitResp(msgs);
     must(!!r3 && r3.success, `第三次 launch 成功${r3 && !r3.success ? " / " + r3.message : ""}`);
     must(logs.some((l) => /命中准备缓存/.test(l)), "第三次 launch 命中「准备缓存」（跳过 DWARF 解析 + 插桩）");
+    // ⚠️ 缓存复用 modId 的前提是模块仍注册在引擎里：会话结束不能把它注销，
+    //    否则下一次命中会拿到"死模块"——断点能停，但变量/求值/栈帧映射全报
+    //    "Unknown module with raw module ID"（变量面板全空）。
+    const cachedModId = a3.modId;
+    const reusedSameId = !!(logs.some((l) => /命中准备缓存/.test(l)));
     a3.dispose();
+    must(reusedSameId && !removedModuleIds.has(cachedModId),
+      "命中缓存的会话结束时，不注销模块（否则下次命中是死模块）");
+
+    // 第四次：应继续命中同一份缓存且模块仍然可用
+    {
+      const logs4 = [];
+      const a4 = new WasmDebugAdapter({
+        target, getEngine: async () => engine,
+        compile: (args) => tc.compile(args),
+        workerUrl: path.join(EXT, "dist/web/debugWorker.js"),
+        log: (x) => logs4.push(String(x)),
+      });
+      const msgs4 = [];
+      a4.onDidSendMessage((x) => msgs4.push(x));
+      a4.handleMessage({ type: "request", seq: 400, command: "launch", arguments: {} });
+      const r4 = await waitResp(msgs4);
+      must(!!r4 && r4.success, `第四次 launch 成功${r4 && !r4.success ? " / " + r4.message : ""}`);
+      must(logs4.some((l) => /命中准备缓存/.test(l)), "第四次仍然命中准备缓存");
+      must(a4.modId === cachedModId, "命中缓存复用同一个 modId（模块没被注销，可直接复用）");
+      a4.dispose();
+    }
   }
 
   must(!!r1 && r1.success && !!r2 && r2.success,

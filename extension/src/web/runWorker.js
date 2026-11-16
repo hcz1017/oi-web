@@ -158,6 +158,21 @@ self.onmessage = async (ev) => {
   }
 };
 
+/** 产物的快速指纹（长度 + 头/中/尾各 4KB 采样）：用于复用已编译的 WebAssembly.Module */
+let modCache = { sig: "", mod: null };
+function sigOf(u8) {
+  const CH = 4096;
+  const n = u8.length;
+  let h = 2166136261 >>> 0;
+  const mix = (from, to) => {
+    for (let i = from; i < to; i++) { h ^= u8[i]; h = Math.imul(h, 16777619) >>> 0; }
+  };
+  mix(0, Math.min(n, CH));
+  mix(Math.max(0, (n >> 1) - (CH >> 1)), Math.min(n, (n >> 1) + (CH >> 1)));
+  mix(Math.max(0, n - CH), n);
+  return n + ":" + h.toString(16);
+}
+
 async function runWasi(bytes, { stdin, onOut, onErr }) {
   const { WASI, WASIProcExit, ConsoleStdout, PreopenDirectory, File, Directory, OpenFile } = await import("@bjorn3/browser_wasi_shim");
   const root = new Directory(new Map());
@@ -171,7 +186,13 @@ async function runWasi(bytes, { stdin, onOut, onErr }) {
     try { return origFdRead(...args); }
     finally { try { stdin?.resetJustServed?.(); } catch {} }
   };
-  const mod = await WebAssembly.compile(bytes);
+  // ⚠️ 对拍会同一份产物跑很多用例：每例都 WebAssembly.compile 一次（几十 ms）纯属浪费，
+  //    而且这段时间算在"用例耗时"里、也占用超时预算。按"长度 + 头/中/尾采样"缓存 Module。
+  const sig = sigOf(bytes);
+  const mod = (modCache.mod && modCache.sig === sig)
+    ? modCache.mod
+    : await WebAssembly.compile(bytes);
+  if (!modCache.mod || modCache.sig !== sig) { modCache = { sig, mod }; }
   const inst = await WebAssembly.instantiate(mod, { wasi_snapshot_preview1: wasi.wasiImport });
   try { return wasi.start(inst) ?? 0; }
   catch (e) { if (e instanceof WASIProcExit) return e.code; throw e; }

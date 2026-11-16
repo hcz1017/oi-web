@@ -285,14 +285,14 @@ let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自�
 export function resetClangdFatal() { fatal = false; }
 
 export async function startClangd(ctx, opts = {}) {
-  const merged = { files: ["main.cpp"], flags: "-std=c++14", opt: 2, debug: true, base: "", verbose: false, log: undefined, onRestart: undefined, ...opts };
+  const merged = { files: ["main.cpp"], flags: "-std=c++14", opt: 2, debug: true, base: "", verbose: false, log: undefined, onRestart: undefined, onFatal: undefined, ...opts };
   // ⚠️ 只用 module worker（ESM glue 要求）。不再"降级经典 worker"：
   //    经典 worker + ESM glue 会抛 "Module scripts don't support importScripts()"，
   //    降级只会把错误变成另一种错误，掩盖真正原因。
   return await startOnce(ctx, merged);
 }
 
-async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, verbose, log, onRestart }) {
+async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, verbose, log, onRestart, onFatal }) {
   const out = typeof log === "function" ? log : (line) => console.warn("[oi clangd]", line);
   if (client) return client;
   if (fatal) throw new Error("clangd 已被停用（pthread 线程池不足）。重启扩展或运行「OI C++: 重启 clangd(WASM)」可再试");
@@ -358,8 +358,19 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   proxy.verbose = !!verbose;   // oiCpp.verbose：打印 LSP 流量，排查"悬停不返回/进度不结束"
   let liveReader = null;
   // worker 挂了要让客户端知道（以前 onError/onClose 是空函数，在途请求永久挂起）
-  worker.addEventListener("error", (e) => { try { liveReader?.onError.fire([e, undefined, 1]); } catch {} });
-  worker.addEventListener("messageerror", () => { try { liveReader?.onError.fire([new Error("messageerror"), undefined, 1]); } catch {} });
+  // ⚠️ worker 挂了不只是"通知在途请求失败"：lsp.js 的 client/current 和扩展侧的
+  //    lspPromise 都还是非空的 → 之后 ensureLsp() 永远返回这个已死的 promise，
+  //    再打开 .cpp 也不会重启，补全/诊断静默消失（只能手动「重启 clangd」）。
+  //    所以这里额外回调 onFatal，让扩展把 lspPromise 清掉。
+  const fatal = (why) => { try { onFatal && onFatal(why); } catch {} };
+  worker.addEventListener("error", (e) => {
+    try { liveReader?.onError.fire([e, undefined, 1]); } catch {}
+    fatal("worker error: " + ((e && (e.message || e.type)) || e));
+  });
+  worker.addEventListener("messageerror", () => {
+    try { liveReader?.onError.fire([new Error("messageerror"), undefined, 1]); } catch {}
+    fatal("worker messageerror");
+  });
   // provider 每次新建 reader/writer：lc.stop() 会 dispose reader，复用同一对会让重启后静默丢弃消息
   let clientRef = null;   // middleware 里要发请求，构造完回指
   // ⚠️ 桌面版（Node 宿主）必须给 Worker 一个占位符：
@@ -371,6 +382,8 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
   // 用 browser 版 client（它的 Reader/Writer 面向 worker 的 postMessage，
   // 我们的 clangd worker 在 web/桌面两边都是这个协议）。桌面版会把它一起打进 bundle。
   const { LanguageClient } = await import("vscode-languageclient/browser");
+  // 客户端状态变成 Stopped（非我们主动 stop）→ 也按致命处理，允许下次重新拉起来
+  // 注意：LanguageClient 的状态事件在构造后才有，挂在下面对 lc 的赋值之后（见下）
   const lc = new LanguageClient(
     "oi-cpp-clangd",
     "clangd (WASM)",

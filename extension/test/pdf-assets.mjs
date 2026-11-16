@@ -127,7 +127,8 @@ for (const f of ["client.mjs", "client.css"]) {
   const pkgViews = ((pkg.contributes.views || {}).webcppTests || []).map((v) => v.id);
   must(!pkgViews.includes("oiCpp.pdfSnapshots"), "package.json 里没有多余的快照视图");
   const providerSrc = readFileSync(path.join(EXT, "src", "web", "pdf", "provider.js"), "utf8");
-  must(/lastSelfWrite/.test(providerSrc), "watcher 会忽略自己写盘触发的变更（不再每保存就重载）");
+  must(/isSelfWrite\(/.test(providerSrc), "watcher 会忽略自己写盘触发的变更（不再每保存就重载）");
+  must((providerSrc.match(/noteSelfWrite\(/g) || []).length >= 2, "保存/flush 写盘都打上\"自己写的\"标记");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");

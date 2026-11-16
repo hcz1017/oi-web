@@ -4,27 +4,12 @@
 // 宿主只做三件事：读文件、写回文件（先备份）、以及 webview 做不到的事（外部打开、日志）。
 import * as vscode from "vscode";
 import * as platform from "oi-platform";
-import { looksLikePdf, keepForSize } from "./history-core.mjs";
+import { looksLikePdf, keepForSize, withWriteLock, noteSelfWrite, isSelfWrite } from "./history-core.mjs";
 
 export const PDF_VIEW_TYPE = "webcpp.pdf";
 
 /** 打开着的 PDF 面板（uri 字符串 → { reload, flush }）。恢复快照/文件被外部改动时用它刷新 */
 const panels = new Map();
-
-/**
- * 每个文件一条写队列：保存、恢复、flush 都排队执行。
- * 不加队列时，"保存中紧接着恢复"会让两次写盘交错（后写的可能基于旧快照），
- * 表现为"恢复完又变回新版本"这类玄学 bug。
- */
-const writeQueues = new Map();
-function withWriteLock(uriString, fn) {
-  const key = String(uriString);
-  const prev = writeQueues.get(key) || Promise.resolve();
-  const next = prev.then(fn, fn);
-  // 队列尾部存一个"吞掉错误"的 promise，避免一次失败卡死后续所有操作
-  writeQueues.set(key, next.catch(() => { }));
-  return next;
-}
 
 /**
  * 让某个 PDF 的所有已打开面板**先把自己手上未保存的批注写回文件**。
@@ -82,17 +67,32 @@ export function registerPdfViewer(ctx, deps = {}) {
       webview.html = buildHtml(webview, ctx.extensionUri);
 
       const fileName = String(document.uri.path.split("/").pop() || "document.pdf");
+      // ⚠️ 文件名可能被当作 glob（`[`、`?`、`{}`）——watcher 那边统一用 "*" + 名字比较
       const send = (m) => { try { webview.postMessage(m); } catch { } };
 
       let bytes = null;
       let loadError = null;
-      /** 我们自己上一次写盘的时间（用来忽略"自己触发"的 watcher 事件） */
-      let lastSelfWrite = 0;
+      // ⚠️ webview 的 ready 消息**不会排队**：以前要等 readFile（大文件/远程/网页版很慢）读完
+      //    才注册 onDidReceiveMessage，ready 早就发完了 → 永久白屏且没有任何报错。
+      //    这里在 await 之前就先挂一个"记录 ready"的监听，读完后再补发 load/error。
+      let readySeen = false;
+      let sentLoad = false;
+      const sendLoadIfReady = () => {
+        if (sentLoad || !readySeen) return;
+        if (bytes === null && !loadError) return;        // 还没读完，等读完再发
+        sentLoad = true;
+        if (loadError) { send({ type: "error", text: "读不到这个文件：" + loadError }); return; }
+        send({ type: "load", bytes: bytes || new Uint8Array(0), name: fileName });
+      };
+      const earlyListener = webview.onDidReceiveMessage((m) => {
+        if (m && m.type === "ready") { readySeen = true; sendLoadIfReady(); }
+      });
       try {
         bytes = await vscode.workspace.fs.readFile(document.uri);
       } catch (e) {
         loadError = String((e && e.message) || e);
       }
+      sendLoadIfReady();
 
       // 登记面板：供"恢复快照 / 外部改动"时热重载
       /** 发起一次"把未保存批注写回文件"，等客户端回 flushSave */
@@ -123,7 +123,9 @@ export function registerPdfViewer(ctx, deps = {}) {
       let watcher = null;
       try {
         const dirUri = document.uri.with({ path: document.uri.path.replace(/\/[^/]*$/, "") });
-        watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dirUri, fileName));
+        // ⚠️ 不能把 fileName 直接当 glob（名字里有 [ ] ? { } 会匹配不到）；
+        //    监听整个目录再比名字，最稳。
+        watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dirUri, "*"));
         watcher.onDidDelete((u) => {
           if (u.toString() !== key) return;
           send({ type: "error", text: "这个 PDF 已被删除或移走（编辑器里的内容可能已过期）" });
@@ -134,8 +136,12 @@ export function registerPdfViewer(ctx, deps = {}) {
           // ⚠️ 保存时我们自己写盘也会触发 watcher：以前这里无脑 reload，
           //    结果"每存一次就整页重新载入"（滚动位置、选中、缩放全丢）。
           //    只对真正的外部改动刷新。
-          if (Date.now() - lastSelfWrite < 4000) return;
-          reload();
+          if (isSelfWrite(key, 4000)) return;         // 自己写盘触发的，忽略
+          // 外部改动：先让阅读器把未保存批注写回，再重载，避免"在别的工具里改一下就把画的东西丢了"
+          (async () => {
+            try { await flush(3000); } catch { /* 没有未保存内容/超时都继续 */ }
+            await reload();
+          })();
         });
       } catch { /* 虚拟工作区不支持 watcher 就跳过 */ }
 
@@ -143,8 +149,9 @@ export function registerPdfViewer(ctx, deps = {}) {
         if (!m || !m.type) return;
 
         if (m.type === "ready") {
-          if (loadError) { send({ type: "error", text: "读不到这个文件：" + loadError }); return; }
-          send({ type: "load", bytes: bytes || new Uint8Array(0), name: fileName });
+          // 可能之前已经发过 load（earlyListener 抢先处理了）：不要重复发，否则会重建两次 viewer
+          readySeen = true;
+          sendLoadIfReady();
           return;
         }
 
@@ -165,7 +172,7 @@ export function registerPdfViewer(ctx, deps = {}) {
                 const mb = size / 1048576;
                 send({ type: "log", text: `[pdf] 已留快照 ${snapshot}（原文件 ${mb.toFixed(1)}MB，按体积最多留 ${keepForSize(size)} 份）` });
               }
-              lastSelfWrite = Date.now();
+              noteSelfWrite(key);
               await vscode.workspace.fs.writeFile(document.uri, data);
               bytes = data;                   // 后续再次保存时用最新内容
               try { history && history.notifyChanged?.(document.uri.toString()); } catch { }
@@ -192,7 +199,7 @@ export function registerPdfViewer(ctx, deps = {}) {
                   try { history && history.notifyChanged?.(document.uri.toString()); } catch { }
                 } catch { /* 快照失败不阻塞冲刷 */ }
               }
-              lastSelfWrite = Date.now();
+              noteSelfWrite(key);
               await vscode.workspace.fs.writeFile(document.uri, data);
               bytes = data;
             });

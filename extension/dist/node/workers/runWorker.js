@@ -2031,6 +2031,22 @@
       post({ type: "error", message: e && (e.stack || e.message) || String(e) });
     }
   };
+  var modCache = { sig: "", mod: null };
+  function sigOf(u8) {
+    const CH = 4096;
+    const n = u8.length;
+    let h = 2166136261 >>> 0;
+    const mix = (from, to) => {
+      for (let i = from; i < to; i++) {
+        h ^= u8[i];
+        h = Math.imul(h, 16777619) >>> 0;
+      }
+    };
+    mix(0, Math.min(n, CH));
+    mix(Math.max(0, (n >> 1) - (CH >> 1)), Math.min(n, (n >> 1) + (CH >> 1)));
+    mix(Math.max(0, n - CH), n);
+    return n + ":" + h.toString(16);
+  }
   async function runWasi(bytes, { stdin, onOut, onErr }) {
     const { WASI: WASI3, WASIProcExit: WASIProcExit2, ConsoleStdout: ConsoleStdout2, PreopenDirectory: PreopenDirectory2, File: File2, Directory: Directory2, OpenFile: OpenFile2 } = await Promise.resolve().then(() => (init_dist(), dist_exports));
     const root = new Directory2(/* @__PURE__ */ new Map());
@@ -2048,7 +2064,11 @@
         }
       }
     };
-    const mod = await WebAssembly.compile(bytes);
+    const sig = sigOf(bytes);
+    const mod = modCache.mod && modCache.sig === sig ? modCache.mod : await WebAssembly.compile(bytes);
+    if (!modCache.mod || modCache.sig !== sig) {
+      modCache = { sig, mod };
+    }
     const inst = await WebAssembly.instantiate(mod, { wasi_snapshot_preview1: wasi.wasiImport });
     try {
       return wasi.start(inst) ?? 0;
