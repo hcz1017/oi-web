@@ -110,12 +110,39 @@ export function keepForSize(size, { keep = 10, budgetBytes = 1024 * 1024 * 1024 
 // 真正的保护改成"份数自适应"：总预算 1GB，越大的文件留的份数越少，但永远至少留 1 份。
 export function createHistoryStore(fs, root, { keep = 10, maxBytes = Infinity, budgetBytes = 1024 * 1024 * 1024 } = {}) {
   return {
+    /** 这个文件的快照目录：[新 key, 老 key] */
+    dirsOf(uriString) {
+      return [`${root}/${keyOf(uriString)}`, `${root}/${legacyKeyOf(uriString)}`];
+    },
+
+    /** 把老 key 目录里的快照**迁移**到新目录（升级后旧版本不能凭空消失） */
+    async migrate(uriString) {
+      const [newDir, oldDir] = this.dirsOf(uriString);
+      if (newDir === oldDir) return 0;
+      let oldNames = [];
+      try { oldNames = (await fs.readDir(oldDir)).filter((n) => /\.pdf$/.test(n)); } catch { return 0; }
+      if (!oldNames.length) return 0;
+      await fs.mkdir(newDir);
+      let moved = 0;
+      for (const name of oldNames) {
+        try {
+          const bytes = await fs.readFile(`${oldDir}/${name}`);
+          await fs.writeFile(`${newDir}/${name}`, bytes);
+          await fs.deleteFile(`${oldDir}/${name}`);
+          moved++;
+        } catch { /* 单条失败就留在老目录，list() 仍然能看到 */ }
+      }
+      return moved;
+    },
+
     /** 存一份快照，返回快照文件名；失败抛错（调用方决定是否放弃写入） */
     async snapshot(uriString, bytes) {
       // 极端体积（>400MB）才彻底不存；其余按体积自适应份数（见 keepForSize）
       const size = bytes && (bytes.byteLength != null ? bytes.byteLength : bytes.length);
       if (Number.isFinite(size) && size > maxBytes) return null;
       const keepN = keepForSize(size, { keep, budgetBytes });
+      // 升级 key 之后：老目录里还有历史快照，先搬过来，否则"一存新的，旧的就不见了"
+      try { await this.migrate(uriString); } catch { }
       const key = keyOf(uriString);
       const dir = `${root}/${key}`;
       await fs.mkdir(dir);
@@ -126,19 +153,25 @@ export function createHistoryStore(fs, root, { keep = 10, maxBytes = Infinity, b
       await fs.writeFile(`${dir}/${name}`, bytes);
       // 裁剪：按这个文件的体积算出该留几份（小文件 10 份，大文件少留）
       try {
-        const names = sortNewestFirst((await fs.readDir(dir)).filter((n) => /\.pdf$/.test(n)));
-        for (const old of pickPrune(names, keepN)) await fs.deleteFile(`${dir}/${old}`);
+        const all = await this.list(uriString);
+        const keepSet = new Set(all.slice(0, Math.max(1, keepN)).map((x) => x.name));
+        for (const dir2 of this.dirsOf(uriString)) {
+          let names2 = [];
+          try { names2 = (await fs.readDir(dir2)).filter((n) => /\.pdf$/.test(n)); } catch { }
+          for (const old of names2) if (!keepSet.has(old)) await fs.deleteFile(`${dir2}/${old}`);
+        }
       } catch { /* 裁剪失败不影响本次保存 */ }
       return name;
     },
-    /** 列出某文件的所有快照（新→旧）；会自动认老的 8 位 key 目录 */
+    /** 列出某文件的所有快照（新→旧）：**新老目录求并集**，升级后旧条目不会消失 */
     async list(uriString) {
-      let names = [];
-      try { names = (await fs.readDir(`${root}/${keyOf(uriString)}`)).filter((n) => /\.pdf$/.test(n)); } catch { }
-      if (!names.length) {
-        try { names = (await fs.readDir(`${root}/${legacyKeyOf(uriString)}`)).filter((n) => /\.pdf$/.test(n)); } catch { }
+      const names = new Set();
+      for (const dir of this.dirsOf(uriString)) {
+        try {
+          for (const n of await fs.readDir(dir)) if (/\.pdf$/.test(n)) names.add(n);
+        } catch { /* 目录不存在是正常的 */ }
       }
-      return sortNewestFirst(names).map((name) => ({ name, ts: stampOf(name) }));
+      return sortNewestFirst([...names]).map((name) => ({ name, ts: stampOf(name) }));
     },
     /** 读某个快照的字节（新目录找不到就回退到老目录） */
     async read(uriString, name) {

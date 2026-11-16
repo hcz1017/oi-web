@@ -117,6 +117,34 @@ must(keyOf("") === keyOf(""), "keyOf: 空串也能算（不抛）");
     must(typeof ok === "string", "snapshot: 未超限时正常返回名字");
   }
 
+  // 老 key（8 位）目录里的历史快照：升级后不能消失，且要能被迁移过来
+  {
+    const oRoot = mkdtempSync(path.join(os.tmpdir(), "pdfhist-legacy-"));
+    const ofs = {
+      async mkdir(p) { mkdirSync(p, { recursive: true }); },
+      async writeFile(p, b) { writeFileSync(p, Buffer.from(b)); },
+      async readFile(p) { return new Uint8Array(readFileSync(p)); },
+      async readDir(p) { try { return readdirSync(p); } catch { return []; } },
+      async deleteFile(p) { try { rmF(p); } catch { } },
+    };
+    const ouri = "file:///ws/旧书.pdf";
+    const oldDir = path.join(oRoot, legacyKeyOf(ouri));
+    mkdirSync(oldDir, { recursive: true });
+    writeFileSync(path.join(oldDir, "20261115-120000-000.pdf"), Buffer.from("%PDF-1.7 old"));
+    const store2 = createHistoryStore(ofs, oRoot, { keep: 10 });
+
+    must((await store2.list(ouri)).length === 1, "list: 只存在老 key 目录时也能列出来");
+    const newName = await store2.snapshot(ouri, new TextEncoder().encode("%PDF-1.7 new"));
+    const merged = await store2.list(ouri);
+    must(merged.length === 2, `list: 存了新快照后，旧条目仍在（实际 ${merged.length} 条）`);
+    must(merged.some((x) => x.ts < stampOf(newName)), "list: 旧的排在新的后面");
+    must((await store2.read(ouri, "20261115-120000-000.pdf")).length > 0, "read: 老条目可读");
+    let moved = 0;
+    try { moved = readdirSync(path.join(oRoot, keyOf(ouri))).length; } catch { }
+    must(moved >= 2, `migrate: 老快照已搬到新 key 目录（新目录 ${moved} 个文件）`);
+    rmSync(oRoot, { recursive: true, force: true });
+  }
+
   // 非法快照名（防止 ../ 之类穿越）
   let rejected = false;
   try { await store.read(uri, "../../etc/passwd"); } catch { rejected = true; }
