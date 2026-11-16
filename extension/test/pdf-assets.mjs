@@ -141,7 +141,7 @@ for (const f of ["client.mjs", "client.css"]) {
   must(flushIdx > 0 && snapIdx > flushIdx, "先 flush 再备份（保证快照里含用户最后那批批注）");
   must(/setTimeout\(/.test(historySrc.slice(historySrc.indexOf("notifyChanged ="), historySrc.indexOf("notifyChanged =") + 900)),
     "时间线变更会延迟补发一次（否则要手动刷新才看到新条目）");
-  must(/changeEmitter\.fire\(u\)/.test(historySrc), "onDidChange 用 Uri 对象触发（字符串 parse 出来的会被 workbench 判成别的资源）");
+  must(/changeEmitter\.fire\(\)/.test(historySrc), "onDidChange 不带 URI 触发（d.uris===undefined 表示所有资源都变了，最宽松）");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");

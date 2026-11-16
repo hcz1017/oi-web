@@ -234,7 +234,11 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
     //    于是事件被忽略 —— 表现就是"时间线必须手动刷新"。
     const u = typeof uriOrString === "string" ? vscode.Uri.parse(uriOrString) : uriOrString;
     const key = u && u.toString ? u.toString() : String(uriOrString);
-    const fire = () => { try { changeEmitter.fire(u); } catch { } };
+    // ⚠️ 触发时**不要带 URI**：workbench 里 timeline 视图的过滤条件是
+    //      `e.uris === undefined || e.uris.some(u => extUri.isEqual(u, this.uri))`
+    //    带 URI 时一旦编码/规范化形式对不上就被静默丢弃；不带 URI 表示"所有资源都变了"，
+    //    只要时间线当前确实绑定了某个资源就会刷新（这是我们能拿到的最宽松形式）。
+    const fire = () => { try { changeEmitter.fire(); } catch { } };
     fire();
     log(`[timeline] onDidChange → ${key}`);
     if (pending.has(key)) return;
