@@ -37,6 +37,43 @@ EmbedPDF（Apache-2.0）的引擎是 **PDFium —— Chrome/Edge 用的同一个
 ### OCR（后续版本）
 当前未启用。批注已经落进 PDF，将来 OCR 直接把识别文本写进 PDF 的不可见文本层即可，不用另存 sidecar。
 
+## [0.4.4] - 2026-11-13
+
+### 修复：Windows 桌面上 clangd 起不来（`TypeError: fetch failed`）
+0.4.3 让桌面走回 Node 扩展宿主后，Windows 上打开 `.cpp` 会看到：
+
+```
+[clangd] [stage] worker 启动 ✔ url=file:///d:/…/dist/node/worker-shim.cjs
+[oi clangd] 失败: TypeError: fetch failed
+```
+
+根因是**把 Windows 盘符路径当成了 URL**：垫片（`worker-shim.cjs`）用来判断"本地文件还是 URL"
+的正则是 `/^[a-z]+:/`，而 `d:\vscode\data\extensions\…\assets` 开头的 `d:` 正好命中它，
+于是本地资产被交给真正的 `fetch`（undici），undici 认为它不是合法 URL → `fetch failed`。
+macOS / Linux 的路径以 `/` 开头不会命中，所以本机（Linux）测试一直测不出来。
+
+- 新增 `src/node/url-path.cjs`：`isWindowsDrive()` / `isScheme()` / `isFileLike()`，
+  协议名要求**至少 2 个字符**（`d:` 不再被当成协议），盘符路径 `d:\` / `D:/` 一律算本地文件；
+- `fetch` 与 `importScripts`（dwarf 引擎用）都改用这个判定；
+- 新增 `test/node-paths.mjs`（22 条断言，覆盖 Windows 盘符、`file:///d:/`、POSIX 路径、
+  以及 `http`/`https`/`data`/`blob`/`vscode-file` 不能被误判成文件），并挂进 `test:all`。
+
+## [0.4.3] - 2026-11-13
+
+### 修复：桌面版（离线）安装 VSIX 后，一打开 .cpp 就报 `Failed to fetch`
+清单里 `extensionKind: ["workspace"]` 会强制把扩展放进"工作区扩展宿主"；桌面窗口在
+**没打开文件夹 / 虚拟工作区**时，这个宿主可能被解析成 **Web Worker 宿主** —— 于是桌面里跑的
+其实是 `browser` 入口（我们的网页版代码），它把资产当 **http** 资源去 `fetch`：
+`${assetsBase}/clangd/clangd.wasm.gz`、`headers.json.gz`、`clangd.js` 等。
+桌面下 `assetsBase` 是 `vscode-file://…`，离线/该 scheme 下 `fetch` 直接失败
+→ 打开 `.cpp` 触发 clangd 启动时抛 `Failed to fetch`。
+
+- **删掉 `extensionKind`**：让 VS Code 依据 `main`（桌面 Node 宿主）/`browser`（网页宿主）
+  自己选择入口。桌面走 Node，资产用 `fs` 读，**完全离线也能用**；网页仍走 web 入口。
+- **`capabilities.virtualWorkspaces` 改为 `false`**：终端、编译用的文件系统、clangd 都依赖真实磁盘，
+  我们本来就没为虚拟工作区做适配；声明出来可以避免 VS Code 把桌面窗口误判成 web 宿主。
+  （如果需要虚拟工作区支持，得把 web 入口的资产读取改成 `vscode.workspace.fs`，属于另一件事。）
+
 ## [0.4.2] - 2026-11-07
 
 ### 变更：默认语言标准改为 C++14
