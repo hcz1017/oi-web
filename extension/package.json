@@ -97,6 +97,11 @@
         "title": "查看/恢复 PDF 快照",
         "category": "WebC++",
         "icon": "$(history)"
+      },
+      {
+        "command": "oiCpp.pdf.snapshotDiag",
+        "title": "PDF 快照诊断",
+        "category": "WebC++"
       }
     ],
     "menus": {

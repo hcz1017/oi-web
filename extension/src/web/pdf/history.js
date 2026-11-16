@@ -5,7 +5,7 @@
 //
 // 快照放在扩展的 globalStorage 里（每用户一份，不污染工作区、不会被 git 同步）。
 import * as vscode from "vscode";
-import { createHistoryStore, looksLikePdf } from "./history-core.mjs";
+import { createHistoryStore, looksLikePdf, keepForSize, keyOf, legacyKeyOf, sortNewestFirst } from "./history-core.mjs";
 import { reloadPdfPanels, flushPdfPanels } from "./provider.js";
 
 export const PDF_TIMELINE_ID = "webcpp.pdf-history";
@@ -44,8 +44,13 @@ function toBytes(v) {
  */
 export function createPdfHistory(ctx) {
   const root = vscode.Uri.joinPath(ctx.globalStorageUri, "pdf-history");
-  // 每个文件只保留最近 10 份快照（用户要求；更早的自动淘汰）
-  return createHistoryStore(fsAdapter(root), root.path, { keep: 10 });
+  // 不设"文件太大就不存"的限制（用户明确要求）：任何大小的 PDF 都会留快照。
+  // 真正的保护是份数自适应 —— 总预算 1GB，越大的文件留得越少，但永远至少 1 份。
+  return createHistoryStore(fsAdapter(root), root.path, {
+    keep: 10,
+    budgetBytes: 1024 * 1024 * 1024,
+    maxBytes: Infinity,
+  });
 }
 
 /**
@@ -128,6 +133,31 @@ export function registerPdfTimeline(ctx, history, log = () => { }) {
     );
     if (!pick) return;
     await vscode.commands.executeCommand(RESTORE_COMMAND, uri.toString(), pick.name);
+  }));
+
+  // 诊断命令：快照到底存没存、存在哪、为什么没存 —— 一条命令看全
+  subs.push(vscode.commands.registerCommand("oiCpp.pdf.snapshotDiag", async () => {
+    const uri = pickPdfUri();
+    if (!uri) { vscode.window.showInformationMessage("先打开或选中一个 .pdf 文件"); return; }
+    let size = "?";
+    try { const b = await vscode.workspace.fs.readFile(uri); size = ((b.byteLength || b.length) / 1048576).toFixed(2) + "MB"; } catch { }
+    const list = await history.list(uri.toString());
+    const lines = [
+      `文件: ${uri.path.split("/").pop()}（${size}）`,
+      `key(新): ${keyOf(uri.toString())}`,
+      `key(旧): ${legacyKeyOf(uri.toString())}`,
+      `快照数量: ${list.length}`,
+      `按体积最多保留: ${keepForSize(parseFloat(size) * 1048576)} 份`,
+      ...list.slice(0, 10).map((s2) => `  · ${s2.name}  ${new Date(s2.ts).toLocaleString()}`),
+    ];
+    for (const l of lines) log("[diag] " + l);
+    const pick = await vscode.window.showInformationMessage(
+      `快照 ${list.length} 条（文件 ${size}）。详细信息已写入「WebC++」输出面板。`,
+      { modal: false }, "恢复最近一条", list.length ? "关闭" : "关闭",
+    );
+    if (pick === "恢复最近一条" && list.length) {
+      await vscode.commands.executeCommand(RESTORE_COMMAND, uri.toString(), list[0].name);
+    }
   }));
 
   // 时间线提供者。

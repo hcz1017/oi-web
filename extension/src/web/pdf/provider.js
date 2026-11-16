@@ -4,7 +4,7 @@
 // 宿主只做三件事：读文件、写回文件（先备份）、以及 webview 做不到的事（外部打开、日志）。
 import * as vscode from "vscode";
 import * as platform from "oi-platform";
-import { looksLikePdf } from "./history-core.mjs";
+import { looksLikePdf, keepForSize } from "./history-core.mjs";
 
 export const PDF_VIEW_TYPE = "webcpp.pdf";
 
@@ -161,7 +161,9 @@ export function registerPdfViewer(ctx, deps = {}) {
               if (history) {
                 const old = bytes || await vscode.workspace.fs.readFile(document.uri);
                 snapshot = await history.snapshot(document.uri.toString(), old);
-                if (snapshot === null) send({ type: "log", text: "[pdf] 文件超过快照体积上限，本次未留快照" });
+                const size = (old && (old.byteLength || old.length)) || 0;
+                const mb = size / 1048576;
+                send({ type: "log", text: `[pdf] 已留快照 ${snapshot}（原文件 ${mb.toFixed(1)}MB，按体积最多留 ${keepForSize(size)} 份）` });
               }
               lastSelfWrite = Date.now();
               await vscode.workspace.fs.writeFile(document.uri, data);

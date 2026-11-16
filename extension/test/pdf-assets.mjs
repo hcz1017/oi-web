@@ -115,6 +115,8 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/onDidDelete/.test(provider), "文件被删除/移走时会给提示");
   must(/looksLikePdf/.test(histGlue) && /已损坏/.test(histGlue), "恢复前校验快照是不是有效 PDF");
   must(/maxBytes/.test(histCore), "快照有体积上限（防撑爆存储）");
+  must(/keepForSize/.test(histCore) && /budgetBytes/.test(histCore), "份数按体积自适应（大文件少留但不为零）");
+  must(/snapshotDiag/.test(ext) || /snapshotDiag/.test(histGlue), "有快照诊断命令（能直接看到存没存/在哪/为什么）");
   must(/legacyKeyOf/.test(histCore), "升级 64 位 key 后仍能读老的快照目录");
   must(/state\.dirty|wireDirtyTracking/.test(client), "批注一改就显示「未保存」，不会让人以为已写盘");
   // 构建不能残留旧 chunk

@@ -95,13 +95,27 @@ export function pickPrune(names, keep = 20) {
  *   deleteFile(path): Promise<void>
  * 路径用字符串拼（"<root>/<key>/<name>"），适配器自己决定怎么映射到 Uri / 真实路径。
  */
-export function createHistoryStore(fs, root, { keep = 20, maxBytes = 40 * 1024 * 1024 } = {}) {
+/**
+ * 这个文件最多留几份快照：按"总预算 / 单份体积"算，1..keep 之间。
+ * 一本 80MB 的整本书不该按 10 份存（800MB），但也不该像之前那样直接不存（用户就再也回滚不了）。
+ */
+export function keepForSize(size, { keep = 10, budgetBytes = 1024 * 1024 * 1024 } = {}) {
+  const n = Number(size) || 0;
+  const max = Math.max(1, Math.round(Number(keep) || 10));
+  if (n <= 0) return max;
+  return Math.max(1, Math.min(max, Math.floor(budgetBytes / n)));
+}
+
+// maxBytes 默认 Infinity = **不因为文件大就不存快照**（用户要求去掉大小限制）；
+// 真正的保护改成"份数自适应"：总预算 1GB，越大的文件留的份数越少，但永远至少留 1 份。
+export function createHistoryStore(fs, root, { keep = 10, maxBytes = Infinity, budgetBytes = 1024 * 1024 * 1024 } = {}) {
   return {
     /** 存一份快照，返回快照文件名；失败抛错（调用方决定是否放弃写入） */
     async snapshot(uriString, bytes) {
-      // 体积上限：超大 PDF 不存快照（存了会把用户存储吃光），返回 null 让调用方决定怎么说
+      // 极端体积（>400MB）才彻底不存；其余按体积自适应份数（见 keepForSize）
       const size = bytes && (bytes.byteLength != null ? bytes.byteLength : bytes.length);
       if (Number.isFinite(size) && size > maxBytes) return null;
+      const keepN = keepForSize(size, { keep, budgetBytes });
       const key = keyOf(uriString);
       const dir = `${root}/${key}`;
       await fs.mkdir(dir);
@@ -110,10 +124,10 @@ export function createHistoryStore(fs, root, { keep = 20, maxBytes = 40 * 1024 *
       try { existing = (await fs.readDir(dir)).filter((n) => /\.pdf$/.test(n)); } catch { }
       const name = uniqueStampName(Date.now(), existing);
       await fs.writeFile(`${dir}/${name}`, bytes);
-      // 裁剪：只留最近 keep 份，避免无限长
+      // 裁剪：按这个文件的体积算出该留几份（小文件 10 份，大文件少留）
       try {
         const names = sortNewestFirst((await fs.readDir(dir)).filter((n) => /\.pdf$/.test(n)));
-        for (const old of pickPrune(names, keep)) await fs.deleteFile(`${dir}/${old}`);
+        for (const old of pickPrune(names, keepN)) await fs.deleteFile(`${dir}/${old}`);
       } catch { /* 裁剪失败不影响本次保存 */ }
       return name;
     },

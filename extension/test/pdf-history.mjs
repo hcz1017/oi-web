@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync as rmF, existsSync } from "fs";
 import os from "os";
 import path from "path";
-import { keyOf, legacyKeyOf, looksLikePdf, stampName, stampOf, uniqueStampName, sortNewestFirst, pickPrune, createHistoryStore } from "../src/web/pdf/history-core.mjs";
+import { keyOf, legacyKeyOf, looksLikePdf, keepForSize, stampName, stampOf, uniqueStampName, sortNewestFirst, pickPrune, createHistoryStore } from "../src/web/pdf/history-core.mjs";
 
 let pass = true;
 const must = (c, m) => { console.log(`${c ? "✓" : "✗"} ${m}`); if (!c) pass = false; return c; };
@@ -52,6 +52,16 @@ must(keyOf("") === keyOf(""), "keyOf: 空串也能算（不抛）");
   must(second !== first, `uniqueStampName: 撞名时顺延（${second}）`);
   must(stampOf(second) > ts, "uniqueStampName: 新名字时间往后走");
   must(uniqueStampName(ts, []) === first, "uniqueStampName: 不撞名时保持不变");
+}
+
+// ---------- 体积自适应份数（大文件不该 10 份，也不该一份都不留） ----------
+{
+  const MB = 1048576;
+  must(keepForSize(1 * MB) === 10, "keepForSize: 小文件留满 10 份");
+  must(keepForSize(80 * MB) === 10, `keepForSize: 80MB 也留满 10 份（预算 1GB，实际 ${keepForSize(80 * MB)}）`);
+  must(keepForSize(300 * MB) === 3, `keepForSize: 300MB 留 3 份（实际 ${keepForSize(300 * MB)}）`);
+  must(keepForSize(2000 * MB) === 1, "keepForSize: 超大文件也至少留 1 份（不再拒绝）");
+  must(keepForSize(0) === 10, "keepForSize: 未知体积按上限");
 }
 
 // ---------- 排序 / 裁剪 ----------
