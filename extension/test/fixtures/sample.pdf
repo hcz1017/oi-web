@@ -1,0 +1,92 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Outlines 9 0 R /PageMode /UseOutlines >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> /Contents 6 0 R >>
+endobj
+5 0 obj
+<< /Length 316 >>
+stream
+BT
+/F1 20 Tf
+72 762 Td
+(Fixture PDF) Tj
+ET
+BT
+/F2 12 Tf
+1 0 0 1 72 722 Tm
+(WebC++ PDF viewer fixture - page 1) Tj
+1 0 0 1 72 702 Tm
+() Tj
+1 0 0 1 72 682 Tm
+(Search for: hello world, annotation, ink.) Tj
+1 0 0 1 72 662 Tm
+(The quick brown fox jumps over the lazy dog.) Tj
+ET
+0.9 0.9 0.2 rg
+72 632 150 8 re f
+0 0 0 rg
+endstream
+endobj
+6 0 obj
+<< /Length 333 >>
+stream
+BT
+/F1 20 Tf
+72 762 Td
+(Page two) Tj
+ET
+BT
+/F2 12 Tf
+1 0 0 1 72 722 Tm
+(Second page: annotations and ink should survive saving.) Tj
+1 0 0 1 72 702 Tm
+() Tj
+1 0 0 1 72 682 Tm
+(Try: highlight this line, draw a stroke, then Ctrl+S.) Tj
+1 0 0 1 72 662 Tm
+(hello world appears again here.) Tj
+ET
+0.9 0.9 0.2 rg
+72 632 150 8 re f
+0 0 0 rg
+endstream
+endobj
+7 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+8 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+9 0 obj
+<< /Type /Outlines /First 10 0 R /Last 10 0 R /Count 1 >>
+endobj
+10 0 obj
+<< /Title (Page 1 - Fixture) /Parent 9 0 R /Dest [3 0 R /XYZ 0 842 0] >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000015 00000 n 
+0000000103 00000 n 
+0000000166 00000 n 
+0000000302 00000 n 
+0000000438 00000 n 
+0000000804 00000 n 
+0000001187 00000 n 
+0000001284 00000 n 
+0000001386 00000 n 
+0000001459 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R >>
+startxref
+1548
+%%EOF

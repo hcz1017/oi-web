@@ -1,0 +1,186 @@
+// PDF 快照（"写回前先留一份"）的**纯逻辑**：不 import vscode，方便在 Node 里直接测。
+//
+// 为什么不再生成 xxx.pdf.bak：
+//   · .bak 会跟 PDF 并排放，用户看着脏、还会被 git/网盘同步上去；
+//   · VS Code 自带"时间线"（Timeline），把快照挂在那里，用户在一个地方就能看/回滚；
+//   · 快照存在扩展的 globalStorage 里（每用户一份），不污染工作区。
+//
+// 时间线本身由 history.js 注册（vscode.window.registerTimelineProvider）；
+// 这里只管"怎么算 key / 怎么命名 / 怎么裁剪"。
+
+/** FNV-1a 32 位（旧版 key，保留用于兼容/迁移） */
+export function legacyKeyOf(text) {
+  let h = 0x811c9dc5;
+  const s = String(text || "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * 目录名用的 key：**64 位**（两个不同种子的 FNV-1a 拼起来）。
+ * 32 位时两万个 PDF 就有约 5% 概率撞车，撞了会把 A 的快照混进 B（用户会看到"别人的版本"）。
+ */
+export function keyOf(text) {
+  const s = String(text || "");
+  let a = 0x811c9dc5, b = 0x9e3779b1;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x85ebca6b) >>> 0;
+  }
+  return (a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0"));
+}
+
+/** 时间戳 → 文件名（冒号在 Windows 上非法，统一换成 -） */
+export function stampName(ts) {
+  const d = new Date(Number(ts) || Date.now());
+  const p = (n, w = 2) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${p(d.getMilliseconds(), 3)}.pdf`;
+}
+
+/** 从文件名里还原时间戳（失败返回 0） */
+export function stampOf(name) {
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(\d{3})\.pdf$/.exec(String(name || ""));
+  if (!m) return 0;
+  const [, y, mo, d, h, mi, s, ms] = m;
+  return new Date(+y, +mo - 1, +d, +h, +mi, +s, +ms).getTime();
+}
+
+/**
+ * 生成一个**不与已有文件重名**的快照名。
+ * 同一毫秒内连续保存（脚本/快速连点）时，stampName 会撞名 → 直接覆盖掉上一份，
+ * 静默丢一个版本。这里往后顺延毫秒，直到不重复。
+ */
+export function uniqueStampName(ts, existing = []) {
+  const taken = new Set(existing || []);
+  let t = Number(ts) || Date.now();
+  for (let i = 0; i < 1000; i++) {
+    const name = stampName(t + i);
+    if (!taken.has(name)) return name;
+  }
+  return stampName(t + 1000);
+}
+
+/** 是不是一份 PDF（文件头必须是 %PDF-）。恢复快照前用它挡住损坏/串味的数据 */
+export function looksLikePdf(bytes) {
+  if (!bytes) return false;
+  const n = bytes.byteLength != null ? bytes.byteLength : bytes.length;
+  if (n < 5) return false;
+  const head = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  return head === "%PDF";
+}
+
+/** 新→旧排序 */
+export function sortNewestFirst(names) {
+  return [...names].sort((a, b) => stampOf(b) - stampOf(a));
+}
+
+/** 超出 keep 的旧快照（要删掉的） */
+export function pickPrune(names, keep = 20) {
+  const sorted = sortNewestFirst(names);
+  // keep 必须 ≥ 1：传 0/负数时也至少留最新那份，否则"刚存的备份会被自己删掉"
+  const k = Math.max(1, Math.round(Number.isFinite(Number(keep)) ? Number(keep) : 20));
+  return sorted.slice(k);
+}
+
+/**
+ * 快照仓库。fs 适配器形状（由 history.js 用 vscode API 实现，测试里用 node:fs 实现）：
+ *   mkdir(dirPath): Promise<void>
+ *   writeFile(path, Uint8Array): Promise<void>
+ *   readFile(path): Promise<Uint8Array>
+ *   readDir(dirPath): Promise<string[]>      // 只返回文件名
+ *   deleteFile(path): Promise<void>
+ * 路径用字符串拼（"<root>/<key>/<name>"），适配器自己决定怎么映射到 Uri / 真实路径。
+ */
+/**
+ * 这个文件最多留几份快照：按"总预算 / 单份体积"算，1..keep 之间。
+ * 一本 80MB 的整本书不该按 10 份存（800MB），但也不该像之前那样直接不存（用户就再也回滚不了）。
+ */
+export function keepForSize(size, { keep = 10, budgetBytes = 1024 * 1024 * 1024 } = {}) {
+  const n = Number(size) || 0;
+  const max = Math.max(1, Math.round(Number(keep) || 10));
+  if (n <= 0) return max;
+  return Math.max(1, Math.min(max, Math.floor(budgetBytes / n)));
+}
+
+// maxBytes 默认 Infinity = **不因为文件大就不存快照**（用户要求去掉大小限制）；
+// 真正的保护改成"份数自适应"：总预算 1GB，越大的文件留的份数越少，但永远至少留 1 份。
+export function createHistoryStore(fs, root, { keep = 10, maxBytes = Infinity, budgetBytes = 1024 * 1024 * 1024 } = {}) {
+  return {
+    /** 这个文件的快照目录：[新 key, 老 key] */
+    dirsOf(uriString) {
+      return [`${root}/${keyOf(uriString)}`, `${root}/${legacyKeyOf(uriString)}`];
+    },
+
+    /** 把老 key 目录里的快照**迁移**到新目录（升级后旧版本不能凭空消失） */
+    async migrate(uriString) {
+      const [newDir, oldDir] = this.dirsOf(uriString);
+      if (newDir === oldDir) return 0;
+      let oldNames = [];
+      try { oldNames = (await fs.readDir(oldDir)).filter((n) => /\.pdf$/.test(n)); } catch { return 0; }
+      if (!oldNames.length) return 0;
+      await fs.mkdir(newDir);
+      let moved = 0;
+      for (const name of oldNames) {
+        try {
+          const bytes = await fs.readFile(`${oldDir}/${name}`);
+          await fs.writeFile(`${newDir}/${name}`, bytes);
+          await fs.deleteFile(`${oldDir}/${name}`);
+          moved++;
+        } catch { /* 单条失败就留在老目录，list() 仍然能看到 */ }
+      }
+      return moved;
+    },
+
+    /** 存一份快照，返回快照文件名；失败抛错（调用方决定是否放弃写入） */
+    async snapshot(uriString, bytes) {
+      // 极端体积（>400MB）才彻底不存；其余按体积自适应份数（见 keepForSize）
+      const size = bytes && (bytes.byteLength != null ? bytes.byteLength : bytes.length);
+      if (Number.isFinite(size) && size > maxBytes) return null;
+      const keepN = keepForSize(size, { keep, budgetBytes });
+      // 升级 key 之后：老目录里还有历史快照，先搬过来，否则"一存新的，旧的就不见了"
+      try { await this.migrate(uriString); } catch { }
+      const key = keyOf(uriString);
+      const dir = `${root}/${key}`;
+      await fs.mkdir(dir);
+      // 先看看已有哪些名字，避免同一毫秒内两次保存互相覆盖
+      let existing = [];
+      try { existing = (await fs.readDir(dir)).filter((n) => /\.pdf$/.test(n)); } catch { }
+      const name = uniqueStampName(Date.now(), existing);
+      await fs.writeFile(`${dir}/${name}`, bytes);
+      // 裁剪：按这个文件的体积算出该留几份（小文件 10 份，大文件少留）
+      try {
+        const all = await this.list(uriString);
+        const keepSet = new Set(all.slice(0, Math.max(1, keepN)).map((x) => x.name));
+        for (const dir2 of this.dirsOf(uriString)) {
+          let names2 = [];
+          try { names2 = (await fs.readDir(dir2)).filter((n) => /\.pdf$/.test(n)); } catch { }
+          for (const old of names2) if (!keepSet.has(old)) await fs.deleteFile(`${dir2}/${old}`);
+        }
+      } catch { /* 裁剪失败不影响本次保存 */ }
+      return name;
+    },
+    /** 列出某文件的所有快照（新→旧）：**新老目录求并集**，升级后旧条目不会消失 */
+    async list(uriString) {
+      const names = new Set();
+      for (const dir of this.dirsOf(uriString)) {
+        try {
+          for (const n of await fs.readDir(dir)) if (/\.pdf$/.test(n)) names.add(n);
+        } catch { /* 目录不存在是正常的 */ }
+      }
+      return sortNewestFirst([...names]).map((name) => ({ name, ts: stampOf(name) }));
+    },
+    /** 读某个快照的字节（新目录找不到就回退到老目录） */
+    async read(uriString, name) {
+      if (!/^[0-9-]+\.pdf$/.test(String(name || ""))) throw new Error("非法快照名");
+      try {
+        return await fs.readFile(`${root}/${keyOf(uriString)}/${name}`);
+      } catch (e) {
+        try { return await fs.readFile(`${root}/${legacyKeyOf(uriString)}/${name}`); } catch { throw e; }
+      }
+    },
+  };
+}

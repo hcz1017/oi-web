@@ -26,6 +26,7 @@ oi-web-cf.zip
 .wrangler/
 .ref/
 extension/assets/dwarf/
+extension/assets/pdf/
 
 # 本地缓存/临时物（绝不能进仓库）
 .npm-cache/

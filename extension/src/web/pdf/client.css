@@ -1,0 +1,73 @@
+/* PDF 阅读器（EmbedPDF）外层样式：只负责铺满 + 主题底色 + 提示/错误浮层。
+   阅读器自己的 UI 在 shadow DOM 里，由 EmbedPDF 的主题接管（浅色/深色按 VS Code 主题传进去）。 */
+
+html, body {
+  margin: 0; padding: 0; height: 100%; overflow: hidden;
+  background: var(--vscode-editor-background, Canvas);
+  color: var(--vscode-editor-foreground, CanvasText);
+  font: 12px/1.4 var(--vscode-font-family, system-ui);
+}
+#pdfViewer { position: absolute; inset: 0; }
+
+#toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(8px);
+  background: var(--vscode-notifications-background, #333);
+  color: var(--vscode-notifications-foreground, #fff);
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4));
+  padding: 6px 12px; border-radius: 14px; opacity: 0; pointer-events: none;
+  transition: .18s; z-index: 60; max-width: 70vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+#error {
+  display: none; position: absolute; left: 12px; right: 12px; top: 12px; z-index: 55;
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  border-radius: 6px; padding: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+}
+#error.show { display: block; }
+#error .row { display: flex; gap: 6px; margin-top: 8px; }
+#errorText {
+  white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace);
+  max-height: 30vh; overflow: auto; margin-top: 4px;
+}
+#error button {
+  font: inherit; padding: 3px 10px; border-radius: 4px; cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, CanvasText);
+  background: var(--vscode-button-secondaryBackground, rgba(128,128,128,.18));
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4));
+}
+#error button.primary { background: var(--vscode-button-background, #0a66c2); color: var(--vscode-button-foreground, #fff); }
+
+/* ---------- 统一保存条（浮在阅读器右上角） ---------- */
+#saveBar {
+  position: fixed; bottom: 14px; right: 14px; z-index: 80;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 8px;
+  background: var(--vscode-editorWidget-background, rgba(40,40,40,.92));
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4));
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  backdrop-filter: blur(6px);
+}
+#saveBar button {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: inherit; font-weight: 600; padding: 4px 10px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-background, #0a66c2);
+  color: var(--vscode-button-foreground, #fff);
+}
+#saveBar button:hover { background: var(--vscode-button-hoverBackground, #0a66c2); }
+#saveBar button:disabled { opacity: .55; cursor: default; }
+#saveBar .ico { font-size: 12px; line-height: 1; }
+#saveBar .drag {
+  cursor: grab; opacity: .55; padding: 0 2px; font-size: 13px; line-height: 1;
+  user-select: none; touch-action: none;
+}
+#saveBar .drag:hover { opacity: 1; }
+#saveBar.dragging { cursor: grabbing; opacity: .92; box-shadow: 0 8px 22px rgba(0,0,0,.5); }
+#saveStatus { font-size: 11px; opacity: .8; min-width: 46px; }
+#saveStatus[data-kind="saving"] { opacity: 1; }
+#saveStatus[data-kind="dirty"] { color: var(--vscode-editorWarning-foreground, #d7a12c); opacity: 1; }
+#saveStatus[data-kind="info"] { opacity: .9; }
+#saveStatus[data-kind="saved"] { color: var(--vscode-charts-green, #3fb950); opacity: 1; }
+#saveStatus[data-kind="error"] { color: var(--vscode-errorForeground, #f14c4c); opacity: 1; }

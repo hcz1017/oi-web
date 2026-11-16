@@ -1,5 +1,5 @@
 import esbuild from "esbuild";
-import { mkdirSync, cpSync, existsSync } from "fs";
+import { mkdirSync, cpSync, existsSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -146,5 +146,39 @@ cpSync(path.join(HERE, "src", "node", "worker-shim.cjs"), path.join(OUT_NODE, "w
   else console.warn("⚠ 缺少 wdb/assets/dwarf/worker.node.cjs（桌面版调试不可用；先跑 wdb 的 build:dwarf）");
 }
 console.log("copied: dist/node/workers/{runWorker,compileWorker,debugWorker}.js + 垫片 + node 引擎");
+
+// 9) PDF 阅读器资产：**EmbedPDF（PDFium WASM）** 的 webview 运行时
+//    —— 和 Chrome/Edge 同一个渲染引擎；批注/板书是**标准 PDF 标注**，直接写进 PDF。
+//    snippet 的 chunk 之间是按相对路径互相 import 的，所以必须原样保持目录结构。
+//    ⚠️ 缺文件必须报错：否则会打出一个"能打开但白屏"的 VSIX。
+{
+  const embedSrc = path.join(HERE, "node_modules", "@embedpdf", "snippet", "dist");
+  const outDir = path.join(HERE, "assets", "pdf", "embedpdf");
+  const appOut = path.join(HERE, "assets", "pdf", "app");
+  if (!existsSync(embedSrc)) {
+    console.error("\n✗ 缺少 @embedpdf/snippet（PDF 阅读器需要）。请执行：cd extension && npm install\n");
+    process.exit(1);
+  }
+  // 先清空：snippet 的 chunk 名带内容哈希，版本升级后旧 chunk 会残留 → 越打越大
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+  let copied = 0;
+  for (const f of readdirSync(embedSrc)) {
+    // 只拷运行时需要的：js chunk + wasm。跳过 demo pdf / 示例 html / 类型声明 / sourcemap
+    if (!/\.(js|wasm)$/.test(f)) continue;
+    cpSync(path.join(embedSrc, f), path.join(outDir, f));
+    copied++;
+  }
+  for (const must of ["embedpdf.js", "pdfium.wasm"]) {
+    if (!existsSync(path.join(outDir, must))) { console.error("✗ EmbedPDF 资产缺失：" + must); process.exit(1); }
+  }
+  mkdirSync(appOut, { recursive: true });
+  for (const f of ["client.mjs", "client.css"]) {
+    const src = path.join(SRC, "pdf", f);
+    if (!existsSync(src)) { console.error("✗ PDF 前端文件缺失：" + f); process.exit(1); }
+    cpSync(src, path.join(appOut, f));
+  }
+  console.log(`copied: @embedpdf/snippet → assets/pdf/embedpdf（${copied} 个文件） + app/`);
+}
 
 console.log("bundled: extension.js / compileWorker.js / runWorker.js / clangdWorker.js / dwarfWorker.js / debugWorker.js");
