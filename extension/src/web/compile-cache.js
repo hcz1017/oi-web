@@ -34,14 +34,16 @@ export const CACHE_KEY = "oiCpp.compileCache.v2";   // v1 存的是 ArrayBuffer�
 //    （F5 / 符号探针 / 对拍面板各一套参数），3 条会互相淘汰 —— 表现就是
 //    "运行能缓存、调试不缓存"。6 条 + 24MB 足够覆盖"运行/调试/对拍"混用的场景。
 const MAX_ENTRIES = 6;
-const MAX_BYTES = 24 * 1024 * 1024;
+const MAX_BYTES = 8 * 1024 * 1024;   // 单条上限（调试产物实测 3.2–3.6MB，8MB 足够）
 // L1：进程内直接存 Uint8Array，命中时省掉 base64 解码（3.6MB → 4.8MB 字符串，来回都要走一遍）
 const L1_MAX_ENTRIES = 6;
 const L1_MAX_BYTES = 48 * 1024 * 1024;
 // L2 的**总**字节预算：单条上限之外还要有总量上限，否则 6 条 × 24MB = 144MB wasm
 // （base64 后 192MB）全塞进 globalState，网页版会触发配额失败 / "large extension state"。
 // 而每次 put 都要把整包 JSON 序列化一次，越大越卡。
-const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
+// ⚠️ globalState 在桌面版会触发 "large extension state detected (>16MB)" 警告，
+//    而 base64 比原始字节大 1/3 —— 所以按 **原始字节** 9MB 记（≈12MB JSON），别超过 16MB。
+const MAX_TOTAL_BYTES = 9 * 1024 * 1024;
 
 /**
  * @param {{get:Function, update:Function}} memento 通常就是 ctx.globalState

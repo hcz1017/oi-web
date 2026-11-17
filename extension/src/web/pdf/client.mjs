@@ -47,11 +47,30 @@ async function onLoad({ bytes, name }) {
   buildSaveBar();
 
   const dark = document.body.classList.contains("vscode-dark") || document.body.classList.contains("vscode-high-contrast");
+  // ⚠️ wasm 要在**主线程**取好再交给 worker：
+  //    EmbedPDF 的 pdfium worker 自己 `fetch(wasmUrl)`，而桌面（Electron）webview 里
+  //    worker 去 fetch `https://vscode-resource.vscode-cdn.net/...` 拿到的不是文件内容
+  //    （实测返回一段以 "Requ…" 开头的文本），WebAssembly.instantiate 直接报
+  //    "expected magic word 00 61 73 6d, found 52 65 71 75" → PDF 一直"初始化插件"。
+  //    主线程 fetch 是正常的；把它转成 blob URL 传进去，worker 就能取到真正的字节。
+  let wasmUrl = A.pdfiumWasm;
+  try {
+    const r = await fetch(A.pdfiumWasm);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const buf = await r.arrayBuffer();
+    const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+    const isWasm = head.length === 4 && head[0] === 0x00 && head[1] === 0x61 && head[2] === 0x73 && head[3] === 0x6d;
+    if (!isWasm) throw new Error("取到的不是 wasm（前 4 字节 " + Array.from(head).map((b) => b.toString(16)).join(" ") + "）");
+    wasmUrl = URL.createObjectURL(new Blob([buf], { type: "application/wasm" }));
+    state.wasmBlob = wasmUrl;
+  } catch (e) {
+    throw new Error("加载 pdfium.wasm 失败：" + ((e && e.message) || e) + "（url=" + A.pdfiumWasm + "）");
+  }
   const viewer = EmbedPDF.init({
     type: "container",
     target: $("pdfViewer"),
     src: state.srcUrl,
-    wasmUrl: A.pdfiumWasm,           // 用打包进去的 pdfium.wasm（不联网）
+    wasmUrl,                          // 打包进去的 pdfium.wasm（主线程读好，blob URL 给 worker）
     worker: true,                     // PDFium 跑在 worker 里，不卡 UI
     fontFallback: null,               // 关掉默认的 jsDelivr 字体回退：离线也要能用
     theme: { preference: dark ? "dark" : "light" },
@@ -102,6 +121,7 @@ async function reloadDoc({ bytes, name }) {
   // 重载期间可能正好有一次保存在飞行中：状态重置掉，否则 saving 永远为 true（保存按钮彻底失灵）
   state.saving = false;
   clearTimeout(state.saveWatchdog);
+  if (state.wasmBlob) { try { URL.revokeObjectURL(state.wasmBlob); } catch { } state.wasmBlob = null; }
   try { state.viewer?.destroy?.(); } catch { }
   state.viewer = null;
   state.registry = null;

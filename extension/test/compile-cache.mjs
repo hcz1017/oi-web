@@ -81,13 +81,13 @@ const log = (s) => logs.push(s);
   must(cache.get("k0") === null, "最老的被淘汰");
 }
 
-// ---------- 5. 超过 24MB 不缓存（调试产物实测 3.6MB，24MB 给了充足余量） ----------
+// ---------- 5. 单条超 8MB 不缓存（桌面版 globalState >16MB 会告警，base64 还要 ×4/3） ----------
 {
   const cache = createCompileCache(fakeMemento(), { log });
-  const ok = new Uint8Array(13 * 1024 * 1024);      // 13MB：以前会被拒，现在应当接受
-  must(cache.put("mid", ok, 1) === true, "13MB 可以缓存（旧上限 12MB 会拒掉）");
-  const huge = new Uint8Array(25 * 1024 * 1024);
-  must(cache.put("big", huge, 1) === false, "超过 24MB 拒绝缓存");
+  const mid = new Uint8Array(6 * 1024 * 1024);
+  must(cache.put("mid", mid, 1) === true, "6MB 可以缓存");
+  const huge = new Uint8Array(9 * 1024 * 1024);
+  must(cache.put("big", huge, 1) === false, "超过 8MB 拒绝缓存");
   must(cache.get("big") === null, "超限的那条确实没进去");
 }
 

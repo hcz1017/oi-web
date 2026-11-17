@@ -3,6 +3,28 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.5.1] - 2026-11-17
+
+### 修复：桌面版（Electron）PDF 一直卡在"初始化插件"
+控制台报：
+
+```
+WebAssembly.instantiate(): expected magic word 00 61 73 6d, found 52 65 71 75 @+0
+```
+
+`52 65 71 75` 是文本 `Requ…` —— 说明 pdfium worker 拿到的**不是 wasm 字节**。
+原因是 EmbedPDF 的 pdfium worker 自己 `fetch(wasmUrl)`，而桌面 webview 里 worker 去取
+`https://vscode-resource.vscode-cdn.net/...` 得到的是错误页文本（网页版同源 http，所以没暴露）。
+
+- 改为**主线程**先 `fetch` 并校验 `\0asm` 魔数，再转成 **blob URL** 交给 EmbedPDF
+  （worker 取 blob 是同源，CSP 里 `connect-src blob:` 本来就放行）；失败时给出明确错误
+  （HTTP 状态 / 前 4 字节），不再无声卡住；
+- 重载/恢复时回收上一个 blob（否则每次重载泄漏 4.6MB）。
+
+### 顺带：桌面版 `large extension state detected (18MB)` 警告
+编译缓存全在 `globalState` 里（base64 比原始字节大 1/3），超过 16MB 会触发该警告。
+把总量上限按**原始字节 9MB**（≈12MB JSON）计、单条 8MB（调试产物实测 3.2–3.6MB，足够）。
+
 ## [0.5.0] - 2026-11-17
 
 ### 新增：内置 PDF 阅读器（引擎：EmbedPDF / PDFium）
