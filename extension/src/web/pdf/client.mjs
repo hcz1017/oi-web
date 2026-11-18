@@ -40,7 +40,33 @@ window.addEventListener("message", (ev) => {
 async function onLoad({ bytes, name }) {
   state.name = name || "document.pdf";
   document.title = state.name;
-  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  // ⚠️ 桌面版可能把 Buffer 序列化成 {type:"Buffer",data:[...]}（或纯数字键对象）：
+  //    这里做一次归一化，并在不是 PDF 时给出**可诊断**的错误，而不是让 PDFium 报"错误码 3"。
+  const norm = (v) => {
+    if (!v) return new Uint8Array(0);
+    if (v instanceof Uint8Array) return v;
+    if (v instanceof ArrayBuffer) return new Uint8Array(v);
+    if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+    if (Array.isArray(v)) return Uint8Array.from(v);
+    if (v && v.type === "Buffer" && Array.isArray(v.data)) return Uint8Array.from(v.data);
+    const keys = Object.keys(v || {});
+    if (keys.length && keys.every((k) => /^\d+$/.test(k))) {
+      const out = new Uint8Array(keys.length);
+      for (const k of keys) out[Number(k)] = v[k] & 0xff;
+      return out;
+    }
+    return new Uint8Array(0);
+  };
+  const data = norm(bytes);
+  const head = data.subarray(0, 5);
+  const isPdf = data.length >= 5 && String.fromCharCode(head[0], head[1], head[2], head[3]) === "%PDF";
+  if (!isPdf) {
+    throw new Error(
+      "收到的不是 PDF（长度 " + data.length +
+      "，前 5 字节 " + Array.from(head).map((b) => b.toString(16).padStart(2, "0")).join(" ") +
+      "，原始类型 " + (bytes && bytes.constructor && bytes.constructor.name) + "）",
+    );
+  }
   state.srcUrl = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
 
   patchDownloadInterception();

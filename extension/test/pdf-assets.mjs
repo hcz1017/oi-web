@@ -144,6 +144,12 @@ for (const f of ["client.mjs", "client.css"]) {
   must(/changeEmitter\.fire\(\)/.test(historySrc), "onDidChange 不带 URI 触发（d.uris===undefined 表示所有资源都变了，最宽松）");
   // 官方 d.ts 里字段名是 onDidChangeTimeline（不是 onDidChange）；写错 ext host 就不订阅 → 永不刷新
   must(/onDidChangeTimeline:\s*changeEmitter\.event/.test(historySrc), "provider 暴露 onDidChangeTimeline（官方字段名）");
+  // 桌面版把 Buffer/typed array 序列化走过的坑：两边的字节归一化必须都在
+  must(/function plainBytes\(/.test(providerSrc), "宿主发送前把字节转成普通 Uint8Array（桌面 Buffer 会变 {type:Buffer}）");
+  must(/plainBytes\(bytes\)/.test(providerSrc) && /plainBytes\(fresh\)/.test(providerSrc), "load/reload 都走 plainBytes");
+  const clientSrc = readFileSync(path.join(EXT, "src", "web", "pdf", "client.mjs"), "utf8");
+  must(/const norm = \(v\) =>/.test(clientSrc), "webview 侧对字节做归一化");
+  must(/%PDF/.test(clientSrc) && /收到的不是 PDF/.test(clientSrc), "不是 PDF 时给出可诊断错误（长度/前 5 字节/类型）");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");

@@ -21,6 +21,15 @@ WebAssembly.instantiate(): expected magic word 00 61 73 6d, found 52 65 71 75 @+
   （HTTP 状态 / 前 4 字节），不再无声卡住；
 - 重载/恢复时回收上一个 blob（否则每次重载泄漏 4.6MB）。
 
+### 修复（同一版内追加）：桌面版 `FPDF_LoadMemDocument failed / 错误码 3`
+wasm 能加载后，PDFium 报"格式错误"——因为**传给它的字节是空的**：
+桌面版 `vscode.workspace.fs.readFile` 返回的其实是 Node `Buffer`，跨扩展宿主 → webview 的 RPC
+会把它序列化成 `{type:"Buffer", data:[…]}`，webview 里 `new Uint8Array(对象)` 得到长度 0。
+- 宿主发送前 `plainBytes()`：复制成**普通 Uint8Array**（脱离 Buffer 身份）；
+- webview 侧 `norm()`：兼容 `Uint8Array / ArrayBuffer / 视图 / 数组 / {type:Buffer,data} / 数字键对象`；
+- 不是 PDF 时直接报"收到的不是 PDF（长度 N，前 5 字节 …，原始类型 …）"，不再只给 PDFium 的错误码;
+- 保存路径（webview → 宿主）的 `toBytes()` 同样容错。
+
 ### 顺带：桌面版 `large extension state detected (18MB)` 警告
 编译缓存全在 `globalState` 里（base64 比原始字节大 1/3），超过 16MB 会触发该警告。
 把总量上限按**原始字节 9MB**（≈12MB JSON）计、单条 8MB（调试产物实测 3.2–3.6MB，足够）。

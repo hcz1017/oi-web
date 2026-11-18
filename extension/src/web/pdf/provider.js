@@ -82,7 +82,7 @@ export function registerPdfViewer(ctx, deps = {}) {
         if (bytes === null && !loadError) return;        // 还没读完，等读完再发
         sentLoad = true;
         if (loadError) { send({ type: "error", text: "读不到这个文件：" + loadError }); return; }
-        send({ type: "load", bytes: bytes || new Uint8Array(0), name: fileName });
+        send({ type: "load", bytes: plainBytes(bytes), name: fileName });
       };
       const earlyListener = webview.onDidReceiveMessage((m) => {
         if (m && m.type === "ready") { readySeen = true; sendLoadIfReady(); }
@@ -109,7 +109,7 @@ export function registerPdfViewer(ctx, deps = {}) {
         try {
           const fresh = await vscode.workspace.fs.readFile(document.uri);
           bytes = fresh;
-          send({ type: "reload", bytes: fresh, name: fileName });
+          send({ type: "reload", bytes: plainBytes(fresh), name: fileName });
         } catch (e) {
           send({ type: "error", text: "重新读取失败：" + ((e && e.message) || e) });
         }
@@ -245,11 +245,40 @@ export function registerPdfViewer(ctx, deps = {}) {
 }
 
 /** webview 传来的字节可能是 ArrayBuffer / Uint8Array（结构化克隆），统一成 Uint8Array */
+/**
+ * 发到 webview 之前，把字节统一成**普通 Uint8Array 副本**。
+ * ⚠️ 桌面版（Electron）`vscode.workspace.fs.readFile` 返回的其实是 Node `Buffer`，
+ *    跨扩展宿主 → webview 的 RPC 会把它序列化成 `{type:"Buffer", data:[...]}`；
+ *    webview 里 `new Uint8Array(那个对象)` 得到长度 0 → PDFium 报
+ *    "FPDF_LoadMemDocument failed / 错误码 3（FORMAT）"，看起来像"文件不是 PDF"。
+ *    复制成普通 Uint8Array（slice 掉 Buffer 身份）后，结构化克隆才能原样送达。
+ */
+function plainBytes(v) {
+  if (!v) return new Uint8Array(0);
+  let u8;
+  if (v instanceof Uint8Array) u8 = v;
+  else if (v instanceof ArrayBuffer) u8 = new Uint8Array(v);
+  else if (ArrayBuffer.isView(v)) u8 = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  else if (v && v.type === "Buffer" && Array.isArray(v.data)) u8 = Uint8Array.from(v.data);
+  else throw new Error("无法识别的字节类型");
+  return new Uint8Array(u8);      // 复制：脱离 Buffer 身份，且与调用方解耦
+}
+
 function toBytes(v) {
   if (v instanceof Uint8Array) return v;
   if (v instanceof ArrayBuffer) return new Uint8Array(v);
   if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
   if (Array.isArray(v)) return new Uint8Array(v);          // 兜底：极端情况会退化成普通数组
+  // webview → 宿主 的 RPC 在桌面 Electron 上可能把 typed array 序列化掉（见过 Buffer 形态）
+  if (v && v.type === "Buffer" && Array.isArray(v.data)) return Uint8Array.from(v.data);
+  if (v && typeof v === "object") {
+    const keys = Object.keys(v);
+    if (keys.length && keys.every((k) => /^\d+$/.test(k))) {
+      const out = new Uint8Array(keys.length);
+      for (const k of keys) out[Number(k)] = v[k] & 0xff;
+      return out;
+    }
+  }
   throw new Error("收到的 PDF 数据不是二进制");
 }
 
