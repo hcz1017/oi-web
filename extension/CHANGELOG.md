@@ -3,6 +3,22 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 
+## [0.5.2] - 2026-11-20
+
+### 修复：0.5.1 的版本号漏了 ++，桌面版关键修复没随版本号发出去
+`d525a6d`（下面这条）是加进 0.5.1 分支的，但**没有递增版本号**：
+已经安装过 0.5.1 的用户拿不到这个修复，而且重新打的包还叫 0.5.1（无法区分新旧）。
+本版只是把这个修复正式带上版本号重新发布，功能与 0.5.1 一致。
+
+### 修复：桌面版 `FPDF_LoadMemDocument failed / 错误码 3`
+wasm 能加载后，PDFium 报"格式错误"——因为**传给它的字节是空的**：
+桌面版 `vscode.workspace.fs.readFile` 返回的其实是 Node `Buffer`，跨扩展宿主 → webview 的 RPC
+会把它序列化成 `{type:"Buffer", data:[…]}`，webview 里 `new Uint8Array(对象)` 得到长度 0。
+- 宿主发送前 `plainBytes()`：复制成**普通 Uint8Array**（脱离 Buffer 身份）；
+- webview 侧 `norm()`：兼容 `Uint8Array / ArrayBuffer / 视图 / 数组 / {type:Buffer,data} / 数字键对象`；
+- 不是 PDF 时直接报"收到的不是 PDF（长度 N，前 5 字节 …，原始类型 …）"，不再只给 PDFium 的错误码;
+- 保存路径（webview → 宿主）的 `toBytes()` 同样容错。
+
 ## [0.5.1] - 2026-11-17
 
 ### 修复：桌面版（Electron）PDF 一直卡在"初始化插件"
@@ -20,19 +36,6 @@ WebAssembly.instantiate(): expected magic word 00 61 73 6d, found 52 65 71 75 @+
   （worker 取 blob 是同源，CSP 里 `connect-src blob:` 本来就放行）；失败时给出明确错误
   （HTTP 状态 / 前 4 字节），不再无声卡住；
 - 重载/恢复时回收上一个 blob（否则每次重载泄漏 4.6MB）。
-
-### 修复（同一版内追加）：桌面版 `FPDF_LoadMemDocument failed / 错误码 3`
-wasm 能加载后，PDFium 报"格式错误"——因为**传给它的字节是空的**：
-桌面版 `vscode.workspace.fs.readFile` 返回的其实是 Node `Buffer`，跨扩展宿主 → webview 的 RPC
-会把它序列化成 `{type:"Buffer", data:[…]}`，webview 里 `new Uint8Array(对象)` 得到长度 0。
-- 宿主发送前 `plainBytes()`：复制成**普通 Uint8Array**（脱离 Buffer 身份）；
-- webview 侧 `norm()`：兼容 `Uint8Array / ArrayBuffer / 视图 / 数组 / {type:Buffer,data} / 数字键对象`；
-- 不是 PDF 时直接报"收到的不是 PDF（长度 N，前 5 字节 …，原始类型 …）"，不再只给 PDFium 的错误码;
-- 保存路径（webview → 宿主）的 `toBytes()` 同样容错。
-
-### 顺带：桌面版 `large extension state detected (18MB)` 警告
-编译缓存全在 `globalState` 里（base64 比原始字节大 1/3），超过 16MB 会触发该警告。
-把总量上限按**原始字节 9MB**（≈12MB JSON）计、单条 8MB（调试产物实测 3.2–3.6MB，足够）。
 
 ## [0.5.0] - 2026-11-17
 
