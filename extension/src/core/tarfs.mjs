@@ -2,6 +2,7 @@
 // sysroot 实测：1343 文件 / 75 目录 / 无符号链接 / 无超长名，所以不需要 GNU/PAX 扩展；
 // 但为了不"静默出错"，这里对 magic、size、边界都做校验。
 import { File, Directory } from "@bjorn3/browser_wasi_shim";
+import { logicalBytes } from "./wasi-fs-fast.mjs";
 
 const BLOCK = 512;
 const str = (u8, off, len) => {
@@ -100,7 +101,10 @@ export function readFsFile(root, path) {
   }
   const f = d.contents.get(parts[parts.length - 1]);
   if (!f || f.data === undefined) return null;
-  return f.data.slice();
+  // ⚠️ 打了 wasi-fs-fast 补丁后，file.data 的容量可能大于逻辑长度（容量倍增留下的尾巴），
+  //    这里必须按逻辑长度截断，否则读到的 .o/.wasm 会带一串 0 尾巴。
+  const out = logicalBytes(f);
+  return out ? out.slice() : f.data.slice();
 }
 
 /** FS 里是否存在某个文件 */

@@ -1404,6 +1404,126 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     }
   };
 
+  // src/core/wasi-fs-fast.mjs
+  var MARK = /* @__PURE__ */ Symbol.for("oi.fastWasiFs");
+  var MIN_CAP = 64 * 1024;
+  function capOf(file) {
+    return file && file.data ? file.data.byteLength : 0;
+  }
+  function lenOf(file) {
+    if (!file) return 0;
+    if (typeof file._len === "number") return file._len;
+    return capOf(file);
+  }
+  function ensureCapacity(file, need) {
+    if (capOf(file) >= need) return;
+    let cap = Math.max(capOf(file), MIN_CAP);
+    while (cap < need) cap *= 2;
+    const next = new Uint8Array(cap);
+    const oldData = file.data;
+    if (oldData && oldData.byteLength) next.set(oldData.subarray(0, lenOf(file)));
+    file.data = next;
+  }
+  function installFastWasiFs({ File: File2, OpenFile: OpenFile2 }, opts = {}) {
+    const log = opts.log || (() => {
+    });
+    if (!OpenFile2 || !OpenFile2.prototype || !File2 || !File2.prototype) {
+      log("\u8DF3\u8FC7\uFF1A\u7F3A\u5C11 File/OpenFile");
+      return false;
+    }
+    if (OpenFile2.prototype[MARK]) return true;
+    const origWrite = OpenFile2.prototype.fd_write;
+    if (typeof origWrite !== "function") {
+      log("\u8DF3\u8FC7\uFF1Afd_write \u5F62\u72B6\u4E0D\u7B26\u5408\u9884\u671F\uFF08\u4E0A\u6E38\u5DF2\u6539\uFF09");
+      return false;
+    }
+    if (typeof OpenFile2.prototype.fd_pwrite !== "function") {
+      log("\u8DF3\u8FC7\uFF1A\u7F3A\u5C11 fd_pwrite");
+      return false;
+    }
+    try {
+      const sizeDesc = Object.getOwnPropertyDescriptor(File2.prototype, "size");
+      if (sizeDesc && sizeDesc.get) {
+        Object.defineProperty(File2.prototype, "size", {
+          configurable: true,
+          get() {
+            return BigInt(lenOf(this));
+          }
+        });
+      }
+      const origPathOpen = File2.prototype.path_open;
+      if (typeof origPathOpen === "function") {
+        File2.prototype.path_open = function(oflags, rights, fdFlags) {
+          if ((oflags & 1) === 1 && !this.readonly) this._len = 0;
+          return origPathOpen.call(this, oflags, rights, fdFlags);
+        };
+      }
+    } catch (e) {
+      log("size/path_open \u8865\u4E01\u5931\u8D25\uFF08\u5FFD\u7565\uFF09: " + (e && e.message || e));
+    }
+    OpenFile2.prototype.fd_write = function(data) {
+      const f = this.file;
+      if (f.readonly) return { ret: 8, nwritten: 0 };
+      const pos = Number(this.file_pos);
+      const need = pos + data.byteLength;
+      const oldLen = lenOf(f);
+      ensureCapacity(f, need);
+      f.data.set(data, pos);
+      if (need > oldLen) f._len = need;
+      this.file_pos = BigInt(need);
+      return { ret: 0, nwritten: data.byteLength };
+    };
+    OpenFile2.prototype.fd_pwrite = function(data, offset) {
+      const f = this.file;
+      if (f.readonly) return { ret: 8, nwritten: 0 };
+      const pos = Number(offset);
+      const need = pos + data.byteLength;
+      const oldLen = lenOf(f);
+      ensureCapacity(f, need);
+      f.data.set(data, pos);
+      if (need > oldLen) f._len = need;
+      return { ret: 0, nwritten: data.byteLength };
+    };
+    OpenFile2.prototype.fd_read = function(size) {
+      const len = lenOf(this.file);
+      const from = Math.min(Number(this.file_pos), len);
+      const to = Math.min(from + Number(size), len);
+      const slice = this.file.data.slice(from, to);
+      this.file_pos = BigInt(to);
+      return { ret: 0, data: slice };
+    };
+    OpenFile2.prototype.fd_pread = function(size, offset) {
+      const len = lenOf(this.file);
+      const from = Math.min(Number(offset), len);
+      const to = Math.min(from + Number(size), len);
+      return { ret: 0, data: this.file.data.slice(from, to) };
+    };
+    const origSetSize = OpenFile2.prototype.fd_filestat_set_size;
+    if (typeof origSetSize === "function") {
+      OpenFile2.prototype.fd_filestat_set_size = function(size) {
+        const f = this.file;
+        const n = Number(size);
+        if (n > lenOf(f)) ensureCapacity(f, n);
+        f._len = n;
+        return { ret: 0 };
+      };
+    }
+    const origAlloc = OpenFile2.prototype.fd_allocate;
+    if (typeof origAlloc === "function") {
+      OpenFile2.prototype.fd_allocate = function(offset, len) {
+        ensureCapacity(this.file, Number(offset) + Number(len));
+        return { ret: 0 };
+      };
+    }
+    OpenFile2.prototype[MARK] = true;
+    log("\u5DF2\u542F\u7528\uFF1AWASI \u6587\u4EF6\u5199\u5165\u6539\u4E3A\u5BB9\u91CF\u500D\u589E\uFF08\u5927\u5BF9\u8C61\u4E0D\u518D O(n\xB2)\uFF09");
+    return true;
+  }
+  function logicalBytes(file) {
+    if (!file || !file.data) return null;
+    return file.data.slice(0, lenOf(file));
+  }
+
   // src/core/tarfs.mjs
   var BLOCK = 512;
   var str = (u8, off, len) => {
@@ -1503,7 +1623,8 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
     }
     const f = d.contents.get(parts[parts.length - 1]);
     if (!f || f.data === void 0) return null;
-    return f.data.slice();
+    const out = logicalBytes(f);
+    return out ? out.slice() : f.data.slice();
   }
 
   // src/core/flags.mjs
@@ -1535,6 +1656,7 @@ void __wdb_dbg_anchor(void) { __wdb_probe(-1); __wdb_pause(); }
   }
 
   // src/core/toolchain.mjs
+  installFastWasiFs({ File, OpenFile });
   var Toolchain = class {
     /**
      * @param {{clangWasm: Uint8Array, lldWasm: Uint8Array, sysrootTar: Uint8Array, compatBits?: Uint8Array}} assets

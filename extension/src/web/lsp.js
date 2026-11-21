@@ -242,8 +242,13 @@ class Writer {
         //    槽是 "uri -> 消息"，flush 时按原顺序逐个发出。
         const uri = String(msg.params && msg.params.textDocument && msg.params.textDocument.uri || "");
         this._pendingChanges.set(uri, msg);
+        // ⚠️ 合并窗口按文档大小自适应：几百 KB 的源码每 150ms 全量重推一次，
+        //    clangd 要不停重解 preamble，长文件编辑会明显卡。大文件放宽到 300–500ms。
+        let textLen = 0;
+        for (const c of changes) if (c && typeof c.text === "string") textLen = Math.max(textLen, c.text.length);
+        const delay = textLen > 512 * 1024 ? 500 : (textLen > 128 * 1024 ? 300 : 150);
         if (!this._flushTimer) {
-          this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushAllChanges(); }, 150);
+          this._flushTimer = setTimeout(() => { this._flushTimer = null; this._flushAllChanges(); }, delay);
         }
         return Promise.resolve();
       }
@@ -264,7 +269,14 @@ class Writer {
   /** 冲掉全部待发变更（保持 set 顺序） */
   _flushAllChanges() {
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
-    for (const m of this._pendingChanges.values()) {
+    for (const [uri, m] of this._pendingChanges) {
+      // 去重：内容与上次同步的完全一样就不必再发（撤销/重做、状态更新都会触发 didChange）
+      const text = m && m.params && m.params.contentChanges && m.params.contentChanges[0] && m.params.contentChanges[0].text;
+      if (typeof text === "string" && text.length <= 2 * 1024 * 1024) {
+        if (this._lastFullText && this._lastFullText.get(uri) === text) continue;
+        if (!this._lastFullText) this._lastFullText = new Map();
+        this._lastFullText.set(uri, text);
+      }
       try { this.proxy.postMessage(m); } catch (e) { try { this.onError.fire([e, m, 1]); } catch {} }
     }
     this._pendingChanges.clear();
@@ -285,14 +297,14 @@ let fatal = false;   // 线程池耗尽等致命错误：本次会话不再自�
 export function resetClangdFatal() { fatal = false; }
 
 export async function startClangd(ctx, opts = {}) {
-  const merged = { files: ["main.cpp"], flags: "-std=c++14", opt: 2, debug: true, base: "", verbose: false, log: undefined, onRestart: undefined, onFatal: undefined, ...opts };
+  const merged = { files: ["main.cpp"], flags: "-std=c++14", opt: 2, debug: true, base: "", verbose: false, jobs: 2, log: undefined, onRestart: undefined, onFatal: undefined, ...opts };
   // ⚠️ 只用 module worker（ESM glue 要求）。不再"降级经典 worker"：
   //    经典 worker + ESM glue 会抛 "Module scripts don't support importScripts()"，
   //    降级只会把错误变成另一种错误，掩盖真正原因。
   return await startOnce(ctx, merged);
 }
 
-async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, verbose, log, onRestart, onFatal }) {
+async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, verbose, jobs, log, onRestart, onFatal }) {
   const out = typeof log === "function" ? log : (line) => console.warn("[oi clangd]", line);
   if (client) return client;
   if (fatal) throw new Error("clangd 已被停用（pthread 线程池不足）。重启扩展或运行「OI C++: 重启 clangd(WASM)」可再试");
@@ -351,7 +363,7 @@ async function startOnce(ctx, { files, flags, opt, debug, base: baseOverride, ve
       out("[warn] " + String(d.__oiWarnOnce));   // 只写日志，不再弹窗（用户要求）
     }
   });
-  worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose } });
+  worker.postMessage({ __oiConfig: { base, files, flags, opt, debug, verbose, jobs } });
 
   const map = new UriMap();
   const proxy = new LspWorkerProxy(worker, map);

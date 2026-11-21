@@ -21,5 +21,15 @@ must(!/\b(const|let|var)\s+fatal\b/.test(code.replace(/^let fatal = false;/m, ""
   "没有局部 `fatal` 声明（否则 if (fatal) 变成 TDZ 访问）");
 must(/notifyFatal/.test(code), "worker 致命错误回调改名为 notifyFatal");
 
+// clangd.worker.js 里从来没有 cfg 这个变量（配置是 start() 的解构参数）——
+// 写 `cfg.jobs` 会在启动时抛 ReferenceError: cfg is not defined（clangd 直接起不来）。
+{
+  const workerSrc = readFileSync(path.join(HERE, "..", "src", "web", "clangd.worker.js"), "utf8");
+  const workerCode = workerSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  must(/jobs: cfg\.jobs \?\? 2/.test(workerCode), "boot() 把 cfg.jobs 传给 start()（否则 oiCpp.clangdJobs 不生效）");
+  must(/async function start\(\{[^}]*jobs = 2/.test(workerCode), "start() 解构出 jobs（oiCpp.clangdJobs）");
+  must(/-j=\$\{Math\.max\(1, Math\.min\(8, Number\(jobs\)/.test(workerCode), "clangd -j 使用 jobs 参数");
+}
+
 console.log(pass ? "\n全部通过" : "\n存在失败项");
 if (!pass) process.exit(1);

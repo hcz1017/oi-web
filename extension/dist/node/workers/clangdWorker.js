@@ -217,7 +217,7 @@
     if (typeof factory !== "function") throw new Error("glue \u6CA1\u6709\u5BFC\u51FA Module \u5DE5\u5382");
     return { Module: factory, scriptUrl: blobUrl };
   }
-  async function start({ base, files, flags, opt = 2, debug = true }) {
+  async function start({ base, files, flags, opt = 2, debug = true, jobs = 2 }) {
     if (!self.crossOriginIsolated) throw new Error("clangd \u9700\u8981 COOP/COEP \u8DE8\u6E90\u9694\u79BB");
     const b = String(base).replace(/\/+$/, "");
     const get = async (url) => {
@@ -378,8 +378,8 @@
       "--clang-tidy=false",
       "--completion-parse=always",
       "--pch-storage=memory",
-      "-j=2",
-      // 2 个后台线程：1 个太慢（用户实测），线程数带来的 worker 增长已由 didChange 去抖压住
+      `-j=${Math.max(1, Math.min(8, Number(jobs) || 2))}`,
+      // 后台线程数（oiCpp.clangdJobs；每个线程 = 一份 wasm 实例）
       "--log=error"
     ]);
     stage("callMain \u8FD4\u56DE\uFF08clangd \u5DF2\u5728\u8FD0\u884C\uFF09");
@@ -437,7 +437,8 @@
           files: cfg.files || ["main.cpp"],
           flags: cfg.flags || "-std=c++14",
           opt: cfg.opt ?? 2,
-          debug: cfg.debug !== false
+          debug: cfg.debug !== false,
+          jobs: cfg.jobs ?? 2
         });
       } catch (e) {
         dead = true;

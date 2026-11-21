@@ -238,7 +238,7 @@ async function loadGlueModule(glueUrl) {
   return { Module: factory, scriptUrl: blobUrl };
 }
 
-async function start({ base, files, flags, opt = 2, debug = true }) {
+async function start({ base, files, flags, opt = 2, debug = true, jobs = 2 }) {
   if (!self.crossOriginIsolated) throw new Error("clangd 需要 COOP/COEP 跨源隔离");
   const b = String(base).replace(/\/+$/, "");
   // ⚠️ 网慢时一次下载可能好几分钟，期间**必须**持续给扩展发进度心跳，
@@ -422,7 +422,7 @@ async function start({ base, files, flags, opt = 2, debug = true }) {
     "--clang-tidy=false",
     "--completion-parse=always",
     "--pch-storage=memory",
-    "-j=2",   // 2 个后台线程：1 个太慢（用户实测），线程数带来的 worker 增长已由 didChange 去抖压住
+    `-j=${Math.max(1, Math.min(8, Number(jobs) || 2))}`,   // 后台线程数（oiCpp.clangdJobs；每个线程 = 一份 wasm 实例）
     "--log=error",
   ]);
   stage("callMain 返回（clangd 已在运行）");
@@ -482,6 +482,7 @@ if (!isPthreadWorker) {
       await start({
         base: cfg.base, files: cfg.files || ["main.cpp"], flags: cfg.flags || "-std=c++14",
         opt: cfg.opt ?? 2, debug: cfg.debug !== false,
+        jobs: cfg.jobs ?? 2,
       });
     } catch (e) {
       dead = true;

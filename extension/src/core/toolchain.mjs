@@ -6,7 +6,13 @@ import {
   WASI, WASIProcExit, File, Directory, PreopenDirectory, ConsoleStdout, OpenFile,
 } from "@bjorn3/browser_wasi_shim";
 import { parseTar, buildFs, readFsFile } from "./tarfs.mjs";
+import { installFastWasiFs } from "./wasi-fs-fast.mjs";
 import { TRIPLE, RESOURCE_DIR, LIBDIR, ISYS, filterUserFlags } from "./flags.mjs";
+
+// ⚠️ 编译大文件（例如 bitset<70>[6.4e6] 约 51MB 静态数组）时，clang 写 .o 会分成很多次小块 write；
+//    上游 shim 每次 write 都"整份重新分配 + 复制"，复杂度 O(n²) —— 实测 64MB 就要 16 秒，
+//    实际要几分钟到十几分钟。这里在模块加载时一次性打补丁（幂等，只影响内存 FS 的写放大）。
+installFastWasiFs({ File, OpenFile });
 
 export class Toolchain {
   /**

@@ -104,7 +104,7 @@ function scheduleReleaseLsp() {
     logLine("[clangd] 已释放（宽限期内没有 C/C++ 文件）");
     vscode.window.setStatusBarMessage("$(circle-slash) WebC++: clangd 已释放（无打开的 C++ 文件）", 4000);
   }, LSP_RELEASE_GRACE_MS);
-  logLine(`[clangd] 将在 ${Math.round(LSP_RELEASE_GRACE_MS / 1000)}s 后释放（期间打开 C/C++ 文件即取消）`);
+  if (lspPromise) logLine(`[clangd] 将在 ${Math.round(LSP_RELEASE_GRACE_MS / 1000)}s 后释放（期间打开 C/C++ 文件即取消）`);
 }
 
 /** 兼容旧调用点：立即释放（仅手动命令用） */
@@ -135,7 +135,10 @@ async function silentRestartClangd(info) {
   logLine(`[restart] ${force ? "强制" : "冷却"}重启 clangd（workers=${info && info.workers}）`);
   lspPromise = null;
   try { await stopClangd(); } catch { /* ignore */ }
-  if (openCppCount() > 0) ensureLsp();
+  // ⚠️ 等一会儿再起新实例：旧 worker 的 wasm 内存释放有延迟，
+  //    立刻新建很容易 `WebAssembly.Memory(): could not allocate memory`（重启风暴就是这样滚起来的）。
+  await new Promise((r) => setTimeout(r, 800));
+  if (openCppCount() > 0 && !lspFailedAt) ensureLsp();
 }
 
 /**
@@ -195,6 +198,7 @@ function ensureLsp() {
         opt: cfg.get("opt", 2),
         debug: cfg.get("debugInfo", true),
         verbose: cfg.get("verbose", false),
+        jobs: Number(cfg.get("clangdJobs", 2)) || 2,
         log: (line) => logLine("[clangd] " + line),
         onRestart: (info) => { silentRestartClangd(info); },
       });
@@ -207,8 +211,13 @@ function ensureLsp() {
       try { console.error("[oi clangd] 启动失败:", e); } catch {}   // 栈留给 DevTools
       // ⚠️ 必须 await：stop 没做完就允许重试，会残留已注册的命令/worker
       try { await stopClangd(); } catch { }
+      const memFail = /could not allocate memory|out of memory/i.test(String((e && e.message) || e));
       lspFailedAt = Date.now();
       lspPromise = null;
+      if (memFail) {
+        logLine("[clangd] 内存不足：延长冷却到 2 分钟；可减少并发（关掉部分大文件/降低 clangd 线程数）后重试");
+        lspFailedAt = Date.now() + CLANGD_RETRY_COOLDOWN_MS;   // 再等一个冷却周期
+      }
       vscode.window.showErrorMessage("clangd 启动失败: " + ((e && e.message) || e) +
         "（60 秒内不会自动重试，可运行「WebC++: 重启 clangd」立即重试）");
       return null;
