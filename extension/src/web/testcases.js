@@ -110,6 +110,36 @@ export function normalizeTimeout(v, fallback = 2000) {
  * @param {{fileName:string, source:string}|null} active  现读的当前编辑器
  * @returns {{target:object|null, switched:boolean, reason:string}}
  */
+/**
+ * 运行/同步时该用哪个目标：
+ * - `live`：**按面板当前文件的 URI 现读文档**得到的新鲜目标（不依赖 activeTextEditor）；
+ * - `active`：当前活动编辑器（桌面上面板获得焦点时可能为 undefined）。
+ *
+ * ⚠️ 为什么需要 live：桌面版里点开测试面板（webview）后 `window.activeTextEditor` 会变成
+ *    undefined，于是"改完代码再点运行"拿到的还是打开面板那一刻的快照 → 编译键不变 →
+ *    命中旧缓存 → **面板输出永远是上一次的结果**。这里强制以 live 优先。
+ */
+/**
+ * 面板该展示/运行哪个文件：**以焦点为准**（用户选中哪个文件就看哪个），
+ * 但内容要用 `fresh`（按该文件 URI 现读的 document.getText()）。
+ *
+ * - `active`：当前焦点文件（面板自身获得焦点时可能是 null）；
+ * - `fresh` ：按 `active`（或退回面板当前文件）的 URI 现读出来的目标，内容最新；
+ * - `current`：面板上一刻展示的文件。
+ *
+ * 焦点在 A、面板还停在 B → 切到 A（并读 A 的最新内容）；
+ * 焦点丢失（面板获得焦点）→ 继续用面板当前文件的最新内容，**不清空**。
+ */
+export function chooseTarget(current, active, fresh) {
+  const t = fresh || active || null;
+  if (!t) return { target: null, switched: false, reason: "no-file" };
+  return pickRunTarget(current, t);
+}
+
+export function resolveTarget(current, live, active) {
+  return pickRunTarget(current, live || active);
+}
+
 export function pickRunTarget(current, active) {
   if (!active) return { target: null, switched: false, reason: "no-file" };
   if (!current) return { target: active, switched: true, reason: "no-current" };

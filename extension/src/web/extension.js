@@ -1106,10 +1106,9 @@ async function toggleBreakpoint() {
  *    F5 时它为空 → 适配器退化成硬编码的 "main.cpp"（编译一个不存在的空文件），
  *    表现为"调的不是当前文件、断点全灰"。
  */
-function targetFromActiveEditor() {
-  const ed = vscode.window.activeTextEditor;
-  if (!ed) return null;
-  const doc = ed.document;
+/** 从**文档**构造运行/调试目标（现读 getText，内容一定是最新的） */
+function targetFromDocument(doc) {
+  if (!doc) return null;
   const fileName = baseNameOf(doc.uri);
   if (!/\.(cpp|cc|cxx|c)$/i.test(fileName)) return null;
   const cfg = vscode.workspace.getConfiguration("oiCpp");
@@ -1119,6 +1118,24 @@ function targetFromActiveEditor() {
     sourceUri: doc.uri.toString(),
     flags: String(cfg.get("flags", "-std=c++14")),
   };
+}
+
+/**
+ * 按文档 URI 现读目标（**不依赖 activeTextEditor**）。
+ * ⚠️ 桌面版里点开测试面板（webview）后 `window.activeTextEditor` 会变 undefined，
+ *    以前面板靠它取源码 → 拿到的还是打开面板那一刻的快照 → 编译键不变 → 命中旧缓存，
+ *    表现就是"改了代码，CPH 输出还是上一次的"。
+ */
+function targetForUri(uriString) {
+  const key = String(uriString || "");
+  if (!key) return null;
+  const doc = (vscode.workspace.textDocuments || []).find((d) => String(d.uri) === key);
+  return targetFromDocument(doc);
+}
+
+function targetFromActiveEditor() {
+  const ed = vscode.window.activeTextEditor;
+  return ed ? targetFromDocument(ed.document) : null;
 }
 
 const NO_CPP_HINT = "先打开一个 C/C++ 源文件（.cpp/.cc/.cxx/.c）再调试";
@@ -1321,6 +1338,12 @@ function setupTestPanel(c) {
     log: debugLog,
     activeTarget: () => {
       const t = targetFromActiveEditor();
+      if (!t) return null;
+      return { ...t, opt: vscode.workspace.getConfiguration("oiCpp").get("opt", 2) };
+    },
+    // ⚠️ 运行/同步优先用它：按面板当前文件的 URI 现读文档，和"焦点在哪个编辑器"无关
+    liveTarget: (uriString) => {
+      const t = targetForUri(uriString);
       if (!t) return null;
       return { ...t, opt: vscode.workspace.getConfiguration("oiCpp").get("opt", 2) };
     },

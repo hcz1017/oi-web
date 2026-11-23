@@ -16,7 +16,7 @@
 // ========================================================================
 import * as vscode from "vscode";
 import {
-  judgeCase, summarize, shouldAcceptCases, pickRunTarget, normalizeTimeout, shouldAcceptPayload,
+  judgeCase, summarize, shouldAcceptCases, pickRunTarget, chooseTarget, resolveTarget, normalizeTimeout, shouldAcceptPayload,
 } from "./testcases.js";
 
 const VIEW_ID = "oiCpp.testsView";
@@ -236,9 +236,13 @@ export function createTestViewProvider(deps) {
     let gen = 0;
     let file = "";                 // ⚠️ 必须在 try 外：catch 里也要用它给面板报错
     try {
-      // 运行前现读编辑器（面板里 current 是快照；改完代码不刷新会命中旧缓存）
+      // 以**焦点文件**为准；内容按该文件 URI 现读（桌面上面板获得焦点时 activeTextEditor 会变 null，
+      // 这时退回"面板当前文件"的现读内容，既不会看错文件，也不会用旧快照）
       await askFlush();
-      const pick = pickRunTarget(current, deps.activeTarget());
+      const active = deps.activeTarget();
+      const wantKey = (active && keyOf(active)) || (current && keyOf(current)) || "";
+      const fresh = wantKey && deps.liveTarget ? deps.liveTarget(wantKey) : null;
+      const pick = chooseTarget(current, active, fresh);
       if (!pick.target) { current = null; post({ type: "noFile", text: START_TEXT }); return; }
       if (pick.switched) {
         // 换文件了：用**那个文件**的用例重来，别拿旧列表跑新源码
@@ -327,7 +331,11 @@ export function createTestViewProvider(deps) {
     async syncIfNeeded() {
       if (!view) return false;
       const seq = ++syncSeq;
-      const t = deps.activeTarget();
+      // 焦点优先：切到哪个文件就展示它的用例；内容现读。焦点丢失时保持当前文件（不清空）。
+      const activeNow = deps.activeTarget();
+      const wantKey = (activeNow && keyOf(activeNow)) || (current && keyOf(current)) || "";
+      const freshNow = wantKey && deps.liveTarget ? deps.liveTarget(wantKey) : null;
+      const t = freshNow || activeNow || null;
       if (!t) {
         if (current) {
           await askFlush();

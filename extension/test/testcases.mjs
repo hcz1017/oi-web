@@ -2,7 +2,7 @@
 // 纯 Node，秒级；不需要编译器和 wasm。
 import {
   VERDICT, normalizeOutput, compareOutput, judgeCase, TestCaseStore,
-  runCases, summarize, newCaseId, nextCaseName, TEST_CASES_KEY, shouldAcceptCases, pickRunTarget, normalizeTimeout, shouldAcceptPayload,
+  runCases, summarize, newCaseId, nextCaseName, TEST_CASES_KEY, shouldAcceptCases, pickRunTarget, resolveTarget, chooseTarget, normalizeTimeout, shouldAcceptPayload,
 } from "../src/web/testcases.js";
 
 let pass = true;
@@ -252,6 +252,44 @@ must(normalizeOutput("  \n\n") === "", "只有空白 → 空");
     "payload: 没有 rev -> 宽容接受");
   must(shouldAcceptPayload({ msgFile: "file:///d1/main.cpp", currentFile: "file:///d2/main.cpp" }).ok === false,
     "payload: 不同目录同名文件 -> 拒绝");
+}
+
+// ---------- resolveTarget：live（按 URI 现读）必须优先于 active ----------
+{
+  const cur = { fileName: "a.cpp", sourceUri: "file:///w/a.cpp", source: "旧代码", flags: "-std=c++14", opt: 2 };
+  const live = { fileName: "a.cpp", sourceUri: "file:///w/a.cpp", source: "新代码", flags: "-std=c++14", opt: 2 };
+  const active = { fileName: "b.cpp", sourceUri: "file:///w/b.cpp", source: "别的文件", flags: "-std=c++14", opt: 2 };
+
+  const r1 = resolveTarget(cur, live, active);
+  must(r1.target === live && r1.switched === false, "同文件：用 live（新代码），不被 active 抢走");
+
+  const r2 = resolveTarget(cur, live, null);
+  must(r2.target === live && r2.switched === false, "active 为 undefined（桌面上面板获得焦点）：仍然用 live");
+
+  const r3 = resolveTarget(cur, null, null);
+  must(r3.target === null && r3.reason === "no-file", "两个都没有 → no-file");
+
+  const r4 = resolveTarget(cur, null, active);
+  must(r4.target === active && r4.switched === true, "没有 live 时退回 active，并按文件名判定切换");
+}
+
+// ---------- chooseTarget：以焦点为准，但内容用"现读"的 fresh ----------
+{
+  const A = { fileName: "a.cpp", sourceUri: "file:///w/a.cpp", source: "A 旧" , flags: "", opt: 2 };
+  const B = { fileName: "b.cpp", sourceUri: "file:///w/b.cpp", source: "B 旧" , flags: "", opt: 2 };
+  const Bfresh = { fileName: "b.cpp", sourceUri: "file:///w/b.cpp", source: "B 新", flags: "", opt: 2 };
+  const Afresh = { fileName: "a.cpp", sourceUri: "file:///w/a.cpp", source: "A 新", flags: "", opt: 2 };
+
+  // 焦点在 B：面板应从 A 切到 B，且用 B 的最新内容
+  const r1 = chooseTarget(A, B, Bfresh);
+  must(r1.target === Bfresh && r1.switched === true, "焦点切到 B → 切文件并读 B 的最新内容");
+
+  // 焦点丢失（面板自己获得焦点）：保持面板当前文件 A，但内容要是 A 最新的
+  const r2 = chooseTarget(A, null, Afresh);
+  must(r2.target === Afresh && r2.switched === false, "焦点丢失 → 保持当前文件 A，但用 A 的最新内容");
+
+  // 什么都没有
+  must(chooseTarget(null, null, null).target === null, "无焦点也无当前文件 → no-file");
 }
 
 console.log(pass ? "\n全部通过" : "\n存在失败项");
